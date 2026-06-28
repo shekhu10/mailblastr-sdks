@@ -115,6 +115,26 @@ test('audiences + contacts (nested) map to the right routes', async () => {
   assert.deepEqual(calls[1].body, { email: 'x@y.com', first_name: 'X' });
 });
 
+test('contacts (flat, no audienceId) hit the top-level /contacts routes', async () => {
+  const { fn, calls } = mockFetch(200, {});
+  const mb = new MailBlastr('mb_test', { baseUrl: 'https://api.test', fetch: fn });
+  await mb.contacts.create({ email: 'x@y.com', first_name: 'X' });
+  await mb.contacts.get({ id: 'x@y.com' });
+  await mb.contacts.update({ id: 'c1', unsubscribed: true });
+  await mb.contacts.remove({ id: 'c1' });
+  await mb.contacts.list();
+  await mb.contacts.list({ segment_id: 'seg1', limit: 10 });
+  assert.deepEqual(calls.map((c) => `${c.method} ${c.url}`), [
+    'POST https://api.test/contacts',
+    'GET https://api.test/contacts/x%40y.com',
+    'PATCH https://api.test/contacts/c1',
+    'DELETE https://api.test/contacts/c1',
+    'GET https://api.test/contacts',
+    'GET https://api.test/contacts?limit=10&segment_id=seg1',
+  ]);
+  assert.deepEqual(calls[0].body, { email: 'x@y.com', first_name: 'X' });
+});
+
 test('contacts.batch / import / paginated list map to the right routes', async () => {
   const { fn, calls } = mockFetch(201, { object: 'list', imported: 2, updated: 0, skipped: 0, total: 2 });
   const mb = new MailBlastr('mb_test', { baseUrl: 'https://api.test', fetch: fn });

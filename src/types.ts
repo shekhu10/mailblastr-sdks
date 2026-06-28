@@ -148,7 +148,11 @@ export interface Contact {
   created_at: string;
 }
 export interface CreateContactOptions {
-  audienceId: string;
+  /**
+   * Audience to create the contact in. OMIT to use the flat top-level
+   * `/contacts` API — the contact lands in your default (oldest) audience.
+   */
+  audienceId?: string;
   email: string;
   first_name?: string;
   last_name?: string;
@@ -157,7 +161,8 @@ export interface CreateContactOptions {
   properties?: Record<string, string | number>;
 }
 export interface UpdateContactOptions {
-  audienceId: string;
+  /** Audience the contact belongs to. OMIT to resolve across all your audiences (flat `/contacts/:id`). */
+  audienceId?: string;
   /** Contact id OR email. */
   id: string;
   first_name?: string;
@@ -183,12 +188,15 @@ export interface ImportContactsResponse {
 }
 /** Cursor paging for listing contacts (limit ≤ 100). */
 export interface ListContactsParams {
-  audienceId: string;
+  /** Restrict to one audience. OMIT to list across ALL your audiences (flat `/contacts`). */
+  audienceId?: string;
   limit?: number;
   /** Cursor: id of the last item on the previous page. */
   after?: string;
   /** Cursor: id of the first item on the next page. */
   before?: string;
+  /** Flat-list only: restrict to members of this segment. */
+  segment_id?: string;
 }
 
 // ---- Broadcasts ----

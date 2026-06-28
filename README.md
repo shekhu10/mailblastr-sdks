@@ -96,6 +96,13 @@ await mb.contacts.list({ audienceId });
 await mb.contacts.addToSegment(contactId, segmentId);
 await mb.contacts.updateTopics(contactId, { subscribed: ['topic_1'] });
 
+// Contacts also work flat — OMIT audienceId to act across all your audiences
+await mb.contacts.create({ email });            // -> default (oldest) audience
+await mb.contacts.get({ id });                  // resolve by id or email
+await mb.contacts.update({ id, unsubscribed: true });
+await mb.contacts.remove({ id });
+await mb.contacts.list();                        // every audience
+
 // Contact properties (custom fields)
 await mb.contactProperties.create({ name: 'Plan', type: 'string' });
 

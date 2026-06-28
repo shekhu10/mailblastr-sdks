@@ -201,22 +201,30 @@ class Audiences {
 
 class Contacts {
   constructor(private readonly http: HttpClient) {}
-  /** Returns the slim ack { object: 'contact', id }. */
+  /**
+   * Create a contact. Returns the slim ack { object: 'contact', id }.
+   * Pass `audienceId` to target an audience, or OMIT it to use the flat
+   * top-level `/contacts` API (creates in your default/oldest audience).
+   */
   create(payload: CreateContactOptions): Promise<Result<ObjectRef<'contact'>>> {
     const { audienceId, ...body } = payload;
-    return this.http.request('POST', `/audiences/${audienceId}/contacts`, body);
+    return this.http.request('POST', audienceId ? `/audiences/${audienceId}/contacts` : '/contacts', body);
   }
-  /** Retrieve a contact by id or email. */
-  get(params: { audienceId: string; id: string }): Promise<Result<Contact>> {
-    return this.http.request('GET', `/audiences/${params.audienceId}/contacts/${encodeURIComponent(params.id)}`);
+  /** Retrieve a contact by id or email. Omit `audienceId` to resolve across all your audiences. */
+  get(params: { audienceId?: string; id: string }): Promise<Result<Contact>> {
+    const id = encodeURIComponent(params.id);
+    return this.http.request('GET', params.audienceId ? `/audiences/${params.audienceId}/contacts/${id}` : `/contacts/${id}`);
   }
-  list(params: ListContactsParams): Promise<Result<ListResponse<Contact>>> {
+  list(params: ListContactsParams = {}): Promise<Result<ListResponse<Contact>>> {
     const q = new URLSearchParams();
     if (params.limit != null) q.set('limit', String(params.limit));
     if (params.after != null) q.set('after', params.after);
     if (params.before != null) q.set('before', params.before);
+    // segment_id filter is only honored by the flat /contacts list.
+    if (!params.audienceId && params.segment_id != null) q.set('segment_id', params.segment_id);
     const qs = q.toString();
-    return this.http.request('GET', `/audiences/${params.audienceId}/contacts${qs ? `?${qs}` : ''}`);
+    const base = params.audienceId ? `/audiences/${params.audienceId}/contacts` : '/contacts';
+    return this.http.request('GET', `${base}${qs ? `?${qs}` : ''}`);
   }
   /** Bulk-import contacts from an array. Upserts by email; max 10,000 per call. */
   batch(params: { audienceId: string; contacts: ContactInput[] }): Promise<Result<ImportContactsResponse>> {
@@ -226,14 +234,16 @@ class Contacts {
   import(params: { audienceId: string; csv: string }): Promise<Result<ImportContactsResponse>> {
     return this.http.request('POST', `/audiences/${params.audienceId}/contacts/import`, { csv: params.csv });
   }
-  /** Returns the slim ack { object: 'contact', id }. */
+  /** Update a contact. Returns the slim ack { object: 'contact', id }. Omit `audienceId` for the flat API. */
   update(payload: UpdateContactOptions): Promise<Result<ObjectRef<'contact'>>> {
     const { audienceId, id, ...body } = payload;
-    return this.http.request('PATCH', `/audiences/${audienceId}/contacts/${encodeURIComponent(id)}`, body);
+    const eid = encodeURIComponent(id);
+    return this.http.request('PATCH', audienceId ? `/audiences/${audienceId}/contacts/${eid}` : `/contacts/${eid}`, body);
   }
-  /** Delete a contact. The id is returned under `contact`. */
-  remove(params: { audienceId: string; id: string }): Promise<Result<{ object: 'contact'; contact: string; deleted: true }>> {
-    return this.http.request('DELETE', `/audiences/${params.audienceId}/contacts/${encodeURIComponent(params.id)}`);
+  /** Delete a contact. The id is returned under `contact`. Omit `audienceId` for the flat API. */
+  remove(params: { audienceId?: string; id: string }): Promise<Result<{ object: 'contact'; contact: string; deleted: true }>> {
+    const id = encodeURIComponent(params.id);
+    return this.http.request('DELETE', params.audienceId ? `/audiences/${params.audienceId}/contacts/${id}` : `/contacts/${id}`);
   }
   /** Add a contact to a segment. POST /contacts/:id/segments/:segmentId → { id } (the segment id). */
   addToSegment(id: string, segmentId: string): Promise<Result<{ id: string }>> {
