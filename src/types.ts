@@ -69,8 +69,10 @@ export interface Email {
   bcc?: string[];
   reply_to?: string[];
   subject: string | null;
-  html?: string;
-  text?: string;
+  html?: string | null;
+  text?: string | null;
+  /** Tags echoed back on retrieve (empty array when none were set). */
+  tags?: Tag[];
   status: string;
   last_event?: string;
   scheduled_at?: string | null;
@@ -100,6 +102,7 @@ export interface Domain {
   region: string;
   created_at: string;
   records: DomainRecord[];
+  /** MAIL FROM subdomain (Return-Path); always present (defaults to 'send'). */
   custom_return_path?: string;
   open_tracking?: boolean;
   click_tracking?: boolean;
@@ -130,6 +133,8 @@ export interface UpdateDomainOptions {
   open_tracking?: boolean;
   click_tracking?: boolean;
   tracking_subdomain?: string;
+  /** Enable/disable the custom open/click tracking host for this domain. */
+  custom_tracking?: boolean;
   tls?: 'opportunistic' | 'enforced';
   capabilities?: { receiving?: 'enabled' | 'disabled' };
 }
@@ -183,7 +188,7 @@ export interface ImportContactsResponse {
   object: 'list';
   imported: number; // newly inserted
   updated: number;  // existing contacts updated
-  skipped: number;  // rows dropped for a missing/invalid email
+  skipped: number;  // rows dropped: missing/invalid email OR left untouched under on_conflict:'skip'
   total: number;    // distinct contacts processed
 }
 /** Cursor paging for listing contacts (limit ≤ 100). */
@@ -195,7 +200,7 @@ export interface ListContactsParams {
   after?: string;
   /** Cursor: id of the first item on the next page. */
   before?: string;
-  /** Flat-list only: restrict to members of this segment. */
+  /** Restrict to members of this segment (works with or without audienceId). */
   segment_id?: string;
 }
 
@@ -205,6 +210,10 @@ export interface Broadcast {
   id: string;
   name: string | null;
   audience_id: string;
+  /** Segment target (null ⇒ whole audience). */
+  segment_id: string | null;
+  /** Topic gate (null ⇒ no gating). */
+  topic_id: string | null;
   from: string | null;
   subject: string | null;
   html?: string | null;
@@ -215,6 +224,21 @@ export interface Broadcast {
   scheduled_at: string | null;
   sent_at: string | null;
   created_at: string;
+  /** A/B config + decision. `{ enabled: false }` when not an A/B broadcast. */
+  ab_test?: {
+    enabled: boolean;
+    subject_b?: string | null;
+    test_pct?: number;
+    metric?: 'open' | 'click';
+    status?: string | null;
+    winner?: string | null;
+  };
+  /** Recurrence cadence (null ⇒ one-off). */
+  recurrence?: { interval: BroadcastRecurrence; every: number } | null;
+  /** Set on auto-generated occurrences of a recurring broadcast. */
+  parent_broadcast_id?: string | null;
+  /** Engagement counts — included only on GET /broadcasts/:id (retrieve). */
+  statistics?: Record<string, unknown>;
 }
 /**
  * A/B-test config accepted on broadcast create. When `enabled`, supply at least
@@ -307,12 +331,13 @@ export interface Segment {
   id: string;
   audience_id: string;
   name: string;
-  filter: { status: SegmentStatus; email_contains: string | null; property_filters?: PropertyFilter[] };
+  filter: { status: SegmentStatus; email_contains: string | null; property_filters: PropertyFilter[] };
   created_at: string;
   updated_at: string;
 }
 export interface CreateSegmentOptions {
-  audience_id: string;
+  /** Audience to scope the segment to. OMIT to use your default (oldest) audience. */
+  audience_id?: string;
   name: string;
   filter?: { status?: SegmentStatus; email_contains?: string | null; property_filters?: PropertyFilter[] };
 }
@@ -340,6 +365,12 @@ export interface Template {
   html: string | null;
   text: string | null;
   status?: string;
+  /** Stable handle usable anywhere an id is accepted. */
+  alias?: string | null;
+  /** When the template was last published (null while only a draft exists). */
+  published_at?: string | null;
+  /** True when the draft has edits not yet published. (Retrieve only.) */
+  has_unpublished_versions?: boolean;
   current_version_id?: string | null;
   variables?: TemplateVariable[];
   created_at: string;
@@ -349,7 +380,7 @@ export interface Template {
 export interface TemplateVariableInput {
   key: string;
   type?: 'string' | 'number';
-  fallback_value?: string;
+  fallback_value?: string | number | null;
 }
 export interface CreateTemplateOptions {
   name: string;
@@ -380,8 +411,8 @@ export interface DuplicateTemplateOptions {
 }
 
 // ---- API keys ----
-export interface ApiKey { object: 'api_key'; id: string; name: string; created_at: string }
-export interface CreateApiKeyResponse { id: string; token: string }
+export interface ApiKey { object: 'api_key'; id: string; name: string; domain_id?: string | null; created_at: string }
+export interface CreateApiKeyResponse { object: 'api_key'; id: string; token: string; domain_id: string | null }
 export interface CreateApiKeyOptions {
   name: string;
   permission?: 'full_access' | 'sending_access';
@@ -563,6 +594,8 @@ export interface Automation {
   status: string;
   steps?: AutomationStep[];
   connections?: AutomationConnection[];
+  /** Enrollment counts — included only on GET /automations/:id (retrieve). */
+  enrollments?: { active: number; completed: number };
   created_at: string;
   updated_at: string;
 }
@@ -609,13 +642,21 @@ export interface Webhook {
   endpoint: string;
   events: string[];
   status: string;
-  /** Signing secret — returned on create + retrieve, omitted from list. */
-  signing_secret?: string;
+  /** Whether a signing secret is set. (The secret itself is returned ONLY on create + rotate, never on get/list.) */
+  has_secret?: boolean;
+  /** Timestamp of the last delivery attempt (null until first delivery). */
+  last_delivery_at?: string | null;
+  /** HTTP status of the last delivery attempt (null until first delivery). */
+  last_delivery_status?: number | null;
+  /** Consecutive delivery failure count. */
+  failure_count?: number;
   created_at: string;
 }
 export interface CreateWebhookOptions {
   endpoint: string;
   events: string[];
+  /** Optional caller-supplied signing secret. When omitted, MailBlastr generates one (returned once). */
+  secret?: string;
 }
 export interface UpdateWebhookOptions {
   endpoint?: string;
@@ -662,13 +703,26 @@ export interface LogEntry {
 
 // ---- Events (automation custom events) ----
 export interface SendEventOptions {
-  /** The custom event name automations can trigger on. */
-  name: string;
+  /** The custom event name automations can trigger on. (`name` is accepted as an alias.) */
+  event?: string;
+  /** Alias for `event`. */
+  name?: string;
   /** Identify the contact by id. Provide `contact_id` OR `email`. */
   contact_id?: string;
   /** Identify the contact by email. Provide `contact_id` OR `email`. */
   email?: string;
-  /** Arbitrary event payload. */
+  /** Arbitrary event payload. (`data` is accepted as an alias.) */
+  payload?: Record<string, unknown>;
+  /** Alias for `payload`. */
   data?: Record<string, unknown>;
 }
-export interface SendEventResponse { object: 'event'; id: string }
+export interface SendEventResponse {
+  object: 'event';
+  id: string;
+  /** The event name that was ingested. */
+  event?: string;
+  /** The resolved contact id the event was attributed to. */
+  contact_id?: string;
+  /** Number of automations the event enrolled the contact into. */
+  enrolled?: number;
+}

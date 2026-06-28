@@ -150,6 +150,19 @@ test('contacts.batch / import / paginated list map to the right routes', async (
   assert.deepEqual(calls[1].body, { csv: 'email\nc@x.com\n' });
 });
 
+test('contacts batch/import on_conflict + audience-scoped segment_id', async () => {
+  const { fn, calls } = mockFetch(200, {});
+  const mb = new MailBlastr('mb_test', { baseUrl: 'https://api.test', fetch: fn });
+  await mb.contacts.batch({ audienceId: 'a1', contacts: [{ email: 'a@x.com' }], on_conflict: 'skip' });
+  await mb.contacts.import({ audienceId: 'a1', csv: 'email\nc@x.com\n', on_conflict: 'skip' });
+  await mb.contacts.list({ audienceId: 'a1', segment_id: 'seg1' });
+  assert.deepEqual(calls.map((c) => `${c.method} ${c.url}`), [
+    'POST https://api.test/audiences/a1/contacts/batch?on_conflict=skip',
+    'POST https://api.test/audiences/a1/contacts/import?on_conflict=skip',
+    'GET https://api.test/audiences/a1/contacts?segment_id=seg1',
+  ]);
+});
+
 test('segments resource maps every method (incl. contacts preview)', async () => {
   const { fn, calls } = mockFetch(200, {});
   const mb = new MailBlastr('mb_test', { baseUrl: 'https://api.test', fetch: fn });

@@ -3,7 +3,7 @@ import { HttpClient, type ClientConfig, DEFAULT_BASE_URL, VERSION, USER_AGENT } 
 import type {
   Result, RequestOptions, PaginationParams, ObjectRef,
   SendEmailOptions, CreateEmailResponse, Email,
-  AttachmentMeta, ReceivedEmail, ForwardReceivedEmailOptions,
+  AttachmentMeta, ReceivedAttachment, ReceivedEmail, ForwardReceivedEmailOptions,
   CreateDomainOptions, UpdateDomainOptions, Domain,
   DomainClaim, ClaimDomainOptions,
   Audience, Contact, CreateContactOptions, UpdateContactOptions,
@@ -49,7 +49,7 @@ class ReceivingEmails {
     return this.http.request('GET', `/emails/receiving/${id}`);
   }
   /** List a received email's attachments. GET /emails/receiving/:id/attachments */
-  listAttachments(id: string): Promise<Result<ListResponse<AttachmentMeta>>> {
+  listAttachments(id: string): Promise<Result<ListResponse<ReceivedAttachment>>> {
     return this.http.request('GET', `/emails/receiving/${id}/attachments`);
   }
   /**
@@ -220,19 +220,27 @@ class Contacts {
     if (params.limit != null) q.set('limit', String(params.limit));
     if (params.after != null) q.set('after', params.after);
     if (params.before != null) q.set('before', params.before);
-    // segment_id filter is only honored by the flat /contacts list.
-    if (!params.audienceId && params.segment_id != null) q.set('segment_id', params.segment_id);
+    // segment_id filter is honored by both the flat and audience-scoped list.
+    if (params.segment_id != null) q.set('segment_id', params.segment_id);
     const qs = q.toString();
     const base = params.audienceId ? `/audiences/${params.audienceId}/contacts` : '/contacts';
     return this.http.request('GET', `${base}${qs ? `?${qs}` : ''}`);
   }
-  /** Bulk-import contacts from an array. Upserts by email; max 10,000 per call. */
-  batch(params: { audienceId: string; contacts: ContactInput[] }): Promise<Result<ImportContactsResponse>> {
-    return this.http.request('POST', `/audiences/${params.audienceId}/contacts/batch`, { contacts: params.contacts });
+  /**
+   * Bulk-import contacts from an array. Upserts by email; max 10,000 per call.
+   * `on_conflict: 'skip'` leaves existing contacts untouched (default 'upsert').
+   */
+  batch(params: { audienceId: string; contacts: ContactInput[]; on_conflict?: 'upsert' | 'skip' }): Promise<Result<ImportContactsResponse>> {
+    const qs = params.on_conflict ? `?on_conflict=${params.on_conflict}` : '';
+    return this.http.request('POST', `/audiences/${params.audienceId}/contacts/batch${qs}`, { contacts: params.contacts });
   }
-  /** Bulk-import contacts from CSV text (header row optional). Upserts by email. */
-  import(params: { audienceId: string; csv: string }): Promise<Result<ImportContactsResponse>> {
-    return this.http.request('POST', `/audiences/${params.audienceId}/contacts/import`, { csv: params.csv });
+  /**
+   * Bulk-import contacts from CSV text (header row optional). Upserts by email.
+   * `on_conflict: 'skip'` leaves existing contacts untouched (default 'upsert').
+   */
+  import(params: { audienceId: string; csv: string; on_conflict?: 'upsert' | 'skip' }): Promise<Result<ImportContactsResponse>> {
+    const qs = params.on_conflict ? `?on_conflict=${params.on_conflict}` : '';
+    return this.http.request('POST', `/audiences/${params.audienceId}/contacts/import${qs}`, { csv: params.csv });
   }
   /** Update a contact. Returns the slim ack { object: 'contact', id }. Omit `audienceId` for the flat API. */
   update(payload: UpdateContactOptions): Promise<Result<ObjectRef<'contact'>>> {
