@@ -31,6 +31,23 @@ if (error) {
 
 Every method returns `{ data, error }` — `error` is `null` on success, or `{ statusCode, name, message }` on failure (no exceptions to catch for API errors).
 
+### Attachments
+
+Attach files by hosted URL (`path`, fetched at send time) or inline base64 (`content`):
+
+```ts
+await mb.emails.send({
+  from: 'Acme <hello@yourdomain.com>',
+  to: ['user@example.com'],
+  subject: 'Your invoice',
+  html: '<p>Invoice attached.</p>',
+  attachments: [
+    { filename: 'invoice.pdf', path: 'https://yourdomain.com/invoices/invoice.pdf' },
+    { filename: 'report.csv', content: base64Content, content_type: 'text/csv' },
+  ],
+});
+```
+
 ### Options
 
 ```ts
