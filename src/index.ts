@@ -18,7 +18,7 @@ import type {
   AddAutomationStepOptions, AutomationStep, AutomationRun,
   Webhook, CreateWebhookOptions, UpdateWebhookOptions,
   WebhookHeaders, VerifyWebhookResult, VerifyWebhookOptions,
-  LogEntry, SendEventOptions, SendEventResponse,
+  LogEntry, SendEventOptions, SendEventResponse, CreateEventOptions, EventDefinition,
   ApiKey, CreateApiKeyOptions, CreateApiKeyResponse,
   ListResponse, RemovedResponse,
 } from './types';
@@ -596,9 +596,21 @@ class Logs {
 
 class Events {
   constructor(private readonly http: HttpClient) {}
-  /** Send a custom event that automations can trigger on. POST /events */
+  /** Send a custom event that automations can trigger on. POST /events/send */
   send(payload: SendEventOptions, options?: RequestOptions): Promise<Result<SendEventResponse>> {
+    return this.http.request('POST', '/events/send', payload, options);
+  }
+  /** Create a custom-event definition (name + optional payload schema). POST /events */
+  create(payload: CreateEventOptions, options?: RequestOptions): Promise<Result<EventDefinition>> {
     return this.http.request('POST', '/events', payload, options);
+  }
+  /** List custom-event definitions. GET /events */
+  list(params?: PaginationParams): Promise<Result<ListResponse<EventDefinition>>> {
+    return this.http.request('GET', `/events${paginate(params)}`);
+  }
+  /** Delete a custom-event definition. DELETE /events/:id */
+  remove(id: string): Promise<Result<RemovedResponse>> {
+    return this.http.request('DELETE', `/events/${id}`);
   }
 }
 

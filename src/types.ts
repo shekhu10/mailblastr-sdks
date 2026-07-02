@@ -574,10 +574,11 @@ export interface UpdateTopicOptions {
 
 // ---- Automations ----
 export interface AutomationStep {
-  id: string;
+  /** Absent on the synthesized trigger step. */
+  id?: string;
   key: string;
   type: string;
-  position: number;
+  position?: number;
   config: Record<string, unknown>;
 }
 export interface AutomationConnection {
@@ -591,6 +592,7 @@ export interface Automation {
   audience_id: string;
   name: string;
   trigger: string;
+  /** 'enabled' | 'disabled' */
   status: string;
   steps?: AutomationStep[];
   connections?: AutomationConnection[];
@@ -601,11 +603,12 @@ export interface Automation {
 }
 export interface CreateAutomationOptions {
   name: string;
-  audience_id: string;
-  /** Built-in 'contact.created' or any custom event name. Defaults server-side. */
+  /** Optional; defaults to your default (oldest) audience. */
+  audience_id?: string;
+  /** Built-in 'contact.created' or any custom event name. Usually supplied as a steps[0] trigger step instead. */
   trigger?: string;
-  /** Initial status, e.g. 'draft' | 'active' | 'paused'. */
-  status?: string;
+  /** Initial status: 'enabled' | 'disabled' (default 'disabled'). */
+  status?: 'enabled' | 'disabled' | (string & {});
   /** Optional inline step graph; each step may carry a `key` for connections. */
   steps?: Array<{ key?: string; type: string; config?: Record<string, unknown>; [k: string]: unknown }>;
   /** Optional typed edges between step keys. */
@@ -613,7 +616,7 @@ export interface CreateAutomationOptions {
 }
 export interface UpdateAutomationOptions {
   name?: string;
-  status?: 'draft' | 'active' | 'paused';
+  status?: 'enabled' | 'disabled' | (string & {});
   connections?: Array<{ from: string; to: string; type?: string }>;
 }
 export interface AddAutomationStepOptions {
@@ -622,17 +625,29 @@ export interface AddAutomationStepOptions {
   key?: string;
   [k: string]: unknown;
 }
+export interface AutomationRunStep {
+  key: string;
+  type: string;
+  /** 'completed' | 'failed' | 'skipped' */
+  status: string;
+  started_at: string | null;
+  completed_at: string | null;
+  output: Record<string, unknown> | null;
+  error: string | null;
+}
 export interface AutomationRun {
   object: 'automation_run';
   id: string;
-  automation_id: string;
   contact_id: string;
+  /** 'running' | 'completed' | 'failed' | 'cancelled' | 'skipped' */
   status: string;
-  steps: Array<Record<string, unknown>>;
-  error: string | null;
   started_at: string;
   completed_at: string | null;
   created_at: string;
+  /** Present on GET /automations/:id/runs/:runId (retrieve) only. */
+  automation_id?: string;
+  steps?: AutomationRunStep[];
+  error?: string | null;
 }
 
 // ---- Webhooks ----
@@ -725,4 +740,18 @@ export interface SendEventResponse {
   contact_id?: string;
   /** Number of automations the event enrolled the contact into. */
   enrolled?: number;
+}
+export interface CreateEventOptions {
+  /** The custom event name (cannot start with the reserved `mailblastr:` prefix). */
+  name: string;
+  /** Optional flat key→type schema; types: 'string' | 'number' | 'boolean' | 'date'. */
+  schema?: Record<string, 'string' | 'number' | 'boolean' | 'date'>;
+}
+export interface EventDefinition {
+  object: 'event';
+  id: string;
+  name: string;
+  schema: Record<string, string> | null;
+  created_at: string;
+  updated_at: string;
 }

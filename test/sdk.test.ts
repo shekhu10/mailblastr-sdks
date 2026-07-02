@@ -364,7 +364,7 @@ test('automations resource maps every method', async () => {
   await mb.automations.create({ name: 'Onboarding', audience_id: 'a1', trigger: 'contact.created' });
   await mb.automations.list();
   await mb.automations.get('au1');
-  await mb.automations.update('au1', { status: 'active' });
+  await mb.automations.update('au1', { status: 'enabled' });
   await mb.automations.addStep('au1', { type: 'send_email', config: { template_id: 't1' } });
   await mb.automations.runs('au1');
   await mb.automations.getRun('au1', 'run1');
@@ -539,10 +539,15 @@ test('logs + events map to the right routes', async () => {
   await mb.logs.list({ limit: 20, before: 'cur2' });
   await mb.logs.get('l1');
   await mb.events.send({ name: 'signup.completed', email: 'c@x.com', data: { plan: 'pro' } });
+  await mb.events.create({ name: 'signup.completed', schema: { plan: 'string' } });
+  await mb.events.list();
   assert.deepEqual(calls.map((c) => `${c.method} ${c.url}`), [
     'GET https://api.test/logs?limit=20&before=cur2',
     'GET https://api.test/logs/l1',
+    'POST https://api.test/events/send',
     'POST https://api.test/events',
+    'GET https://api.test/events',
   ]);
   assert.deepEqual(calls[2].body, { name: 'signup.completed', email: 'c@x.com', data: { plan: 'pro' } });
+  assert.deepEqual(calls[3].body, { name: 'signup.completed', schema: { plan: 'string' } });
 });
