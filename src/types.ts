@@ -233,6 +233,15 @@ export interface Broadcast {
     status?: string | null;
     winner?: string | null;
   };
+  /** Engagement follow-ups (retrieve only). */
+  followups?: Array<{
+    id: string; condition: string; delay: string; subject: string | null;
+    status: string; run_at: string | null; sent_count: number;
+  }>;
+  /** Generated mailing-list To address (retrieve only; null unless list_to was set). */
+  list_address?: string | null;
+  /** How the unsubscribe list applied to this broadcast (retrieve only). */
+  unsubscribe_policy?: 'account' | 'domain' | 'ignore';
   /** Recurrence cadence (null ⇒ one-off). */
   recurrence?: { interval: BroadcastRecurrence; every: number } | null;
   /** Set on auto-generated occurrences of a recurring broadcast. */
@@ -332,7 +341,7 @@ export interface BroadcastStats {
 export interface BroadcastAbResult {
   object: 'broadcast_ab';
   broadcast_id: string;
-  metric: 'open' | 'click';
+  metric: 'open' | 'click' | 'reply';
   [k: string]: unknown;
 }
 
@@ -493,6 +502,8 @@ export interface ReceivedEmail {
   /** Parsed message headers as a name → value map. */
   headers?: Record<string, string>;
   message_id?: string;
+  /** AI reply intent (replies only): 'interested' | 'neutral' | 'not_interested'. */
+  category?: string | null;
   spf?: string;
   verdicts?: Record<string, unknown>;
   attachments?: ReceivedAttachment[];
