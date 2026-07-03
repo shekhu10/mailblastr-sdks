@@ -229,7 +229,7 @@ export interface Broadcast {
     enabled: boolean;
     subject_b?: string | null;
     test_pct?: number;
-    metric?: 'open' | 'click';
+    metric?: 'open' | 'click' | 'reply';
     status?: string | null;
     winner?: string | null;
   };
@@ -253,7 +253,7 @@ export interface BroadcastAbTest {
   /** Percentage (1-100) of the audience used to pick the winner. Defaults to 20. */
   test_pct?: number;
   /** Winner metric. Defaults to 'open'. */
-  metric?: 'open' | 'click';
+  metric?: 'open' | 'click' | 'reply';
 }
 /** A recurring broadcast re-sends every `recurrence_every` periods. */
 export type BroadcastRecurrence = 'daily' | 'weekly' | 'monthly';
@@ -276,6 +276,26 @@ export interface CreateBroadcastOptions {
   recurrence_every?: number;
   /** A/B-test configuration. */
   ab_test?: BroadcastAbTest;
+  /**
+   * Engagement follow-ups (max 5): sent `delay` after the broadcast finishes to
+   * recipients matching `condition`, threaded as replies to the original email.
+   */
+  followups?: Array<{
+    condition: 'opened' | 'clicked' | 'not_opened' | 'not_clicked' | 'replied' | 'not_replied';
+    /** Natural-language duration, e.g. '5 hours' or '4 days' (max 30 days). */
+    delay: string;
+    /** Defaults to `Re: <broadcast subject>` (keeps the thread). */
+    subject?: string;
+    html: string;
+  }>;
+  /** Show a generated mailing-list address (recipient-<hex>@your-domain) as the visible To. Delivery stays individual. */
+  list_to?: boolean;
+  /**
+   * How the unsubscribe list applies: 'account' (default — any opt-out blocks),
+   * 'domain' (only this sending domain's + account-wide opt-outs block), or
+   * 'ignore' (opt-outs skipped; bounced/complained addresses ALWAYS excluded).
+   */
+  unsubscribe_policy?: 'account' | 'domain' | 'ignore';
   /** Send immediately on create (or schedule it when `scheduled_at` is given). */
   send?: boolean;
   /** ISO 8601 (or natural-language) schedule used when `send` is true. */
@@ -521,6 +541,34 @@ export interface ContactProperty {
   fallback_value: string | number | null;
   created_at: string;
 }
+
+// ── Polls ────────────────────────────────────────────────────────────────────
+/** One row of `polls.list()` — an email that has in-email poll responses. */
+export interface Poll {
+  object: 'poll';
+  /** The email the poll was sent on. */
+  email_id: string;
+  subject: string | null;
+  responses: number;
+  distinct_answers: number;
+  last_response_at: string | null;
+}
+/** A single answer's tally within a poll result. */
+export interface PollAnswer {
+  answer: string;
+  count: number;
+  /** Share of all responses, 0–100, one decimal. */
+  pct: number;
+}
+/** `polls.get(emailId)` — the aggregated answer breakdown for one email. */
+export interface PollResult {
+  object: 'poll_result';
+  email_id: string;
+  total: number;
+  unique_respondents: number;
+  /** Most-voted answer first. */
+  answers: PollAnswer[];
+}
 export interface CreateContactPropertyOptions {
   /** Canonical merge-tag key. `name` is accepted as an alias. */
   key?: string;
@@ -605,7 +653,15 @@ export interface CreateAutomationOptions {
   name: string;
   /** Optional; defaults to your default (oldest) audience. */
   audience_id?: string;
-  /** Built-in 'contact.created' or any custom event name. Usually supplied as a steps[0] trigger step instead. */
+  /**
+   * The event that starts a run. One of:
+   * - `'contact.created'` (built-in audience trigger)
+   * - an engagement event: `'email.opened'`, `'email.clicked'`, `'email.replied'`,
+   *   `'email.bounced'` (the contact is enrolled when they engage with — or an email
+   *   to them bounces from — one of your non-automation sends)
+   * - any custom event name you send via `events.send`.
+   * Usually supplied as a steps[0] trigger step instead.
+   */
   trigger?: string;
   /** Initial status: 'enabled' | 'disabled' (default 'disabled'). */
   status?: 'enabled' | 'disabled' | (string & {});

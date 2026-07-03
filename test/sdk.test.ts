@@ -75,6 +75,28 @@ test('emails: batch / get / update / cancel map to the right routes', async () =
   ]);
 });
 
+test('receiving.reply + audiences.importSheet map to the right routes', async () => {
+  const { fn, calls } = mockFetch(200, { ok: true });
+  const mb = new MailBlastr('mb_test', { baseUrl: 'https://api.test', fetch: fn });
+  await mb.emails.receiving.reply('r-1', { from: 'me@my.test', text: 'hi' });
+  await mb.audiences.importSheet('aud-1', { url: 'https://docs.google.com/spreadsheets/d/x' });
+  assert.deepEqual(calls.map((c) => `${c.method} ${c.url}`), [
+    'POST https://api.test/emails/receiving/r-1/reply',
+    'POST https://api.test/audiences/aud-1/contacts/import-sheet',
+  ]);
+});
+
+test('polls resource maps list + get to the right routes', async () => {
+  const { fn, calls } = mockFetch(200, { object: 'list', has_more: false, data: [] });
+  const mb = new MailBlastr('mb_test', { baseUrl: 'https://api.test', fetch: fn });
+  await mb.polls.list();
+  await mb.polls.get('e-42');
+  assert.deepEqual(calls.map((c) => `${c.method} ${c.url}`), [
+    'GET https://api.test/polls',
+    'GET https://api.test/polls/e-42',
+  ]);
+});
+
 test('domains resource maps every method', async () => {
   const { fn, calls } = mockFetch(200, {});
   const mb = new MailBlastr('mb_test', { baseUrl: 'https://api.test', fetch: fn });

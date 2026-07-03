@@ -10,6 +10,7 @@ import type {
   ContactInput, ImportContactsResponse, ListContactsParams,
   ContactTopics, UpdateContactTopicsOptions,
   ContactProperty, CreateContactPropertyOptions, UpdateContactPropertyOptions,
+  Poll, PollResult,
   Broadcast, CreateBroadcastOptions, UpdateBroadcastOptions, BroadcastStats, BroadcastAbResult,
   Segment, CreateSegmentOptions, UpdateSegmentOptions,
   Topic, CreateTopicOptions, UpdateTopicOptions,
@@ -71,6 +72,14 @@ class ReceivingEmails {
   /** Forward a received email. POST /emails/receiving/:id/forward */
   forward(id: string, payload: ForwardReceivedEmailOptions): Promise<Result<CreateEmailResponse>> {
     return this.http.request('POST', `/emails/receiving/${id}/forward`, payload);
+  }
+  /**
+   * Reply to a received email's sender, threaded into the same conversation
+   * (In-Reply-To the received message; subject defaults to `Re: …`).
+   * POST /emails/receiving/:id/reply
+   */
+  reply(id: string, payload: { from: string; html?: string; text?: string; subject?: string }): Promise<Result<CreateEmailResponse>> {
+    return this.http.request('POST', `/emails/receiving/${id}/reply`, payload);
   }
   /** Delete a received email. DELETE /emails/receiving/:id */
   remove(id: string): Promise<Result<RemovedResponse>> {
@@ -190,6 +199,17 @@ class Audiences {
   list(params?: PaginationParams): Promise<Result<ListResponse<Audience>>> {
     return this.http.request('GET', `/audiences${paginate(params)}`);
   }
+  /**
+   * Import contacts from a link-shared Google Sheet. Header columns become
+   * contact properties (usable as {{merge_tags}}); rows land in a fresh
+   * segment. POST /audiences/:id/contacts/import-sheet
+   */
+  importSheet(audienceId: string, payload: { url: string; segment_name?: string }): Promise<Result<{
+    object: 'sheet_import'; imported: number; updated: number; skipped: number; total: number;
+    segment_id: string; segment_name: string; segment_added: number; variables: string[];
+  }>> {
+    return this.http.request('POST', `/audiences/${encodeURIComponent(audienceId)}/contacts/import-sheet`, payload);
+  }
   /** Rename an audience. PATCH /audiences/:id */
   update(id: string, payload: { name: string }): Promise<Result<Audience>> {
     return this.http.request('PATCH', `/audiences/${id}`, payload);
@@ -293,6 +313,19 @@ class ContactProperties {
   }
   remove(id: string): Promise<Result<RemovedResponse>> {
     return this.http.request('DELETE', `/contact-properties/${id}`);
+  }
+}
+
+/** Read-only results of the in-email poll widget. `mb.polls`. */
+class Polls {
+  constructor(private readonly http: HttpClient) {}
+  /** One summary row per email that has poll responses. GET /polls */
+  list(params?: PaginationParams): Promise<Result<ListResponse<Poll>>> {
+    return this.http.request('GET', `/polls${paginate(params)}`);
+  }
+  /** The aggregated answer breakdown for one email. GET /polls/:emailId */
+  get(emailId: string): Promise<Result<PollResult>> {
+    return this.http.request('GET', `/polls/${encodeURIComponent(emailId)}`);
   }
 }
 
@@ -659,6 +692,7 @@ export class MailBlastr {
   readonly logs: Logs;
   readonly events: Events;
   readonly apiKeys: ApiKeys;
+  readonly polls: Polls;
 
   constructor(apiKey: string, options: MailBlastrOptions = {}) {
     const http = new HttpClient(apiKey, options);
@@ -677,6 +711,7 @@ export class MailBlastr {
     this.logs = new Logs(http);
     this.events = new Events(http);
     this.apiKeys = new ApiKeys(http);
+    this.polls = new Polls(http);
   }
 }
 
