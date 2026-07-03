@@ -668,8 +668,8 @@ export interface CreateAutomationOptions {
    * The event that starts a run. One of:
    * - `'contact.created'` (built-in audience trigger)
    * - an engagement event: `'email.opened'`, `'email.clicked'`, `'email.replied'`,
-   *   `'email.bounced'` (the contact is enrolled when they engage with — or an email
-   *   to them bounces from — one of your non-automation sends)
+   *   `'email.bounced'`, `'email.delivered'` (the contact is enrolled on that event
+   *   for one of your non-automation sends)
    * - any custom event name you send via `events.send`.
    * Usually supplied as a steps[0] trigger step instead.
    */
