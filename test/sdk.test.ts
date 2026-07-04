@@ -254,19 +254,6 @@ test('campaigns + apiKeys map to the right routes', async () => {
   assert.equal(calls[3].body.domain_id, 'd1');
 });
 
-test('broadcasts is a deprecated alias of campaigns (same instance, same methods)', async () => {
-  const { fn, calls } = mockFetch(200, { id: 'b-1' });
-  const mb = new MailBlastr('mb_test', { baseUrl: 'https://api.test', fetch: fn });
-  // Same instance — existing `mb.broadcasts.*` code keeps working unchanged.
-  assert.strictEqual(mb.broadcasts, mb.campaigns);
-  await mb.broadcasts.create({ audience_id: 'a1', from: 'f@x.com', subject: 's', html: 'x' });
-  await mb.broadcasts.get('b1');
-  assert.deepEqual(calls.map((c) => `${c.method} ${c.url}`), [
-    'POST https://api.test/campaigns',
-    'GET https://api.test/campaigns/b1',
-  ]);
-});
-
 test('emails.list + sent-attachments map to the right routes', async () => {
   const { fn, calls } = mockFetch(200, {});
   const mb = new MailBlastr('mb_test', { baseUrl: 'https://api.test', fetch: fn });

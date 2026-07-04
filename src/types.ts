@@ -216,9 +216,9 @@ export interface ListContactsParams {
   segment_id?: string;
 }
 
-// ---- Broadcasts ----
-export interface Broadcast {
-  object: 'broadcast';
+// ---- Campaigns ----
+export interface Campaign {
+  object: 'campaign';
   id: string;
   name: string | null;
   audience_id: string;
@@ -236,7 +236,7 @@ export interface Broadcast {
   scheduled_at: string | null;
   sent_at: string | null;
   created_at: string;
-  /** A/B config + decision. `{ enabled: false }` when not an A/B broadcast. */
+  /** A/B config + decision. `{ enabled: false }` when not an A/B campaign. */
   ab_test?: {
     enabled: boolean;
     subject_b?: string | null;
@@ -252,21 +252,21 @@ export interface Broadcast {
   }>;
   /** Generated mailing-list To address (retrieve only; null unless list_to was set). */
   list_address?: string | null;
-  /** How the unsubscribe list applied to this broadcast (retrieve only). */
+  /** How the unsubscribe list applied to this campaign (retrieve only). */
   unsubscribe_policy?: 'account' | 'domain' | 'ignore';
   /** Recurrence cadence (null ⇒ one-off). */
-  recurrence?: { interval: BroadcastRecurrence; every: number } | null;
-  /** Set on auto-generated occurrences of a recurring broadcast. */
-  parent_broadcast_id?: string | null;
-  /** Engagement counts — included only on GET /broadcasts/:id (retrieve). */
+  recurrence?: { interval: CampaignRecurrence; every: number } | null;
+  /** Set on auto-generated occurrences of a recurring campaign. */
+  parent_campaign_id?: string | null;
+  /** Engagement counts — included only on GET /campaigns/:id (retrieve). */
   statistics?: Record<string, unknown>;
 }
 /**
- * A/B-test config accepted on broadcast create. When `enabled`, supply at least
+ * A/B-test config accepted on campaign create. When `enabled`, supply at least
  * one variant-B field (`subject_b`, `html_b`, or `text_b`). `test_pct` is the
  * percentage of the audience used for the test split; `metric` decides the winner.
  */
-export interface BroadcastAbTest {
+export interface CampaignAbTest {
   enabled: boolean;
   subject_b?: string | null;
   html_b?: string | null;
@@ -276,9 +276,9 @@ export interface BroadcastAbTest {
   /** Winner metric. Defaults to 'open'. */
   metric?: 'open' | 'click' | 'reply';
 }
-/** A recurring broadcast re-sends every `recurrence_every` periods. */
-export type BroadcastRecurrence = 'daily' | 'weekly' | 'monthly';
-export interface CreateBroadcastOptions {
+/** A recurring campaign re-sends every `recurrence_every` periods. */
+export type CampaignRecurrence = 'daily' | 'weekly' | 'monthly';
+export interface CreateCampaignOptions {
   audience_id: string;
   from: string;
   subject: string;
@@ -297,21 +297,21 @@ export interface CreateBroadcastOptions {
   segment_id?: string;
   /** Gate recipients by a topic subscription. */
   topic_id?: string;
-  /** Make this a recurring broadcast (re-sends every `recurrence_every` periods). */
-  recurrence?: BroadcastRecurrence;
+  /** Make this a recurring campaign (re-sends every `recurrence_every` periods). */
+  recurrence?: CampaignRecurrence;
   /** Number of periods between recurring sends (1-365). Defaults to 1. */
   recurrence_every?: number;
   /** A/B-test configuration. */
-  ab_test?: BroadcastAbTest;
+  ab_test?: CampaignAbTest;
   /**
-   * Engagement follow-ups (max 5): sent `delay` after the broadcast finishes to
+   * Engagement follow-ups (max 5): sent `delay` after the campaign finishes to
    * recipients matching `condition`, threaded as replies to the original email.
    */
   followups?: Array<{
     condition: 'opened' | 'clicked' | 'not_opened' | 'not_clicked' | 'replied' | 'not_replied';
     /** Natural-language duration, e.g. '5 hours' or '4 days' (max 30 days). */
     delay: string;
-    /** Defaults to `Re: <broadcast subject>` (keeps the thread). */
+    /** Defaults to `Re: <campaign subject>` (keeps the thread). */
     subject?: string;
     html: string;
   }>;
@@ -328,7 +328,7 @@ export interface CreateBroadcastOptions {
   /** ISO 8601 (or natural-language) schedule used when `send` is true. */
   scheduled_at?: string;
 }
-export interface UpdateBroadcastOptions {
+export interface UpdateCampaignOptions {
   name?: string;
   from?: string;
   subject?: string;
@@ -342,38 +342,26 @@ export interface UpdateBroadcastOptions {
   /** Re-target a topic gate (pass null to clear). */
   topic_id?: string | null;
   /** Update the recurrence cadence. */
-  recurrence?: BroadcastRecurrence;
+  recurrence?: CampaignRecurrence;
   /** Update the number of periods between recurring sends (1-365). */
   recurrence_every?: number;
   /** Update the A/B-test configuration. */
-  ab_test?: BroadcastAbTest;
+  ab_test?: CampaignAbTest;
 }
-/** Per-broadcast analytics returned by GET /broadcasts/:id/stats. */
-export interface BroadcastStats {
-  object: 'broadcast_stats';
-  broadcast_id: string;
+/** Per-campaign analytics returned by GET /campaigns/:id/stats. */
+export interface CampaignStats {
+  object: 'campaign_stats';
+  campaign_id: string;
   links?: Array<Record<string, unknown>>;
   [k: string]: unknown;
 }
-/** A/B winner evaluation returned by GET /broadcasts/:id/ab. */
-export interface BroadcastAbResult {
-  object: 'broadcast_ab';
-  broadcast_id: string;
+/** A/B winner evaluation returned by GET /campaigns/:id/ab. */
+export interface CampaignAbResult {
+  object: 'campaign_ab';
+  campaign_id: string;
   metric: 'open' | 'click' | 'reply';
   [k: string]: unknown;
 }
-
-// ---- Campaigns (formerly Broadcasts) ----
-// Primary names for the campaigns resource. Structural aliases of the
-// Broadcast* types (kept above for back-compat): the API's response `object`
-// strings intentionally remain 'broadcast' / 'broadcast_stats' / 'broadcast_ab'.
-export type Campaign = Broadcast;
-export type CampaignAbTest = BroadcastAbTest;
-export type CampaignRecurrence = BroadcastRecurrence;
-export type CreateCampaignOptions = CreateBroadcastOptions;
-export type UpdateCampaignOptions = UpdateBroadcastOptions;
-export type CampaignStats = BroadcastStats;
-export type CampaignAbResult = BroadcastAbResult;
 
 // ---- Segments ----
 export type SegmentStatus = 'all' | 'subscribed' | 'unsubscribed';

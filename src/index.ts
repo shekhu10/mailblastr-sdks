@@ -337,11 +337,7 @@ class Polls {
   }
 }
 
-/**
- * Campaigns (formerly Broadcasts). Calls the canonical /campaigns endpoints;
- * the API keeps /broadcasts as a permanent alias and the response `object`
- * strings remain 'broadcast'/'broadcast_stats'/'broadcast_ab' for back-compat.
- */
+/** Campaigns — bulk sends to an audience or segment. Calls the /campaigns endpoints. */
 class Campaigns {
   constructor(private readonly http: HttpClient) {}
   create(payload: CreateCampaignOptions): Promise<Result<{ id: string }>> {
@@ -697,12 +693,6 @@ export class MailBlastr {
   readonly contacts: Contacts;
   readonly contactProperties: ContactProperties;
   readonly campaigns: Campaigns;
-  /**
-   * @deprecated Use `campaigns` — Broadcasts were renamed to Campaigns. This is
-   * the SAME instance as `campaigns` (identical methods and behavior), kept so
-   * existing code never breaks.
-   */
-  readonly broadcasts: Campaigns;
   readonly segments: Segments;
   readonly topics: Topics;
   readonly templates: Templates;
@@ -722,7 +712,6 @@ export class MailBlastr {
     this.contacts = new Contacts(http);
     this.contactProperties = new ContactProperties(http);
     this.campaigns = new Campaigns(http);
-    this.broadcasts = this.campaigns; // deprecated alias — same instance
     this.segments = new Segments(http);
     this.topics = new Topics(http);
     this.templates = new Templates(http);
