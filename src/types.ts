@@ -37,6 +37,12 @@ export interface SendEmailOptions {
   bcc?: string | string[];
   cc?: string | string[];
   reply_to?: string | string[];
+  /**
+   * HTML body. Markdown-style `[text](url)` links and bare URLs
+   * (`https://…` / `www.…`) in the body text are converted to tracked
+   * hyperlinks automatically at send time — content already inside `<a>` tags,
+   * attribute values, and `<pre>`/`<code>` blocks are left untouched.
+   */
   html?: string;
   text?: string;
   /**
@@ -276,6 +282,12 @@ export interface CreateBroadcastOptions {
   audience_id: string;
   from: string;
   subject: string;
+  /**
+   * HTML body. Markdown-style `[text](url)` links and bare URLs
+   * (`https://…` / `www.…`) in the body text are converted to tracked
+   * hyperlinks automatically at send time — content already inside `<a>` tags,
+   * attribute values, and `<pre>`/`<code>` blocks are left untouched.
+   */
   html?: string;
   text?: string;
   reply_to?: string | string[];
