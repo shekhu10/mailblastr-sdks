@@ -462,13 +462,16 @@ test('domains dns helpers map to the right routes', async () => {
   await mb.domains.detectDns('d1');
   await mb.domains.applyCloudflareDns('d1', { token: 'cf' });
   await mb.domains.applyGoDaddyDns('d1', { key: 'k', secret: 's' });
+  await mb.domains.applyNamecheapDns('d1', { apiUser: 'u', apiKey: 'nk' });
   assert.deepEqual(calls.map((c) => `${c.method} ${c.url}`), [
     'GET https://api.test/domains/d1/dns/detect',
     'POST https://api.test/domains/d1/dns/cloudflare',
     'POST https://api.test/domains/d1/dns/godaddy',
+    'POST https://api.test/domains/d1/dns/namecheap',
   ]);
   assert.deepEqual(calls[1].body, { token: 'cf' });
   assert.deepEqual(calls[2].body, { key: 'k', secret: 's' });
+  assert.deepEqual(calls[3].body, { apiUser: 'u', apiKey: 'nk' });
 });
 
 test('segments.create forwards filter.property_filters', async () => {

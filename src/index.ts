@@ -183,6 +183,14 @@ class Domains {
   applyGoDaddyDns(id: string, payload: { key: string; secret: string }): Promise<Result<Record<string, unknown>>> {
     return this.http.request('POST', `/domains/${id}/dns/godaddy`, payload);
   }
+  /**
+   * Apply this domain's DNS records via the Namecheap API (existing records are
+   * preserved), then auto-verify. Namecheap must have the calling server's IP
+   * whitelisted in the account's API settings. POST /domains/:id/dns/namecheap
+   */
+  applyNamecheapDns(id: string, payload: { apiUser: string; apiKey: string; userName?: string }): Promise<Result<Record<string, unknown>>> {
+    return this.http.request('POST', `/domains/${id}/dns/namecheap`, payload);
+  }
   remove(id: string): Promise<Result<RemovedResponse>> {
     return this.http.request('DELETE', `/domains/${id}`);
   }
