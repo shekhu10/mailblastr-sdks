@@ -39,6 +39,12 @@ export interface SendEmailOptions {
   reply_to?: string | string[];
   html?: string;
   text?: string;
+  /**
+   * Inbox preview text (preheader) shown next to the subject in the
+   * recipient's inbox list. Injected as a hidden element at the top of the
+   * HTML body; never visible in the opened email. Max 150 characters.
+   */
+  preview_text?: string;
   headers?: Record<string, string>;
   attachments?: Attachment[];
   tags?: Tag[];
