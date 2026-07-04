@@ -351,6 +351,18 @@ export interface BroadcastAbResult {
   [k: string]: unknown;
 }
 
+// ---- Campaigns (formerly Broadcasts) ----
+// Primary names for the campaigns resource. Structural aliases of the
+// Broadcast* types (kept above for back-compat): the API's response `object`
+// strings intentionally remain 'broadcast' / 'broadcast_stats' / 'broadcast_ab'.
+export type Campaign = Broadcast;
+export type CampaignAbTest = BroadcastAbTest;
+export type CampaignRecurrence = BroadcastRecurrence;
+export type CreateCampaignOptions = CreateBroadcastOptions;
+export type UpdateCampaignOptions = UpdateBroadcastOptions;
+export type CampaignStats = BroadcastStats;
+export type CampaignAbResult = BroadcastAbResult;
+
 // ---- Segments ----
 export type SegmentStatus = 'all' | 'subscribed' | 'unsubscribed';
 /** Operators for a custom-property segment predicate. */

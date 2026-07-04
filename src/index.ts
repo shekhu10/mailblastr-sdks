@@ -11,7 +11,7 @@ import type {
   ContactTopics, UpdateContactTopicsOptions,
   ContactProperty, CreateContactPropertyOptions, UpdateContactPropertyOptions,
   Poll, PollResult,
-  Broadcast, CreateBroadcastOptions, UpdateBroadcastOptions, BroadcastStats, BroadcastAbResult,
+  Campaign, CreateCampaignOptions, UpdateCampaignOptions, CampaignStats, CampaignAbResult,
   Segment, CreateSegmentOptions, UpdateSegmentOptions,
   Topic, CreateTopicOptions, UpdateTopicOptions,
   Template, CreateTemplateOptions, UpdateTemplateOptions, DuplicateTemplateOptions,
@@ -337,38 +337,43 @@ class Polls {
   }
 }
 
-class Broadcasts {
+/**
+ * Campaigns (formerly Broadcasts). Calls the canonical /campaigns endpoints;
+ * the API keeps /broadcasts as a permanent alias and the response `object`
+ * strings remain 'broadcast'/'broadcast_stats'/'broadcast_ab' for back-compat.
+ */
+class Campaigns {
   constructor(private readonly http: HttpClient) {}
-  create(payload: CreateBroadcastOptions): Promise<Result<{ id: string }>> {
-    return this.http.request('POST', '/broadcasts', payload);
+  create(payload: CreateCampaignOptions): Promise<Result<{ id: string }>> {
+    return this.http.request('POST', '/campaigns', payload);
   }
-  get(id: string): Promise<Result<Broadcast>> {
-    return this.http.request('GET', `/broadcasts/${id}`);
+  get(id: string): Promise<Result<Campaign>> {
+    return this.http.request('GET', `/campaigns/${id}`);
   }
-  list(params?: PaginationParams): Promise<Result<ListResponse<Broadcast>>> {
-    return this.http.request('GET', `/broadcasts${paginate(params)}`);
+  list(params?: PaginationParams): Promise<Result<ListResponse<Campaign>>> {
+    return this.http.request('GET', `/campaigns${paginate(params)}`);
   }
-  update(id: string, payload: UpdateBroadcastOptions): Promise<Result<{ id: string }>> {
-    return this.http.request('PATCH', `/broadcasts/${id}`, payload);
+  update(id: string, payload: UpdateCampaignOptions): Promise<Result<{ id: string }>> {
+    return this.http.request('PATCH', `/campaigns/${id}`, payload);
   }
   /** Send now, or schedule with { scheduled_at }. */
   send(id: string, payload?: { scheduled_at?: string }): Promise<Result<{ id: string }>> {
-    return this.http.request('POST', `/broadcasts/${id}/send`, payload ?? {});
+    return this.http.request('POST', `/campaigns/${id}/send`, payload ?? {});
   }
-  /** Cancel a scheduled broadcast (returns it to draft). POST /broadcasts/:id/cancel */
-  cancel(id: string): Promise<Result<Broadcast>> {
-    return this.http.request('POST', `/broadcasts/${id}/cancel`);
+  /** Cancel a scheduled campaign (returns it to draft). POST /campaigns/:id/cancel */
+  cancel(id: string): Promise<Result<Campaign>> {
+    return this.http.request('POST', `/campaigns/${id}/cancel`);
   }
-  /** Per-broadcast analytics (counts, engagement rates, top links). GET /broadcasts/:id/stats */
-  stats(id: string): Promise<Result<BroadcastStats>> {
-    return this.http.request('GET', `/broadcasts/${id}/stats`);
+  /** Per-campaign analytics (counts, engagement rates, top links). GET /campaigns/:id/stats */
+  stats(id: string): Promise<Result<CampaignStats>> {
+    return this.http.request('GET', `/campaigns/${id}/stats`);
   }
-  /** A/B winner evaluation for an A/B broadcast. GET /broadcasts/:id/ab */
-  ab(id: string): Promise<Result<BroadcastAbResult>> {
-    return this.http.request('GET', `/broadcasts/${id}/ab`);
+  /** A/B winner evaluation for an A/B campaign. GET /campaigns/:id/ab */
+  ab(id: string): Promise<Result<CampaignAbResult>> {
+    return this.http.request('GET', `/campaigns/${id}/ab`);
   }
   remove(id: string): Promise<Result<RemovedResponse>> {
-    return this.http.request('DELETE', `/broadcasts/${id}`);
+    return this.http.request('DELETE', `/campaigns/${id}`);
   }
 }
 
@@ -691,7 +696,13 @@ export class MailBlastr {
   readonly audiences: Audiences;
   readonly contacts: Contacts;
   readonly contactProperties: ContactProperties;
-  readonly broadcasts: Broadcasts;
+  readonly campaigns: Campaigns;
+  /**
+   * @deprecated Use `campaigns` — Broadcasts were renamed to Campaigns. This is
+   * the SAME instance as `campaigns` (identical methods and behavior), kept so
+   * existing code never breaks.
+   */
+  readonly broadcasts: Campaigns;
   readonly segments: Segments;
   readonly topics: Topics;
   readonly templates: Templates;
@@ -710,7 +721,8 @@ export class MailBlastr {
     this.audiences = new Audiences(http);
     this.contacts = new Contacts(http);
     this.contactProperties = new ContactProperties(http);
-    this.broadcasts = new Broadcasts(http);
+    this.campaigns = new Campaigns(http);
+    this.broadcasts = this.campaigns; // deprecated alias — same instance
     this.segments = new Segments(http);
     this.topics = new Topics(http);
     this.templates = new Templates(http);

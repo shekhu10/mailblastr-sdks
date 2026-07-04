@@ -204,10 +204,10 @@ test('segments resource maps every method (incl. contacts preview)', async () =>
   ]);
 });
 
-test('broadcasts.create forwards segment_id', async () => {
+test('campaigns.create forwards segment_id', async () => {
   const { fn, calls } = mockFetch(200, { id: 'b-1' });
   const mb = new MailBlastr('mb_test', { baseUrl: 'https://api.test', fetch: fn });
-  await mb.broadcasts.create({ audience_id: 'a1', from: 'f@x.com', subject: 's', html: 'x', segment_id: 's1' });
+  await mb.campaigns.create({ audience_id: 'a1', from: 'f@x.com', subject: 's', html: 'x', segment_id: 's1' });
   assert.equal(calls[0].body.segment_id, 's1');
 });
 
@@ -236,22 +236,35 @@ test('emails.send forwards template_id + variables in the body', async () => {
   assert.deepEqual(calls[0].body.variables, { name: 'Ada' });
 });
 
-test('broadcasts + apiKeys map to the right routes', async () => {
+test('campaigns + apiKeys map to the right routes', async () => {
   const { fn, calls } = mockFetch(200, {});
   const mb = new MailBlastr('mb_test', { baseUrl: 'https://api.test', fetch: fn });
-  await mb.broadcasts.create({ audience_id: 'a1', from: 'f@x.com', subject: 's', html: 'x' });
-  await mb.broadcasts.send('b1', { scheduled_at: '2030-01-01T00:00:00Z' });
-  await mb.broadcasts.cancel('b1');
+  await mb.campaigns.create({ audience_id: 'a1', from: 'f@x.com', subject: 's', html: 'x' });
+  await mb.campaigns.send('b1', { scheduled_at: '2030-01-01T00:00:00Z' });
+  await mb.campaigns.cancel('b1');
   await mb.apiKeys.create({ name: 'CI', permission: 'sending_access', domain_id: 'd1' });
   await mb.apiKeys.remove('k1');
   assert.deepEqual(calls.map((c) => `${c.method} ${c.url}`), [
-    'POST https://api.test/broadcasts',
-    'POST https://api.test/broadcasts/b1/send',
-    'POST https://api.test/broadcasts/b1/cancel',
+    'POST https://api.test/campaigns',
+    'POST https://api.test/campaigns/b1/send',
+    'POST https://api.test/campaigns/b1/cancel',
     'POST https://api.test/api-keys',
     'DELETE https://api.test/api-keys/k1',
   ]);
   assert.equal(calls[3].body.domain_id, 'd1');
+});
+
+test('broadcasts is a deprecated alias of campaigns (same instance, same methods)', async () => {
+  const { fn, calls } = mockFetch(200, { id: 'b-1' });
+  const mb = new MailBlastr('mb_test', { baseUrl: 'https://api.test', fetch: fn });
+  // Same instance — existing `mb.broadcasts.*` code keeps working unchanged.
+  assert.strictEqual(mb.broadcasts, mb.campaigns);
+  await mb.broadcasts.create({ audience_id: 'a1', from: 'f@x.com', subject: 's', html: 'x' });
+  await mb.broadcasts.get('b1');
+  assert.deepEqual(calls.map((c) => `${c.method} ${c.url}`), [
+    'POST https://api.test/campaigns',
+    'GET https://api.test/campaigns/b1',
+  ]);
 });
 
 test('emails.list + sent-attachments map to the right routes', async () => {
@@ -420,21 +433,21 @@ test('webhooks resource maps every method', async () => {
   ]);
 });
 
-test('broadcasts.stats + ab map to the right routes', async () => {
+test('campaigns.stats + ab map to the right routes', async () => {
   const { fn, calls } = mockFetch(200, {});
   const mb = new MailBlastr('mb_test', { baseUrl: 'https://api.test', fetch: fn });
-  await mb.broadcasts.stats('b1');
-  await mb.broadcasts.ab('b1');
+  await mb.campaigns.stats('b1');
+  await mb.campaigns.ab('b1');
   assert.deepEqual(calls.map((c) => `${c.method} ${c.url}`), [
-    'GET https://api.test/broadcasts/b1/stats',
-    'GET https://api.test/broadcasts/b1/ab',
+    'GET https://api.test/campaigns/b1/stats',
+    'GET https://api.test/campaigns/b1/ab',
   ]);
 });
 
-test('broadcasts.create forwards recurrence + ab_test + new fields', async () => {
+test('campaigns.create forwards recurrence + ab_test + new fields', async () => {
   const { fn, calls } = mockFetch(200, { id: 'b-1' });
   const mb = new MailBlastr('mb_test', { baseUrl: 'https://api.test', fetch: fn });
-  await mb.broadcasts.create({
+  await mb.campaigns.create({
     audience_id: 'a1', from: 'f@x.com', subject: 's', html: 'x',
     reply_to: 'r@x.com', preview_text: 'pv',
     recurrence: 'weekly', recurrence_every: 2,

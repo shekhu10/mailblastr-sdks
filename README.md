@@ -62,7 +62,7 @@ The client exposes one property per resource, each following a consistent
 (`create` / `get` / `list` / `update` / `remove`, plus resource-specific verbs) shape:
 
 `emails` (with nested `emails.receiving`), `batch`, `domains`, `audiences`,
-`contacts`, `contactProperties`, `broadcasts`, `segments`, `topics`,
+`contacts`, `contactProperties`, `campaigns` (`broadcasts` is a deprecated alias), `segments`, `topics`,
 `templates`, `automations`, `webhooks`, `logs`, `events`, `apiKeys`.
 
 ```ts
@@ -106,9 +106,9 @@ await mb.contacts.list();                        // every audience
 // Contact properties (custom fields)
 await mb.contactProperties.create({ name: 'Plan', type: 'string' });
 
-// Broadcasts, Segments
-await mb.broadcasts.create({ audience_id, from, subject, html, segment_id });
-await mb.broadcasts.send(id, { scheduled_at });
+// Campaigns (formerly Broadcasts), Segments
+await mb.campaigns.create({ audience_id, from, subject, html, segment_id });
+await mb.campaigns.send(id, { scheduled_at });
 await mb.segments.create({ audience_id, name, filter: { status: 'subscribed' } });
 await mb.segments.contacts(id);   // preview who matches
 
@@ -196,7 +196,7 @@ await mb.logs.get(logId);
 appended as a query string:
 
 ```ts
-await mb.broadcasts.list({ limit: 25, after: 'cursor_abc' });
+await mb.campaigns.list({ limit: 25, after: 'cursor_abc' });
 ```
 
 ### Idempotency
