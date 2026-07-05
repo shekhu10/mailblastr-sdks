@@ -2,7 +2,7 @@ import { createHmac, timingSafeEqual } from 'node:crypto';
 import { HttpClient, type ClientConfig, DEFAULT_BASE_URL, VERSION, USER_AGENT } from './client';
 import type {
   Result, RequestOptions, PaginationParams, ObjectRef,
-  SendEmailOptions, CreateEmailResponse, Email,
+  SendEmailOptions, CreateEmailResponse, Email, SentEmailListItem,
   AttachmentMeta, ReceivedAttachment, ReceivedEmail, ForwardReceivedEmailOptions,
   CreateDomainOptions, UpdateDomainOptions, Domain,
   DomainClaim, ClaimDomainOptions,
@@ -101,8 +101,8 @@ class Emails {
   batch(payloads: SendEmailOptions[], options?: RequestOptions): Promise<Result<{ data: CreateEmailResponse[] }>> {
     return this.http.request('POST', '/emails/batch', payloads, options);
   }
-  /** List sent emails. GET /emails */
-  list(params?: PaginationParams): Promise<Result<ListResponse<Email>>> {
+  /** List sent emails. GET /emails — returns trimmed {@link SentEmailListItem}s (no status/html/text/events). */
+  list(params?: PaginationParams): Promise<Result<ListResponse<SentEmailListItem>>> {
     return this.http.request('GET', `/emails${paginate(params)}`);
   }
   /** Retrieve a sent email and its events. GET /emails/:id */
@@ -265,10 +265,18 @@ class Contacts {
   /**
    * Bulk-import contacts from CSV text (header row optional). Upserts by email.
    * `on_conflict: 'skip'` leaves existing contacts untouched (default 'upsert').
+   * By default every non-builtin CSV column is auto-registered as a custom property
+   * (so `company`, `plan`, … survive and become `{{merge}}` tags) — same as the
+   * dashboard and Google-Sheet import. Pass `create_properties: false` for strict
+   * mode, where only already-registered columns are kept and the rest are returned
+   * in `ignored_columns`.
    */
-  import(params: { audienceId: string; csv: string; on_conflict?: 'upsert' | 'skip' }): Promise<Result<ImportContactsResponse>> {
-    const qs = params.on_conflict ? `?on_conflict=${params.on_conflict}` : '';
-    return this.http.request('POST', `/audiences/${params.audienceId}/contacts/import${qs}`, { csv: params.csv });
+  import(params: { audienceId: string; csv: string; on_conflict?: 'upsert' | 'skip'; create_properties?: boolean }): Promise<Result<ImportContactsResponse>> {
+    const q = new URLSearchParams();
+    if (params.on_conflict) q.set('on_conflict', params.on_conflict);
+    if (params.create_properties === false) q.set('create_properties', 'false');
+    const qs = q.toString();
+    return this.http.request('POST', `/audiences/${params.audienceId}/contacts/import${qs ? `?${qs}` : ''}`, { csv: params.csv });
   }
   /** Update a contact. Returns the slim ack { object: 'contact', id }. Omit `audienceId` for the flat API. */
   update(payload: UpdateContactOptions): Promise<Result<ObjectRef<'contact'>>> {

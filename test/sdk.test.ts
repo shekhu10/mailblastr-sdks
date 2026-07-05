@@ -558,6 +558,43 @@ test('verifyWebhookSignature enforces timestamp tolerance (and 0 disables it)', 
   assert.deepEqual(accepted, { valid: true });
 });
 
+test('emails.list returns trimmed SentEmailListItem shape (no status; null cc/bcc/reply_to)', async () => {
+  // Mirrors the backend GET /emails serializer (toMailBlastrEmailListItem): the
+  // list item has last_event but NO status/html/text/events, and unset
+  // cc/bcc/reply_to are null (not []). The SDK type must not promise `status`.
+  const item = {
+    object: 'email', id: 'e-9', message_id: null, from: 'a@x.com', to: ['b@y.com'],
+    cc: null, bcc: null, reply_to: null, subject: 'Hi', last_event: 'sent',
+    scheduled_at: null, created_at: '2026-07-04T00:00:00Z',
+  };
+  const { fn } = mockFetch(200, { object: 'list', has_more: false, data: [item] });
+  const mb = new MailBlastr('mb_test', { baseUrl: 'https://api.test', fetch: fn });
+  const res = await mb.emails.list({ limit: 10 });
+  const row = res.data!.data[0];
+  assert.equal(row.last_event, 'sent');
+  assert.equal(row.cc, null);
+  // Compile-time: `status` must NOT exist on the list item type. If the SDK
+  // regressed to ListResponse<Email>, `row.status` would typecheck and this
+  // @ts-expect-error would fail the build.
+  // @ts-expect-error SentEmailListItem has no `status`
+  assert.equal(row.status, undefined);
+});
+
+test('apiKeys.list exposes token prefix, permission and last_used_at', async () => {
+  const key = {
+    id: '7', name: 'CI', token: 'mb_live_abcd', permission: 'sending_access',
+    domain_id: null, created_at: '2026-07-04T00:00:00Z', last_used_at: null,
+  };
+  const { fn } = mockFetch(200, { object: 'list', has_more: false, data: [key] });
+  const mb = new MailBlastr('mb_test', { baseUrl: 'https://api.test', fetch: fn });
+  const res = await mb.apiKeys.list();
+  const k = res.data!.data[0];
+  // These three fields are returned by the backend and must be typed.
+  assert.equal(k.token, 'mb_live_abcd');
+  assert.equal(k.permission, 'sending_access');
+  assert.equal(k.last_used_at, null);
+});
+
 test('logs + events map to the right routes', async () => {
   const { fn, calls } = mockFetch(200, {});
   const mb = new MailBlastr('mb_test', { baseUrl: 'https://api.test', fetch: fn });

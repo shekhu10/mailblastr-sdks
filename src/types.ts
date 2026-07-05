@@ -87,9 +87,33 @@ export interface Email {
   tags?: Tag[];
   status: string;
   last_event?: string;
+  /** Plain-language failure reason; present (non-null) only when the send failed. */
+  error?: string | null;
   scheduled_at?: string | null;
   created_at: string;
   events?: EmailEvent[];
+}
+
+/**
+ * Lightweight reference returned by `mb.emails.list()` (GET /emails). The list
+ * endpoint trims the full {@link Email}: there is NO `status`, `html`, `text`, or
+ * `events`/`tags`, and unset `cc`/`bcc`/`reply_to` come back as `null` (not `[]`).
+ * Use `mb.emails.get(id)` to retrieve the full email with its event timeline.
+ */
+export interface SentEmailListItem {
+  object: 'email';
+  id: string;
+  message_id: string | null;
+  from: string;
+  to: string[];
+  cc: string[] | null;
+  bcc: string[] | null;
+  reply_to: string[] | null;
+  subject: string | null;
+  /** Latest recorded event/state, e.g. `sent`, `delivered`, `bounced`. */
+  last_event: string;
+  scheduled_at: string | null;
+  created_at: string;
 }
 
 // ---- Domains ----
@@ -275,6 +299,8 @@ export interface CampaignAbTest {
   test_pct?: number;
   /** Winner metric. Defaults to 'open'. */
   metric?: 'open' | 'click' | 'reply';
+  /** Hours (1-168) to run the test before evaluating and sending the winner. */
+  eval_hours?: number;
 }
 /** A recurring campaign re-sends every `recurrence_every` periods. */
 export type CampaignRecurrence = 'daily' | 'weekly' | 'monthly';
@@ -458,7 +484,24 @@ export interface DuplicateTemplateOptions {
 }
 
 // ---- API keys ----
-export interface ApiKey { object: 'api_key'; id: string; name: string; domain_id?: string | null; created_at: string }
+/** An API key as returned by `mb.apiKeys.list()` (GET /api-keys). */
+export interface ApiKey {
+  id: string;
+  name: string;
+  /**
+   * Non-secret display prefix of the key (e.g. `mb_live_abcd…`); `null` for
+   * legacy keys with no stored prefix. The full secret is returned only once,
+   * at creation (see {@link CreateApiKeyResponse}).
+   */
+  token: string | null;
+  /** Derived from the key's scopes. */
+  permission: 'full_access' | 'sending_access';
+  /** Set when the key is scoped to a single sending domain. */
+  domain_id: string | null;
+  created_at: string;
+  /** Last time the key authenticated a request; `null` if never used. */
+  last_used_at: string | null;
+}
 export interface CreateApiKeyResponse { object: 'api_key'; id: string; token: string; domain_id: string | null }
 export interface CreateApiKeyOptions {
   name: string;
@@ -724,6 +767,8 @@ export interface AutomationRun {
   object: 'automation_run';
   id: string;
   contact_id: string;
+  /** Email of the contact the run is for; `null` if that contact was deleted. */
+  contact_email: string | null;
   /** 'running' | 'completed' | 'failed' | 'cancelled' | 'skipped' */
   status: string;
   started_at: string;
