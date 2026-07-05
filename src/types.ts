@@ -134,8 +134,19 @@ export interface Domain {
   object: 'domain';
   id: string;
   name: string;
+  /**
+   * Aggregated verification status: `not_started`, `pending`, `verified`,
+   * `partially_verified`, `partially_failed`, `failed`, `temporary_failure`,
+   * or `revoked` (a different account verified an overlapping domain).
+   */
   status: string;
   region: string;
+  /**
+   * The DNS zone the registrar manages (e.g. `acme.com` when `name` is
+   * `replies.acme.com`). Record names should be entered relative to it.
+   * Equals `name` for apex domains or while the zone is still being resolved.
+   */
+  zone?: string;
   created_at: string;
   records: DomainRecord[];
   /** MAIL FROM subdomain (Return-Path); always present (defaults to 'send'). */
