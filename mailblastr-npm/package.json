@@ -1,0 +1,52 @@
+{
+  "name": "mailblastr",
+  "version": "1.0.0",
+  "description": "Official Node.js SDK for the MailBlastr email API — send transactional and marketing email from your own verified domain.",
+  "keywords": [
+    "mailblastr",
+    "email",
+    "api",
+    "transactional",
+    "ses",
+    "broadcast",
+    "audience"
+  ],
+  "license": "MIT",
+  "author": "MailBlastr",
+  "homepage": "https://www.mailblastr.com",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/shekhu10/mailblastr-npm.git"
+  },
+  "bugs": {
+    "url": "https://github.com/shekhu10/mailblastr-npm/issues"
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "sideEffects": false,
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "node --import tsx --test \"test/**/*.test.ts\"",
+    "prepublishOnly": "npm run build"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "devDependencies": {
+    "@types/node": "^20.19.43",
+    "tsx": "^4.22.3",
+    "typescript": "^5.9.3"
+  }
+}
