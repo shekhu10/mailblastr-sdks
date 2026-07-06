@@ -163,9 +163,14 @@ await mb.webhooks.remove(hook!.id);
 
 Build multi-step automations triggered by events, then inspect their runs.
 
+Every automation belongs to one of your sending domains — `domain` is required
+on create, and `events.send` names the domain it targets, so the same event
+name across several products can never trigger the wrong automation.
+
 ```ts
 const { data: automation } = await mb.automations.create({
   name: 'Welcome series',
+  domain: 'yourdomain.com',
   trigger: { type: 'contact.created' },
 });
 
@@ -175,8 +180,8 @@ await mb.automations.addStep(automation!.id, {
 });
 await mb.automations.update(automation!.id, { status: 'active' });
 
-// Fire a custom event automations can trigger on
-await mb.events.send({ name: 'signup.completed', email: 'user@example.com', data: { plan: 'pro' } });
+// Fire a custom event — only yourdomain.com's automations are triggered
+await mb.events.send({ name: 'signup.completed', domain: 'yourdomain.com', email: 'user@example.com', data: { plan: 'pro' } });
 
 // Inspect execution
 const { data: runs } = await mb.automations.runs(automation!.id, { limit: 25 });

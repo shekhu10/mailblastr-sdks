@@ -723,6 +723,12 @@ export interface Automation {
   audience_id: string;
   name: string;
   trigger: string;
+  /**
+   * The sending domain this automation belongs to. Only `events.send` calls
+   * with the same `domain` trigger it. `null` on pre-domain rows (treated as
+   * the account's single domain when exactly one exists).
+   */
+  domain: string | null;
   /** 'enabled' | 'disabled' */
   status: string;
   steps?: AutomationStep[];
@@ -734,8 +740,12 @@ export interface Automation {
 }
 export interface CreateAutomationOptions {
   name: string;
-  /** Optional; defaults to your default (oldest) audience. */
-  audience_id?: string;
+  /**
+   * REQUIRED. The sending domain this automation belongs to (e.g.
+   * `'yourdomain.com'` — one of your domains). Only `events.send` calls with
+   * the same `domain` trigger it.
+   */
+  domain: string;
   /**
    * The event that starts a run. One of:
    * - `'contact.created'` (built-in audience trigger)
@@ -756,6 +766,8 @@ export interface CreateAutomationOptions {
 export interface UpdateAutomationOptions {
   name?: string;
   status?: 'enabled' | 'disabled' | (string & {});
+  /** Re-point the automation at another of your domains (disabled automations only). */
+  domain?: string;
   connections?: Array<{ from: string; to: string; type?: string }>;
 }
 export interface AddAutomationStepOptions {
@@ -863,6 +875,14 @@ export interface SendEventOptions {
   event?: string;
   /** Alias for `event`. */
   name?: string;
+  /**
+   * REQUIRED. The sending domain this event belongs to (e.g. `'yourdomain.com'`
+   * — one of your verified domains). Only automations belonging to that domain
+   * are triggered, so the same event name (e.g. `user.created`) across several
+   * products can never double-fire. Contacts auto-created by this event land in
+   * the domain's own contact pool, with unsubscribe state separate per domain.
+   */
+  domain: string;
   /** Identify the contact by id. Provide `contact_id` OR `email`. */
   contact_id?: string;
   /** Identify the contact by email. Provide `contact_id` OR `email`. */

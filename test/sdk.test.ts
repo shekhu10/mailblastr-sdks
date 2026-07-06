@@ -383,7 +383,7 @@ test('templates duplicate + publish map to the right routes', async () => {
 test('automations resource maps every method', async () => {
   const { fn, calls } = mockFetch(200, {});
   const mb = new MailBlastr('mb_test', { baseUrl: 'https://api.test', fetch: fn });
-  await mb.automations.create({ name: 'Onboarding', audience_id: 'a1', trigger: 'contact.created' });
+  await mb.automations.create({ name: 'Onboarding', domain: 'x.com', trigger: 'contact.created' });
   await mb.automations.list();
   await mb.automations.get('au1');
   await mb.automations.update('au1', { status: 'enabled' });
@@ -600,7 +600,7 @@ test('logs + events map to the right routes', async () => {
   const mb = new MailBlastr('mb_test', { baseUrl: 'https://api.test', fetch: fn });
   await mb.logs.list({ limit: 20, before: 'cur2' });
   await mb.logs.get('l1');
-  await mb.events.send({ name: 'signup.completed', email: 'c@x.com', data: { plan: 'pro' } });
+  await mb.events.send({ name: 'signup.completed', domain: 'x.com', email: 'c@x.com', data: { plan: 'pro' } });
   await mb.events.create({ name: 'signup.completed', schema: { plan: 'string' } });
   await mb.events.list();
   assert.deepEqual(calls.map((c) => `${c.method} ${c.url}`), [
@@ -610,6 +610,6 @@ test('logs + events map to the right routes', async () => {
     'POST https://api.test/events',
     'GET https://api.test/events',
   ]);
-  assert.deepEqual(calls[2].body, { name: 'signup.completed', email: 'c@x.com', data: { plan: 'pro' } });
+  assert.deepEqual(calls[2].body, { name: 'signup.completed', domain: 'x.com', email: 'c@x.com', data: { plan: 'pro' } });
   assert.deepEqual(calls[3].body, { name: 'signup.completed', schema: { plan: 'string' } });
 });
