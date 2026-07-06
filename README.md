@@ -89,27 +89,27 @@ await mb.domains.verify(id);
 await mb.domains.claim({ name: 'example.com' });
 await mb.domains.verifyClaim(id);
 
-// Audiences & Contacts
-await mb.audiences.create({ name: 'Newsletter' });
-await mb.contacts.create({ audienceId, email, first_name });
-await mb.contacts.list({ audienceId });
-await mb.contacts.addToSegment(contactId, segmentId);
-await mb.contacts.updateTopics(contactId, { subscribed: ['topic_1'] });
-
-// Contacts also work flat — OMIT audienceId to act across all your audiences
-await mb.contacts.create({ email });            // -> default (oldest) audience
-await mb.contacts.get({ id });                  // resolve by id or email
+// Contacts are DOMAIN-FIRST: each sending domain has its own contact pool
+// (the same address on two domains is two records with separate consent).
+await mb.contacts.create({ domain: 'example.com', email, first_name });
+await mb.contacts.list({ domain: 'example.com' });
+await mb.contacts.get({ id });                  // by contact id (exact) …
+await mb.contacts.get({ id: email, domain: 'example.com' }); // … or by email + domain
 await mb.contacts.update({ id, unsubscribed: true });
 await mb.contacts.remove({ id });
-await mb.contacts.list();                        // every audience
+await mb.contacts.addToSegment(contactId, segmentId);
+await mb.contacts.updateTopics(contactId, { subscribed: ['topic_1'] });
 
 // Contact properties (custom fields)
 await mb.contactProperties.create({ name: 'Plan', type: 'string' });
 
-// Campaigns, Segments
-await mb.campaigns.create({ audience_id, from, subject, html, segment_id });
+// Campaigns, Segments — also domain-first: `domain` picks the contact pool the
+// campaign/segment targets. Segment names are unique per domain (reusable
+// across domains), and every domain carries an auto-created "General" segment.
+await mb.campaigns.create({ domain: 'example.com', from, subject, html, segment_id });
 await mb.campaigns.send(id, { scheduled_at });
-await mb.segments.create({ audience_id, name, filter: { status: 'subscribed' } });
+await mb.segments.create({ domain: 'example.com', name, filter: { status: 'subscribed' } });
+await mb.segments.list({ domain: 'example.com' });
 await mb.segments.contacts(id);   // preview who matches
 
 // Templates
@@ -130,12 +130,13 @@ Topics let contacts manage granular subscriptions (e.g. "Product updates").
 
 ```ts
 const { data: topic } = await mb.topics.create({
+  domain: 'example.com', // topics belong to a sending domain
   name: 'Product updates',
   description: 'New features and releases',
   default_subscribed: true,
 });
 
-await mb.topics.list({ limit: 50 });
+await mb.topics.list({ domain: 'example.com', limit: 50 });
 await mb.topics.update(topic!.id, { default_subscribed: false });
 await mb.topics.remove(topic!.id);
 

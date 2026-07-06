@@ -12,8 +12,8 @@ import type {
   ContactProperty, CreateContactPropertyOptions, UpdateContactPropertyOptions,
   Poll, PollResult,
   Campaign, CreateCampaignOptions, UpdateCampaignOptions, CampaignStats, CampaignAbResult,
-  Segment, CreateSegmentOptions, UpdateSegmentOptions,
-  Topic, CreateTopicOptions, UpdateTopicOptions,
+  Segment, CreateSegmentOptions, UpdateSegmentOptions, ListSegmentsParams,
+  Topic, CreateTopicOptions, UpdateTopicOptions, ListTopicsParams,
   Template, CreateTemplateOptions, UpdateTemplateOptions, DuplicateTemplateOptions,
   Automation, CreateAutomationOptions, UpdateAutomationOptions,
   AddAutomationStepOptions, AutomationStep, AutomationRun,
@@ -244,20 +244,33 @@ class Contacts {
   constructor(private readonly http: HttpClient) {}
   /**
    * Create a contact. Returns the slim ack { object: 'contact', id }.
-   * Pass `audienceId` to target an audience, or OMIT it to use the flat
-   * top-level `/contacts` API (creates in your default/oldest audience).
+   * Domain-first: pass `domain` to create in that domain's contact pool via
+   * the flat `/contacts` API (required there), or `audienceId` to target a
+   * specific audience via the nested API.
    */
   create(payload: CreateContactOptions): Promise<Result<ObjectRef<'contact'>>> {
-    const { audienceId, ...body } = payload;
-    return this.http.request('POST', audienceId ? p`/audiences/${audienceId}/contacts` : '/contacts', body);
+    const { audienceId, domain, ...body } = payload;
+    // The nested audience route derives its pool from the path; only the flat
+    // route takes `domain` in the body.
+    return audienceId
+      ? this.http.request('POST', p`/audiences/${audienceId}/contacts`, body)
+      : this.http.request('POST', '/contacts', { ...body, domain });
   }
-  /** Retrieve a contact by id or email. Omit `audienceId` to resolve across all your audiences. */
-  get(params: { audienceId?: string; id: string }): Promise<Result<Contact>> {
+  /**
+   * Retrieve a contact by id or email. An id is exact; an EMAIL can exist in
+   * several domains' pools, so pass `domain` to pick the pool (omitted → the
+   * oldest match anywhere).
+   */
+  get(params: { audienceId?: string; domain?: string; id: string }): Promise<Result<Contact>> {
     const id = encodeURIComponent(params.id);
-    return this.http.request('GET', params.audienceId ? `/audiences/${encodeURIComponent(params.audienceId)}/contacts/${id}` : `/contacts/${id}`);
+    if (params.audienceId) return this.http.request('GET', `/audiences/${encodeURIComponent(params.audienceId)}/contacts/${id}`);
+    const qs = params.domain ? `?domain=${encodeURIComponent(params.domain)}` : '';
+    return this.http.request('GET', `/contacts/${id}${qs}`);
   }
+  /** List contacts. Domain-first: `domain` is required on the flat `/contacts` list (names the pool). */
   list(params: ListContactsParams = {}): Promise<Result<ListResponse<Contact>>> {
     const q = new URLSearchParams();
+    if (params.domain != null && !params.audienceId) q.set('domain', params.domain);
     if (params.limit != null) q.set('limit', String(params.limit));
     if (params.after != null) q.set('after', params.after);
     if (params.before != null) q.set('before', params.before);
@@ -291,16 +304,28 @@ class Contacts {
     const qs = q.toString();
     return this.http.request('POST', `/audiences/${encodeURIComponent(params.audienceId)}/contacts/import${qs ? `?${qs}` : ''}`, { csv: params.csv });
   }
-  /** Update a contact. Returns the slim ack { object: 'contact', id }. Omit `audienceId` for the flat API. */
+  /**
+   * Update a contact. Returns the slim ack { object: 'contact', id }. On the
+   * flat API, pass `domain` when `id` is an EMAIL (disambiguates across pools).
+   */
   update(payload: UpdateContactOptions): Promise<Result<ObjectRef<'contact'>>> {
-    const { audienceId, id, ...body } = payload;
+    const { audienceId, domain, id, ...body } = payload;
     const eid = encodeURIComponent(id);
-    return this.http.request('PATCH', audienceId ? `/audiences/${encodeURIComponent(audienceId)}/contacts/${eid}` : `/contacts/${eid}`, body);
+    // The nested audience route derives its pool from the path; the flat route
+    // takes an optional `domain` in the body.
+    return audienceId
+      ? this.http.request('PATCH', `/audiences/${encodeURIComponent(audienceId)}/contacts/${eid}`, body)
+      : this.http.request('PATCH', `/contacts/${eid}`, domain != null ? { ...body, domain } : body);
   }
-  /** Delete a contact. The id is returned under `contact`. Omit `audienceId` for the flat API. */
-  remove(params: { audienceId?: string; id: string }): Promise<Result<{ object: 'contact'; contact: string; deleted: true }>> {
+  /**
+   * Delete a contact. The id is returned under `contact`. On the flat API,
+   * pass `domain` when `id` is an EMAIL (disambiguates across pools).
+   */
+  remove(params: { audienceId?: string; domain?: string; id: string }): Promise<Result<{ object: 'contact'; contact: string; deleted: true }>> {
     const id = encodeURIComponent(params.id);
-    return this.http.request('DELETE', params.audienceId ? `/audiences/${encodeURIComponent(params.audienceId)}/contacts/${id}` : `/contacts/${id}`);
+    if (params.audienceId) return this.http.request('DELETE', `/audiences/${encodeURIComponent(params.audienceId)}/contacts/${id}`);
+    const qs = params.domain ? `?domain=${encodeURIComponent(params.domain)}` : '';
+    return this.http.request('DELETE', `/contacts/${id}${qs}`);
   }
   /** Add a contact to a segment. POST /contacts/:id/segments/:segmentId → { id } (the segment id). */
   addToSegment(id: string, segmentId: string): Promise<Result<{ id: string }>> {
@@ -396,14 +421,20 @@ class Campaigns {
 
 class Segments {
   constructor(private readonly http: HttpClient) {}
+  /** Create a segment on a sending domain (`domain` is required; names are unique within a domain). */
   create(payload: CreateSegmentOptions): Promise<Result<Segment>> {
     return this.http.request('POST', '/segments', payload);
   }
   get(id: string): Promise<Result<Segment>> {
     return this.http.request('GET', p`/segments/${id}`);
   }
-  list(params?: PaginationParams): Promise<Result<ListResponse<Segment>>> {
-    return this.http.request('GET', `/segments${paginate(params)}`);
+  /** List a domain's segments (`domain` is required; includes its auto-created "General" segment). */
+  list(params: ListSegmentsParams): Promise<Result<ListResponse<Segment>>> {
+    const q = new URLSearchParams({ domain: params.domain });
+    if (params.limit != null) q.set('limit', String(params.limit));
+    if (params.after != null) q.set('after', params.after);
+    if (params.before != null) q.set('before', params.before);
+    return this.http.request('GET', `/segments?${q.toString()}`);
   }
   /** Preview the contacts a segment currently resolves to. */
   contacts(id: string): Promise<Result<ListResponse<Contact>>> {
@@ -448,14 +479,20 @@ class Templates {
 
 class Topics {
   constructor(private readonly http: HttpClient) {}
+  /** Create a topic on a sending domain (`domain` is required). */
   create(payload: CreateTopicOptions): Promise<Result<Topic>> {
     return this.http.request('POST', '/topics', payload);
   }
   get(id: string): Promise<Result<Topic>> {
     return this.http.request('GET', p`/topics/${id}`);
   }
-  list(params?: PaginationParams): Promise<Result<ListResponse<Topic>>> {
-    return this.http.request('GET', `/topics${paginate(params)}`);
+  /** List a domain's topics (`domain` is required). */
+  list(params: ListTopicsParams): Promise<Result<ListResponse<Topic>>> {
+    const q = new URLSearchParams({ domain: params.domain });
+    if (params.limit != null) q.set('limit', String(params.limit));
+    if (params.after != null) q.set('after', params.after);
+    if (params.before != null) q.set('before', params.before);
+    return this.http.request('GET', `/topics?${q.toString()}`);
   }
   update(id: string, payload: UpdateTopicOptions): Promise<Result<Topic>> {
     return this.http.request('PATCH', p`/topics/${id}`, payload);

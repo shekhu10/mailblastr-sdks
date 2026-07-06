@@ -137,24 +137,32 @@ test('audiences + contacts (nested) map to the right routes', async () => {
   assert.deepEqual(calls[1].body, { email: 'x@y.com', first_name: 'X' });
 });
 
-test('contacts (flat, no audienceId) hit the top-level /contacts routes', async () => {
+test('contacts (flat, no audienceId) hit the top-level /contacts routes with domain', async () => {
   const { fn, calls } = mockFetch(200, {});
   const mb = new MailBlastr('mb_test', { baseUrl: 'https://api.test', fetch: fn });
-  await mb.contacts.create({ email: 'x@y.com', first_name: 'X' });
-  await mb.contacts.get({ id: 'x@y.com' });
+  await mb.contacts.create({ domain: 'x.com', email: 'x@y.com', first_name: 'X' });
+  await mb.contacts.get({ id: 'x@y.com', domain: 'x.com' });
   await mb.contacts.update({ id: 'c1', unsubscribed: true });
+  await mb.contacts.update({ id: 'x@y.com', domain: 'x.com', unsubscribed: true });
   await mb.contacts.remove({ id: 'c1' });
-  await mb.contacts.list();
-  await mb.contacts.list({ segment_id: 'seg1', limit: 10 });
+  await mb.contacts.remove({ id: 'x@y.com', domain: 'x.com' });
+  await mb.contacts.list({ domain: 'x.com' });
+  await mb.contacts.list({ domain: 'x.com', segment_id: 'seg1', limit: 10 });
   assert.deepEqual(calls.map((c) => `${c.method} ${c.url}`), [
     'POST https://api.test/contacts',
-    'GET https://api.test/contacts/x%40y.com',
+    'GET https://api.test/contacts/x%40y.com?domain=x.com',
     'PATCH https://api.test/contacts/c1',
+    'PATCH https://api.test/contacts/x%40y.com',
     'DELETE https://api.test/contacts/c1',
-    'GET https://api.test/contacts',
-    'GET https://api.test/contacts?limit=10&segment_id=seg1',
+    'DELETE https://api.test/contacts/x%40y.com?domain=x.com',
+    'GET https://api.test/contacts?domain=x.com',
+    'GET https://api.test/contacts?domain=x.com&limit=10&segment_id=seg1',
   ]);
-  assert.deepEqual(calls[0].body, { email: 'x@y.com', first_name: 'X' });
+  // Flat create carries the domain in the body (names the contact pool).
+  assert.deepEqual(calls[0].body, { email: 'x@y.com', first_name: 'X', domain: 'x.com' });
+  // An id-addressed PATCH has no domain; an email-addressed one carries it.
+  assert.deepEqual(calls[2].body, { unsubscribed: true });
+  assert.deepEqual(calls[3].body, { unsubscribed: true, domain: 'x.com' });
 });
 
 test('contacts.batch / import / paginated list map to the right routes', async () => {
@@ -188,26 +196,30 @@ test('contacts batch/import on_conflict + audience-scoped segment_id', async () 
 test('segments resource maps every method (incl. contacts preview)', async () => {
   const { fn, calls } = mockFetch(200, {});
   const mb = new MailBlastr('mb_test', { baseUrl: 'https://api.test', fetch: fn });
-  await mb.segments.create({ audience_id: 'a1', name: 'Gmail users', filter: { status: 'subscribed', email_contains: '@gmail.com' } });
-  await mb.segments.list();
+  await mb.segments.create({ domain: 'x.com', name: 'Gmail users', filter: { status: 'subscribed', email_contains: '@gmail.com' } });
+  await mb.segments.list({ domain: 'x.com' });
+  await mb.segments.list({ domain: 'x.com', limit: 5 });
   await mb.segments.get('s1');
   await mb.segments.contacts('s1');
   await mb.segments.update('s1', { name: 'Renamed' });
   await mb.segments.remove('s1');
   assert.deepEqual(calls.map((c) => `${c.method} ${c.url}`), [
     'POST https://api.test/segments',
-    'GET https://api.test/segments',
+    'GET https://api.test/segments?domain=x.com',
+    'GET https://api.test/segments?domain=x.com&limit=5',
     'GET https://api.test/segments/s1',
     'GET https://api.test/segments/s1/contacts',
     'PATCH https://api.test/segments/s1',
     'DELETE https://api.test/segments/s1',
   ]);
+  // Domain-first: the segment is created on a domain, not an audience.
+  assert.equal(calls[0].body.domain, 'x.com');
 });
 
 test('campaigns.create forwards segment_id', async () => {
   const { fn, calls } = mockFetch(200, { id: 'b-1' });
   const mb = new MailBlastr('mb_test', { baseUrl: 'https://api.test', fetch: fn });
-  await mb.campaigns.create({ audience_id: 'a1', from: 'f@x.com', subject: 's', html: 'x', segment_id: 's1' });
+  await mb.campaigns.create({ domain: 'x.com', from: 'f@x.com', subject: 's', html: 'x', segment_id: 's1' });
   assert.equal(calls[0].body.segment_id, 's1');
 });
 
@@ -239,7 +251,7 @@ test('emails.send forwards template_id + variables in the body', async () => {
 test('campaigns + apiKeys map to the right routes', async () => {
   const { fn, calls } = mockFetch(200, {});
   const mb = new MailBlastr('mb_test', { baseUrl: 'https://api.test', fetch: fn });
-  await mb.campaigns.create({ audience_id: 'a1', from: 'f@x.com', subject: 's', html: 'x' });
+  await mb.campaigns.create({ domain: 'x.com', from: 'f@x.com', subject: 's', html: 'x' });
   await mb.campaigns.send('b1', { scheduled_at: '2030-01-01T00:00:00Z' });
   await mb.campaigns.cancel('b1');
   await mb.apiKeys.create({ name: 'CI', permission: 'sending_access', domain_id: 'd1' });
@@ -355,14 +367,14 @@ test('contactProperties resource maps every method', async () => {
 test('topics resource maps every method', async () => {
   const { fn, calls } = mockFetch(200, {});
   const mb = new MailBlastr('mb_test', { baseUrl: 'https://api.test', fetch: fn });
-  await mb.topics.create({ name: 'Product updates', default_subscription: 'opt_in' });
-  await mb.topics.list();
+  await mb.topics.create({ domain: 'x.com', name: 'Product updates', default_subscription: 'opt_in' });
+  await mb.topics.list({ domain: 'x.com' });
   await mb.topics.get('t1');
   await mb.topics.update('t1', { description: 'News' });
   await mb.topics.remove('t1');
   assert.deepEqual(calls.map((c) => `${c.method} ${c.url}`), [
     'POST https://api.test/topics',
-    'GET https://api.test/topics',
+    'GET https://api.test/topics?domain=x.com',
     'GET https://api.test/topics/t1',
     'PATCH https://api.test/topics/t1',
     'DELETE https://api.test/topics/t1',
@@ -435,7 +447,7 @@ test('campaigns.create forwards recurrence + ab_test + new fields', async () => 
   const { fn, calls } = mockFetch(200, { id: 'b-1' });
   const mb = new MailBlastr('mb_test', { baseUrl: 'https://api.test', fetch: fn });
   await mb.campaigns.create({
-    audience_id: 'a1', from: 'f@x.com', subject: 's', html: 'x',
+    domain: 'x.com', from: 'f@x.com', subject: 's', html: 'x',
     reply_to: 'r@x.com', preview_text: 'pv',
     recurrence: 'weekly', recurrence_every: 2,
     ab_test: { enabled: true, subject_b: 'B', metric: 'click', test_pct: 30 },
@@ -478,7 +490,7 @@ test('segments.create forwards filter.property_filters', async () => {
   const { fn, calls } = mockFetch(200, {});
   const mb = new MailBlastr('mb_test', { baseUrl: 'https://api.test', fetch: fn });
   await mb.segments.create({
-    audience_id: 'a1', name: 'Pro users',
+    domain: 'x.com', name: 'Pro users',
     filter: { status: 'subscribed', property_filters: [{ key: 'plan', operator: 'eq', value: 'pro' }] },
   });
   assert.deepEqual(calls[0].body.filter.property_filters, [{ key: 'plan', operator: 'eq', value: 'pro' }]);

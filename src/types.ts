@@ -187,7 +187,18 @@ export interface UpdateDomainOptions {
 }
 
 // ---- Audiences & Contacts ----
-export interface Audience { object: 'audience'; id: string; name: string; created_at: string }
+export interface Audience {
+  object: 'audience';
+  id: string;
+  name: string;
+  /**
+   * Set when this audience is a sending domain's contact POOL (domain-first
+   * model: one pool per domain, lazily created). `null` on plain user-created
+   * audiences. Lets you map a domain name to its pool's audience id.
+   */
+  domain: string | null;
+  created_at: string;
+}
 export interface Contact {
   object: 'contact';
   id: string;
@@ -201,8 +212,15 @@ export interface Contact {
 }
 export interface CreateContactOptions {
   /**
-   * Audience to create the contact in. OMIT to use the flat top-level
-   * `/contacts` API — the contact lands in your default (oldest) audience.
+   * The sending domain whose contact pool the contact lands in (domain-first
+   * model, e.g. `'yourdomain.com'` — one of your domains). REQUIRED on the
+   * flat `/contacts` API (i.e. whenever `audienceId` is omitted). The same
+   * address on two domains is two records with separate consent.
+   */
+  domain?: string;
+  /**
+   * Target a specific audience via the nested
+   * `/audiences/:id/contacts` API instead of `domain`.
    */
   audienceId?: string;
   email: string;
@@ -213,7 +231,12 @@ export interface CreateContactOptions {
   properties?: Record<string, string | number>;
 }
 export interface UpdateContactOptions {
-  /** Audience the contact belongs to. OMIT to resolve across all your audiences (flat `/contacts/:id`). */
+  /**
+   * Disambiguates an EMAIL `id` across domains (an email can exist in several
+   * domains' pools; a contact id is exact and needs no domain).
+   */
+  domain?: string;
+  /** Audience the contact belongs to. OMIT for the flat `/contacts/:id` API. */
   audienceId?: string;
   /** Contact id OR email. */
   id: string;
@@ -240,7 +263,12 @@ export interface ImportContactsResponse {
 }
 /** Cursor paging for listing contacts (limit ≤ 100). */
 export interface ListContactsParams {
-  /** Restrict to one audience. OMIT to list across ALL your audiences (flat `/contacts`). */
+  /**
+   * The sending domain whose contact pool to list (domain-first model).
+   * REQUIRED on the flat `/contacts` API (i.e. whenever `audienceId` is omitted).
+   */
+  domain?: string;
+  /** List a specific audience via the nested `/audiences/:id/contacts` API instead of `domain`. */
   audienceId?: string;
   limit?: number;
   /** Cursor: id of the last item on the previous page. */
@@ -316,7 +344,13 @@ export interface CampaignAbTest {
 /** A recurring campaign re-sends every `recurrence_every` periods. */
 export type CampaignRecurrence = 'daily' | 'weekly' | 'monthly';
 export interface CreateCampaignOptions {
-  audience_id: string;
+  /**
+   * REQUIRED. The sending domain whose contact pool this campaign targets
+   * (e.g. `'yourdomain.com'` — one of your domains). Replaces the retired
+   * `audience_id`. Orthogonal to `from`: the from address may be a different
+   * verified domain (e.g. a dedicated sending subdomain).
+   */
+  domain: string;
   from: string;
   subject: string;
   /**
@@ -373,7 +407,12 @@ export interface UpdateCampaignOptions {
   text?: string;
   reply_to?: string | string[];
   preview_text?: string;
-  audience_id?: string;
+  /**
+   * Re-point the campaign at another of your domains' contact pools (draft
+   * campaigns only). Clears a segment/topic scoped to the old domain unless
+   * the same request re-targets them.
+   */
+  domain?: string;
   /** Re-target a segment (pass null to clear). */
   segment_id?: string | null;
   /** Re-target a topic gate (pass null to clear). */
@@ -420,10 +459,21 @@ export interface Segment {
   updated_at: string;
 }
 export interface CreateSegmentOptions {
-  /** Audience to scope the segment to. OMIT to use your default (oldest) audience. */
-  audience_id?: string;
+  /**
+   * REQUIRED. The sending domain this segment belongs to (e.g.
+   * `'yourdomain.com'` — one of your domains). Replaces the retired
+   * `audience_id`. Segment names are unique WITHIN a domain but freely
+   * reusable across domains; every domain also carries an auto-created
+   * "General" (all contacts) segment.
+   */
+  domain: string;
   name: string;
   filter?: { status?: SegmentStatus; email_contains?: string | null; property_filters?: PropertyFilter[] };
+}
+/** Params for listing segments — domain-scoped (only that domain's segments). */
+export interface ListSegmentsParams extends PaginationParams {
+  /** REQUIRED. The sending domain whose segments to list. */
+  domain: string;
 }
 export interface UpdateSegmentOptions {
   name?: string;
@@ -691,11 +741,21 @@ export interface Topic {
   created_at: string;
 }
 export interface CreateTopicOptions {
+  /**
+   * REQUIRED. The sending domain this topic belongs to (e.g.
+   * `'yourdomain.com'` — one of your domains). Replaces the retired
+   * `audience_id`. Topic names are reusable across domains.
+   */
+  domain: string;
   name: string;
   default_subscription: 'opt_in' | 'opt_out';
   visibility?: 'public' | 'private';
   description?: string | null;
-  audience_id?: string;
+}
+/** Params for listing topics — domain-scoped (only that domain's topics). */
+export interface ListTopicsParams extends PaginationParams {
+  /** REQUIRED. The sending domain whose topics to list. */
+  domain: string;
 }
 export interface UpdateTopicOptions {
   name?: string;
