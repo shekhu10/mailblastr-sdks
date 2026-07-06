@@ -29,6 +29,6 @@
   },
   "dependencies": {
     "commander": "^12.1.0",
-    "mailblastr": "file:../../mailblastr-npm"
+    "mailblastr": "file:../mailblastr-npm"
   }
 }
