@@ -8,7 +8,7 @@ Official client libraries and tools for the [MailBlastr](https://www.mailblastr.
 | [`mailblastr-ruby`](./mailblastr-ruby) | Ruby | `gem install mailblastr` | 52 runs / 552 assertions |
 | [`mailblastr-php`](./mailblastr-php) | PHP ≥ 8.1 | `composer require mailblastr/mailblastr` | 176 assertions |
 | [`mailblastr-python`](./mailblastr-python) | Python ≥ 3.8 | `pip install mailblastr` | 105 tests |
-| [`mailblastr-go`](./mailblastr-go) | Go ≥ 1.22 | `go get github.com/mailblastr/mailblastr-go` | 34 tests |
+| [`mailblastr-go`](./mailblastr-go) | Go ≥ 1.22 | `go get github.com/shekhu10/mailblastr-sdks/mailblastr-go` | 34 tests |
 | [`mailblastr-rust`](./mailblastr-rust) | Rust | `cargo add mailblastr` | 22 tests |
 | [`mailblastr-java`](./mailblastr-java) | Java ≥ 11 | `com.mailblastr:mailblastr` (Maven/Gradle) | 168 checks |
 | [`mailblastr-dotnet`](./mailblastr-dotnet) | .NET 8 | `dotnet add package Mailblastr` | 21 tests |
