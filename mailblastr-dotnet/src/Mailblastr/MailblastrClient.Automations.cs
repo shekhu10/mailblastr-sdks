@@ -1,0 +1,97 @@
+namespace Mailblastr;
+
+public partial class MailblastrClient
+{
+    // ---- Automations ----
+
+    public Task<Automation> AutomationCreateAsync(AutomationCreateOptions options, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(options);
+        return RequestAsync<Automation>(HttpMethod.Post, "/automations", options, null, cancellationToken);
+    }
+
+    public Task<Automation> AutomationRetrieveAsync(string automationId, CancellationToken cancellationToken = default)
+        => RequestAsync<Automation>(HttpMethod.Get, $"/automations/{E(automationId)}", null, null, cancellationToken);
+
+    public Task<ListResponse<Automation>> AutomationListAsync(PaginationOptions? pagination = null, CancellationToken cancellationToken = default)
+        => RequestAsync<ListResponse<Automation>>(HttpMethod.Get, "/automations" + Paginate(pagination), null, null, cancellationToken);
+
+    public Task<Automation> AutomationUpdateAsync(string automationId, AutomationUpdateOptions options, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(options);
+        return RequestAsync<Automation>(HttpMethod.Patch, $"/automations/{E(automationId)}", options, null, cancellationToken);
+    }
+
+    public Task<AutomationStep> AutomationAddStepAsync(string automationId, AutomationAddStepOptions options, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(options);
+        return RequestAsync<AutomationStep>(HttpMethod.Post, $"/automations/{E(automationId)}/steps", options, null, cancellationToken);
+    }
+
+    public Task<AutomationStepDeleted> AutomationDeleteStepAsync(string automationId, string stepId, CancellationToken cancellationToken = default)
+        => RequestAsync<AutomationStepDeleted>(HttpMethod.Delete, $"/automations/{E(automationId)}/steps/{E(stepId)}", null, null, cancellationToken);
+
+    public Task<ListResponse<AutomationRun>> AutomationListRunsAsync(string automationId, PaginationOptions? pagination = null, CancellationToken cancellationToken = default)
+        => RequestAsync<ListResponse<AutomationRun>>(HttpMethod.Get, $"/automations/{E(automationId)}/runs" + Paginate(pagination), null, null, cancellationToken);
+
+    public Task<AutomationRun> AutomationRetrieveRunAsync(string automationId, string runId, CancellationToken cancellationToken = default)
+        => RequestAsync<AutomationRun>(HttpMethod.Get, $"/automations/{E(automationId)}/runs/{E(runId)}", null, null, cancellationToken);
+
+    public Task<Automation> AutomationStopAsync(string automationId, CancellationToken cancellationToken = default)
+        => RequestAsync<Automation>(HttpMethod.Post, $"/automations/{E(automationId)}/stop", null, null, cancellationToken);
+
+    public Task<RemovedResponse> AutomationDeleteAsync(string automationId, CancellationToken cancellationToken = default)
+        => RequestAsync<RemovedResponse>(HttpMethod.Delete, $"/automations/{E(automationId)}", null, null, cancellationToken);
+
+    // ---- Events ----
+
+    public Task<EventSendResponse> EventSendAsync(EventSendOptions options, string? idempotencyKey = null, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(options);
+        return RequestAsync<EventSendResponse>(HttpMethod.Post, "/events/send", options, idempotencyKey, cancellationToken);
+    }
+
+    public Task<EventDefinition> EventCreateAsync(EventCreateOptions options, string? idempotencyKey = null, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(options);
+        return RequestAsync<EventDefinition>(HttpMethod.Post, "/events", options, idempotencyKey, cancellationToken);
+    }
+
+    public Task<ListResponse<EventDefinition>> EventListAsync(PaginationOptions? pagination = null, CancellationToken cancellationToken = default)
+        => RequestAsync<ListResponse<EventDefinition>>(HttpMethod.Get, "/events" + Paginate(pagination), null, null, cancellationToken);
+
+    public Task<RemovedResponse> EventDeleteAsync(string eventId, CancellationToken cancellationToken = default)
+        => RequestAsync<RemovedResponse>(HttpMethod.Delete, $"/events/{E(eventId)}", null, null, cancellationToken);
+
+    // ---- Webhooks ----
+
+    public Task<WebhookCreated> WebhookCreateAsync(WebhookCreateOptions options, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(options);
+        return RequestAsync<WebhookCreated>(HttpMethod.Post, "/webhooks", options, null, cancellationToken);
+    }
+
+    public Task<Webhook> WebhookRetrieveAsync(string webhookId, CancellationToken cancellationToken = default)
+        => RequestAsync<Webhook>(HttpMethod.Get, $"/webhooks/{E(webhookId)}", null, null, cancellationToken);
+
+    public Task<ListResponse<Webhook>> WebhookListAsync(PaginationOptions? pagination = null, CancellationToken cancellationToken = default)
+        => RequestAsync<ListResponse<Webhook>>(HttpMethod.Get, "/webhooks" + Paginate(pagination), null, null, cancellationToken);
+
+    public Task<ObjectRef> WebhookUpdateAsync(string webhookId, WebhookUpdateOptions options, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(options);
+        return RequestAsync<ObjectRef>(HttpMethod.Patch, $"/webhooks/{E(webhookId)}", options, null, cancellationToken);
+    }
+
+    public Task<WebhookCreated> WebhookRotateSecretAsync(string webhookId, CancellationToken cancellationToken = default)
+        => RequestAsync<WebhookCreated>(HttpMethod.Post, $"/webhooks/{E(webhookId)}/rotate", null, null, cancellationToken);
+
+    public Task<WebhookTestResult> WebhookTestAsync(string webhookId, CancellationToken cancellationToken = default)
+        => RequestAsync<WebhookTestResult>(HttpMethod.Post, $"/webhooks/{E(webhookId)}/test", null, null, cancellationToken);
+
+    public Task<RemovedResponse> WebhookDeleteAsync(string webhookId, CancellationToken cancellationToken = default)
+        => RequestAsync<RemovedResponse>(HttpMethod.Delete, $"/webhooks/{E(webhookId)}", null, null, cancellationToken);
+
+    public WebhookVerificationResult WebhookVerifySignature(string payload, IReadOnlyDictionary<string, string> headers, string secret, int toleranceSeconds = 300)
+        => WebhookSignature.Verify(payload, headers, secret, toleranceSeconds);
+}

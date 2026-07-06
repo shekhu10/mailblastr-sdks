@@ -1,0 +1,114 @@
+using System.Text.Json;
+using System.Text.Json.Serialization;
+
+namespace Mailblastr;
+
+/// <summary>A webhook endpoint subscription.</summary>
+public class Webhook
+{
+    [JsonPropertyName("object")]
+    public string Object { get; set; } = "webhook";
+
+    [JsonPropertyName("id")]
+    public string Id { get; set; } = null!;
+
+    [JsonPropertyName("endpoint")]
+    public string Endpoint { get; set; } = null!;
+
+    [JsonPropertyName("events")]
+    public List<string> Events { get; set; } = new();
+
+    [JsonPropertyName("status")]
+    public string Status { get; set; } = null!;
+
+    /// <summary>Whether a signing secret is set. (The secret itself is returned ONLY on create + rotate.)</summary>
+    [JsonPropertyName("has_secret")]
+    public bool? HasSecret { get; set; }
+
+    /// <summary>Timestamp of the last delivery attempt (null until first delivery).</summary>
+    [JsonPropertyName("last_delivery_at")]
+    public string? LastDeliveryAt { get; set; }
+
+    /// <summary>HTTP status of the last delivery attempt (null until first delivery).</summary>
+    [JsonPropertyName("last_delivery_status")]
+    public int? LastDeliveryStatus { get; set; }
+
+    /// <summary>Consecutive delivery failure count.</summary>
+    [JsonPropertyName("failure_count")]
+    public int? FailureCount { get; set; }
+
+    [JsonPropertyName("created_at")]
+    public string CreatedAt { get; set; } = null!;
+}
+
+/// <summary>Payload for creating a webhook (POST /webhooks).</summary>
+public class WebhookCreateOptions
+{
+    [JsonPropertyName("endpoint")]
+    public string Endpoint { get; set; } = null!;
+
+    [JsonPropertyName("events")]
+    public List<string> Events { get; set; } = new();
+
+    /// <summary>Optional caller-supplied signing secret. When omitted, MailBlastr generates one (returned once).</summary>
+    [JsonPropertyName("secret")]
+    public string? Secret { get; set; }
+}
+
+/// <summary>Payload for updating a webhook (PATCH /webhooks/:id).</summary>
+public class WebhookUpdateOptions
+{
+    [JsonPropertyName("endpoint")]
+    public string? Endpoint { get; set; }
+
+    [JsonPropertyName("events")]
+    public List<string>? Events { get; set; }
+
+    /// <summary><c>enabled</c> | <c>disabled</c>.</summary>
+    [JsonPropertyName("status")]
+    public string? Status { get; set; }
+}
+
+/// <summary>
+/// Response of webhook create/rotate. <see cref="SigningSecret"/> is the
+/// plaintext secret, shown ONCE — store it now.
+/// </summary>
+public class WebhookCreated
+{
+    [JsonPropertyName("object")]
+    public string Object { get; set; } = "webhook";
+
+    [JsonPropertyName("id")]
+    public string Id { get; set; } = null!;
+
+    [JsonPropertyName("signing_secret")]
+    public string SigningSecret { get; set; } = null!;
+}
+
+/// <summary>Result of a synchronous test delivery (POST /webhooks/:id/test).</summary>
+public class WebhookTestResult
+{
+    [JsonPropertyName("object")]
+    public string Object { get; set; } = "webhook_test";
+
+    [JsonPropertyName("id")]
+    public string Id { get; set; } = null!;
+
+    /// <summary>The endpoint's live result fields (status, latency, body...).</summary>
+    [JsonExtensionData]
+    public Dictionary<string, JsonElement>? Extra { get; set; }
+}
+
+/// <summary>Outcome of verifying a webhook delivery signature.</summary>
+public class WebhookVerificationResult
+{
+    /// <summary>True when the signature matches and (when checked) the timestamp is fresh.</summary>
+    public bool Valid { get; set; }
+
+    /// <summary>
+    /// A machine reason when <see cref="Valid"/> is false: <c>missing_headers</c>,
+    /// <c>missing_secret</c>, <c>invalid_timestamp</c>,
+    /// <c>timestamp_out_of_tolerance</c>, or <c>no_match</c>.
+    /// </summary>
+    public string? Reason { get; set; }
+}

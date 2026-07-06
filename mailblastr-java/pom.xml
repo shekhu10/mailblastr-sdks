@@ -1,0 +1,56 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+
+  <groupId>com.mailblastr</groupId>
+  <artifactId>mailblastr</artifactId>
+  <version>0.1.0</version>
+  <packaging>jar</packaging>
+
+  <name>mailblastr</name>
+  <description>Official MailBlastr Java SDK — a zero-dependency client for the MailBlastr email API (Java 11+).</description>
+  <url>https://www.mailblastr.com</url>
+
+  <licenses>
+    <license>
+      <name>MIT License</name>
+      <url>https://opensource.org/licenses/MIT</url>
+      <distribution>repo</distribution>
+    </license>
+  </licenses>
+
+  <organization>
+    <name>MailBlastr</name>
+    <url>https://www.mailblastr.com</url>
+  </organization>
+
+  <properties>
+    <maven.compiler.release>11</maven.compiler.release>
+    <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+  </properties>
+
+  <!-- Zero runtime dependencies: uses java.net.http.HttpClient and hand-rolled JSON.
+       Tests are plain-main runner classes under src/test/java (no JUnit). -->
+  <dependencies/>
+
+  <build>
+    <plugins>
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-compiler-plugin</artifactId>
+        <version>3.13.0</version>
+      </plugin>
+      <plugin>
+        <!-- Test classes are plain main() runners, not JUnit — skip surefire. -->
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-surefire-plugin</artifactId>
+        <version>3.2.5</version>
+        <configuration>
+          <skipTests>true</skipTests>
+        </configuration>
+      </plugin>
+    </plugins>
+  </build>
+</project>

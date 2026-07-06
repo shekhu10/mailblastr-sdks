@@ -1,0 +1,34 @@
+{
+  "name": "mailblastr-cli",
+  "version": "0.1.0",
+  "description": "Official command-line interface for the MailBlastr email API.",
+  "keywords": [
+    "mailblastr",
+    "email",
+    "cli",
+    "api",
+    "transactional"
+  ],
+  "license": "MIT",
+  "author": "MailBlastr",
+  "homepage": "https://www.mailblastr.com",
+  "bin": {
+    "mailblastr": "bin/mailblastr.js"
+  },
+  "main": "src/cli.js",
+  "files": [
+    "bin",
+    "src",
+    "README.md"
+  ],
+  "scripts": {
+    "test": "node --test \"test/**/*.test.js\""
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "commander": "^12.1.0",
+    "mailblastr": "file:../../mailblastr-npm"
+  }
+}

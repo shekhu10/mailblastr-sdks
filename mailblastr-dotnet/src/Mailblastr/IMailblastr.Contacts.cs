@@ -1,0 +1,115 @@
+namespace Mailblastr;
+
+public partial interface IMailblastr
+{
+    // ---- Audiences ----
+
+    /// <summary>Create an audience. POST /audiences</summary>
+    Task<Audience> AudienceCreateAsync(string name, CancellationToken cancellationToken = default);
+
+    /// <summary>Retrieve an audience. GET /audiences/:id</summary>
+    Task<Audience> AudienceRetrieveAsync(string audienceId, CancellationToken cancellationToken = default);
+
+    /// <summary>List audiences (includes each domain's contact-pool audience). GET /audiences</summary>
+    Task<ListResponse<Audience>> AudienceListAsync(PaginationOptions? pagination = null, CancellationToken cancellationToken = default);
+
+    /// <summary>Rename an audience. PATCH /audiences/:id</summary>
+    Task<Audience> AudienceUpdateAsync(string audienceId, string name, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Import contacts from a link-shared Google Sheet. Header columns become
+    /// contact properties; rows land in a fresh segment.
+    /// POST /audiences/:id/contacts/import-sheet
+    /// </summary>
+    Task<SheetImportResult> AudienceImportSheetAsync(string audienceId, string sheetUrl, string? segmentName = null, CancellationToken cancellationToken = default);
+
+    /// <summary>Delete an audience. DELETE /audiences/:id</summary>
+    Task<RemovedResponse> AudienceDeleteAsync(string audienceId, CancellationToken cancellationToken = default);
+
+    // ---- Contacts (domain-first) ----
+
+    /// <summary>
+    /// Create a contact. DOMAIN-FIRST: set <c>options.Domain</c> to create in
+    /// that sending domain's contact pool via the flat /contacts API (required
+    /// there), or <c>options.AudienceId</c> to target a specific audience via
+    /// the nested API. POST /contacts | POST /audiences/:id/contacts
+    /// </summary>
+    Task<ObjectRef> ContactCreateAsync(ContactCreateOptions options, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Retrieve a contact by id or email. An id is exact; an EMAIL can exist in
+    /// several domains' pools, so pass <paramref name="domain"/> to pick the pool
+    /// (omitted ⇒ the oldest match anywhere). GET /contacts/:id
+    /// </summary>
+    Task<Contact> ContactRetrieveAsync(string contactIdOrEmail, string? domain = null, string? audienceId = null, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// List contacts. DOMAIN-FIRST: <c>options.Domain</c> is REQUIRED on the flat
+    /// /contacts list (names the pool) unless <c>options.AudienceId</c> is set.
+    /// GET /contacts | GET /audiences/:id/contacts
+    /// </summary>
+    Task<ListResponse<Contact>> ContactListAsync(ContactListOptions options, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Bulk-import contacts from an array. Upserts by email; max 10,000 per call.
+    /// <paramref name="onConflict"/> <c>skip</c> leaves existing contacts untouched
+    /// (default <c>upsert</c>). POST /audiences/:id/contacts/batch
+    /// </summary>
+    Task<ImportContactsResponse> ContactBatchAsync(string audienceId, IEnumerable<ContactInput> contacts, string? onConflict = null, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Bulk-import contacts from CSV text (header row optional). Upserts by email.
+    /// By default every non-builtin CSV column is auto-registered as a custom
+    /// property; pass <paramref name="createProperties"/> false for strict mode.
+    /// POST /audiences/:id/contacts/import
+    /// </summary>
+    Task<ImportContactsResponse> ContactImportAsync(string audienceId, string csv, string? onConflict = null, bool? createProperties = null, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Update a contact. On the flat API, set <c>options.Domain</c> when
+    /// <c>options.Id</c> is an EMAIL (disambiguates across pools).
+    /// PATCH /contacts/:id | PATCH /audiences/:id/contacts/:id
+    /// </summary>
+    Task<ObjectRef> ContactUpdateAsync(ContactUpdateOptions options, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Delete a contact. On the flat API, pass <paramref name="domain"/> when
+    /// <paramref name="contactIdOrEmail"/> is an EMAIL. DELETE /contacts/:id
+    /// </summary>
+    Task<ContactDeleted> ContactDeleteAsync(string contactIdOrEmail, string? domain = null, string? audienceId = null, CancellationToken cancellationToken = default);
+
+    /// <summary>Add a contact to a segment. POST /contacts/:id/segments/:segmentId</summary>
+    Task<IdResponse> ContactAddToSegmentAsync(string contactId, string segmentId, CancellationToken cancellationToken = default);
+
+    /// <summary>Remove a contact from a segment. DELETE /contacts/:id/segments/:segmentId</summary>
+    Task<SegmentMembershipRemoved> ContactRemoveFromSegmentAsync(string contactId, string segmentId, CancellationToken cancellationToken = default);
+
+    /// <summary>List the segments a contact belongs to. GET /contacts/:id/segments</summary>
+    Task<ListResponse<Segment>> ContactListSegmentsAsync(string contactId, CancellationToken cancellationToken = default);
+
+    /// <summary>Get a contact's topic subscriptions. GET /contacts/:id/topics</summary>
+    Task<ContactTopics> ContactRetrieveTopicsAsync(string contactId, CancellationToken cancellationToken = default);
+
+    /// <summary>Update a contact's topic subscriptions. PATCH /contacts/:id/topics</summary>
+    Task<IdResponse> ContactUpdateTopicsAsync(string contactId, ContactTopicsUpdateOptions options, CancellationToken cancellationToken = default);
+
+    // ---- Contact properties (custom fields / merge tags) ----
+
+    /// <summary>Register a custom contact property. POST /contact-properties</summary>
+    Task<ObjectRef> ContactPropertyCreateAsync(ContactPropertyCreateOptions options, CancellationToken cancellationToken = default);
+
+    /// <summary>Retrieve a contact property. GET /contact-properties/:id</summary>
+    Task<ContactProperty> ContactPropertyRetrieveAsync(string propertyId, CancellationToken cancellationToken = default);
+
+    /// <summary>List contact properties. GET /contact-properties</summary>
+    Task<ListResponse<ContactProperty>> ContactPropertyListAsync(PaginationOptions? pagination = null, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Update a contact property's fallback value (the only mutable field;
+    /// key/type are immutable). Pass null to clear it. PATCH /contact-properties/:id
+    /// </summary>
+    Task<ObjectRef> ContactPropertyUpdateAsync(string propertyId, object? fallbackValue, CancellationToken cancellationToken = default);
+
+    /// <summary>Delete a contact property. DELETE /contact-properties/:id</summary>
+    Task<RemovedResponse> ContactPropertyDeleteAsync(string propertyId, CancellationToken cancellationToken = default);
+}

@@ -1,0 +1,678 @@
+'use strict';
+
+const { test } = require('node:test');
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
+
+const { createContext, run } = require('../src/cli');
+
+const RESOURCES = [
+  'emails', 'batch', 'domains', 'audiences', 'contacts', 'contactProperties',
+  'segments', 'topics', 'campaigns',
+  'templates', 'automations', 'webhooks', 'logs', 'events', 'apiKeys', 'polls',
+];
+
+/** Recording proxy for one resource; `emails.receiving` nests a sub-recorder. */
+function makeRecorder(calls, resource, response) {
+  return new Proxy(
+    {},
+    {
+      get: (_t, method) => {
+        if (resource === 'emails' && method === 'receiving') {
+          return makeRecorder(calls, 'emails.receiving', response);
+        }
+        return (...args) => {
+          calls.push({ resource, method, args });
+          return Promise.resolve(response);
+        };
+      },
+    },
+  );
+}
+
+/** Build a fake SDK client that records every resource.method(...args) call. */
+function makeMockClient(response = { data: { id: 'obj_1', ok: true }, error: null }) {
+  const calls = [];
+  const client = {};
+  for (const resource of RESOURCES) {
+    client[resource] = makeRecorder(calls, resource, response);
+  }
+  return { client, calls };
+}
+
+/** Run the CLI against a mocked client; returns calls, output, exit code. */
+async function runCli(argv, { response, env, clientFactory } = {}) {
+  const mock = makeMockClient(response);
+  let out = '';
+  let err = '';
+  const created = [];
+  const ctx = createContext({
+    createClient: clientFactory || ((apiKey, options) => {
+      created.push({ apiKey, options });
+      return mock.client;
+    }),
+    stdout: (s) => { out += s; },
+    stderr: (s) => { err += s; },
+    env: env !== undefined ? env : { MAILBLASTR_API_KEY: 'mb_test_key' },
+  });
+  const exitCode = await run(ctx, argv);
+  return { calls: mock.calls, out, err, exitCode, created };
+}
+
+function lastCall(r) {
+  assert.equal(r.exitCode, 0, `expected exit 0, stderr: ${r.err}`);
+  assert.equal(r.calls.length, 1, `expected exactly one SDK call, got ${JSON.stringify(r.calls)}`);
+  return r.calls[0];
+}
+
+// ---- emails ----
+
+test('emails send maps flags to emails.send payload', async () => {
+  const r = await runCli([
+    'emails', 'send',
+    '--from', 'Acme <hi@yourdomain.com>',
+    '--to', 'a@b.com', '--to', 'c@d.com,e@f.com',
+    '--subject', 'hello',
+    '--html', '<p>hi</p>',
+    '--reply-to', 'reply@yourdomain.com',
+    '--scheduled-at', '2026-08-01T00:00:00Z',
+    '--variables', '{"first_name":"Ada"}',
+    '--idempotency-key', 'order-123',
+  ]);
+  const call = lastCall(r);
+  assert.equal(call.resource, 'emails');
+  assert.equal(call.method, 'send');
+  assert.deepEqual(call.args[0], {
+    from: 'Acme <hi@yourdomain.com>',
+    to: ['a@b.com', 'c@d.com', 'e@f.com'],
+    subject: 'hello',
+    html: '<p>hi</p>',
+    reply_to: ['reply@yourdomain.com'],
+    scheduled_at: '2026-08-01T00:00:00Z',
+    variables: { first_name: 'Ada' },
+  });
+  assert.deepEqual(call.args[1], { idempotencyKey: 'order-123' });
+});
+
+test('emails get / update / cancel map id and payload', async () => {
+  let call = lastCall(await runCli(['emails', 'get', 'em_1']));
+  assert.deepEqual([call.resource, call.method, call.args], ['emails', 'get', ['em_1']]);
+
+  call = lastCall(await runCli(['emails', 'update', 'em_1', '--scheduled-at', '2026-08-02T00:00:00Z']));
+  assert.deepEqual([call.method, call.args], ['update', ['em_1', { scheduled_at: '2026-08-02T00:00:00Z' }]]);
+
+  call = lastCall(await runCli(['emails', 'cancel', 'em_1']));
+  assert.deepEqual([call.method, call.args], ['cancel', ['em_1']]);
+});
+
+test('emails list maps pagination flags', async () => {
+  const call = lastCall(await runCli(['emails', 'list', '--limit', '5', '--after', 'em_9']));
+  assert.deepEqual([call.method, call.args], ['list', [{ limit: 5, after: 'em_9' }]]);
+});
+
+test('emails attachments / attachment map to listAttachments / getAttachment', async () => {
+  let call = lastCall(await runCli(['emails', 'attachments', 'em_1']));
+  assert.deepEqual([call.method, call.args], ['listAttachments', ['em_1']]);
+
+  call = lastCall(await runCli(['emails', 'attachment', 'em_1', 'att_2']));
+  assert.deepEqual([call.method, call.args], ['getAttachment', ['em_1', 'att_2']]);
+});
+
+// ---- emails batch ----
+
+test('emails batch --file reads a JSON array and calls batch.send', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mb-cli-'));
+  const file = path.join(dir, 'batch.json');
+  const payloads = [
+    { from: 'a@d.com', to: ['b@e.com'], subject: 'one', html: '<p>1</p>' },
+    { from: 'a@d.com', to: ['c@e.com'], subject: 'two', text: '2' },
+  ];
+  fs.writeFileSync(file, JSON.stringify(payloads));
+  const call = lastCall(await runCli(['emails', 'batch', '--file', file]));
+  assert.deepEqual([call.resource, call.method], ['batch', 'send']);
+  assert.deepEqual(call.args[0], payloads);
+  assert.equal(call.args[1], undefined);
+});
+
+test('emails batch --data accepts an inline JSON array and passes idempotency key', async () => {
+  const call = lastCall(
+    await runCli([
+      'emails', 'batch',
+      '--data', '[{"from":"a@d.com","to":["b@e.com"],"subject":"hi","text":"x"}]',
+      '--idempotency-key', 'batch-9',
+    ]),
+  );
+  assert.deepEqual([call.resource, call.method], ['batch', 'send']);
+  assert.deepEqual(call.args[0], [{ from: 'a@d.com', to: ['b@e.com'], subject: 'hi', text: 'x' }]);
+  assert.deepEqual(call.args[1], { idempotencyKey: 'batch-9' });
+});
+
+test('emails batch fails cleanly on missing/unparseable/non-array input', async () => {
+  let r = await runCli(['emails', 'batch']);
+  assert.equal(r.exitCode, 1);
+  assert.equal(r.calls.length, 0);
+  assert.match(r.err, /--file <path> or --data/);
+
+  r = await runCli(['emails', 'batch', '--file', '/nope/does-not-exist.json']);
+  assert.equal(r.exitCode, 1);
+  assert.equal(r.calls.length, 0);
+  assert.match(r.err, /Cannot read --file/);
+
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mb-cli-'));
+  const bad = path.join(dir, 'bad.json');
+  fs.writeFileSync(bad, '{nope');
+  r = await runCli(['emails', 'batch', '--file', bad]);
+  assert.equal(r.exitCode, 1);
+  assert.equal(r.calls.length, 0);
+  assert.match(r.err, /Invalid JSON in --file/);
+
+  const obj = path.join(dir, 'obj.json');
+  fs.writeFileSync(obj, '{"from":"a@d.com"}');
+  r = await runCli(['emails', 'batch', '--file', obj]);
+  assert.equal(r.exitCode, 1);
+  assert.equal(r.calls.length, 0);
+  assert.match(r.err, /must be a JSON array/);
+
+  r = await runCli(['emails', 'batch', '--file', obj, '--data', '[]']);
+  assert.equal(r.exitCode, 1);
+  assert.equal(r.calls.length, 0);
+  assert.match(r.err, /only one of --file or --data/);
+});
+
+// ---- emails receiving ----
+
+test('emails receiving list / get / attachments / delete map to the receiving sub-resource', async () => {
+  let call = lastCall(await runCli(['emails', 'receiving', 'list', '--limit', '5']));
+  assert.deepEqual([call.resource, call.method, call.args], ['emails.receiving', 'list', [{ limit: 5 }]]);
+
+  call = lastCall(await runCli(['emails', 'receiving', 'get', 'rem_1']));
+  assert.deepEqual([call.resource, call.method, call.args], ['emails.receiving', 'get', ['rem_1']]);
+
+  call = lastCall(await runCli(['emails', 'receiving', 'attachments', 'rem_1']));
+  assert.deepEqual([call.resource, call.method, call.args], ['emails.receiving', 'listAttachments', ['rem_1']]);
+
+  call = lastCall(await runCli(['emails', 'receiving', 'delete', 'rem_1']));
+  assert.deepEqual([call.resource, call.method, call.args], ['emails.receiving', 'remove', ['rem_1']]);
+});
+
+test('emails receiving attachment writes binary to --output and prints the path', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mb-cli-'));
+  const out = path.join(dir, 'invoice.pdf');
+  const bytes = new TextEncoder().encode('binary-attachment-bytes');
+  const r = await runCli(
+    ['emails', 'receiving', 'attachment', 'rem_1', 'att_2', '--output', out],
+    { response: { data: bytes.buffer, error: null } },
+  );
+  const call = lastCall(r);
+  assert.deepEqual([call.resource, call.method, call.args], ['emails.receiving', 'getAttachment', ['rem_1', 'att_2']]);
+  assert.equal(fs.readFileSync(out, 'utf8'), 'binary-attachment-bytes');
+  const printed = JSON.parse(r.out);
+  assert.equal(printed.path, out);
+  assert.equal(printed.bytes, bytes.byteLength);
+});
+
+test('emails receiving attachment defaults the filename to the attachment id', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mb-cli-'));
+  const prev = process.cwd();
+  process.chdir(dir);
+  try {
+    const bytes = new TextEncoder().encode('x');
+    const r = await runCli(
+      ['emails', 'receiving', 'attachment', 'rem_1', 'att_2'],
+      { response: { data: bytes.buffer, error: null } },
+    );
+    lastCall(r);
+    assert.ok(fs.existsSync(path.join(dir, 'att_2')));
+    assert.equal(JSON.parse(r.out).path, path.join(fs.realpathSync(dir), 'att_2'));
+  } finally {
+    process.chdir(prev);
+  }
+});
+
+test('emails receiving raw writes the RFC822 message, defaulting to <id>.eml', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mb-cli-'));
+  const prev = process.cwd();
+  process.chdir(dir);
+  try {
+    const bytes = new TextEncoder().encode('From: a@b.com\r\n\r\nhi');
+    const r = await runCli(
+      ['emails', 'receiving', 'raw', 'rem_1'],
+      { response: { data: bytes.buffer, error: null } },
+    );
+    const call = lastCall(r);
+    assert.deepEqual([call.resource, call.method, call.args], ['emails.receiving', 'getRaw', ['rem_1']]);
+    assert.equal(fs.readFileSync(path.join(dir, 'rem_1.eml'), 'utf8'), 'From: a@b.com\r\n\r\nhi');
+  } finally {
+    process.chdir(prev);
+  }
+
+  // --output overrides the default filename
+  const out = path.join(dir, 'message.eml');
+  const r = await runCli(
+    ['emails', 'receiving', 'raw', 'rem_1', '--output', out],
+    { response: { data: new TextEncoder().encode('raw').buffer, error: null } },
+  );
+  lastCall(r);
+  assert.equal(fs.readFileSync(out, 'utf8'), 'raw');
+});
+
+test('emails receiving binary commands surface API errors without writing a file', async () => {
+  const error = { statusCode: 404, name: 'not_found', message: 'no such attachment' };
+  const r = await runCli(
+    ['emails', 'receiving', 'attachment', 'rem_1', 'att_2', '--output', '/nope/never-written.bin'],
+    { response: { data: null, error } },
+  );
+  assert.equal(r.exitCode, 1);
+  assert.equal(r.out, '');
+  assert.deepEqual(JSON.parse(r.err), error);
+});
+
+test('emails receiving forward splits --to and maps subject', async () => {
+  const call = lastCall(
+    await runCli([
+      'emails', 'receiving', 'forward', 'rem_1',
+      '--from', 'me@yourdomain.com',
+      '--to', 'a@b.com', '--to', 'c@d.com,e@f.com',
+      '--subject', 'FYI',
+    ]),
+  );
+  assert.deepEqual([call.resource, call.method], ['emails.receiving', 'forward']);
+  assert.deepEqual(call.args, [
+    'rem_1',
+    { from: 'me@yourdomain.com', to: ['a@b.com', 'c@d.com', 'e@f.com'], subject: 'FYI' },
+  ]);
+});
+
+test('emails receiving reply maps body flags and requires --html or --text', async () => {
+  const call = lastCall(
+    await runCli(['emails', 'receiving', 'reply', 'rem_1', '--from', 'me@yourdomain.com', '--html', '<p>thanks</p>']),
+  );
+  assert.deepEqual([call.resource, call.method], ['emails.receiving', 'reply']);
+  assert.deepEqual(call.args, ['rem_1', { from: 'me@yourdomain.com', html: '<p>thanks</p>' }]);
+
+  const missing = await runCli(['emails', 'receiving', 'reply', 'rem_1', '--from', 'me@yourdomain.com']);
+  assert.equal(missing.exitCode, 1);
+  assert.equal(missing.calls.length, 0);
+  assert.match(missing.err, /--html or --text/);
+});
+
+// ---- domains ----
+
+test('domains add / verify / delete / list', async () => {
+  let call = lastCall(await runCli(['domains', 'add', 'yourdomain.com', '--tls', 'enforced']));
+  assert.deepEqual([call.resource, call.method], ['domains', 'create']);
+  assert.deepEqual(call.args[0], { name: 'yourdomain.com', tls: 'enforced' });
+
+  call = lastCall(await runCli(['domains', 'verify', 'dom_1']));
+  assert.deepEqual([call.method, call.args], ['verify', ['dom_1']]);
+
+  call = lastCall(await runCli(['domains', 'delete', 'dom_1']));
+  assert.deepEqual([call.method, call.args], ['remove', ['dom_1']]);
+
+  call = lastCall(await runCli(['domains', 'list']));
+  assert.deepEqual([call.method, call.args], ['list', [{}]]);
+});
+
+test('domains dns detect / cloudflare / godaddy / namecheap map to the DNS apply methods', async () => {
+  let call = lastCall(await runCli(['domains', 'dns', 'detect', 'dom_1']));
+  assert.deepEqual([call.resource, call.method, call.args], ['domains', 'detectDns', ['dom_1']]);
+
+  call = lastCall(await runCli(['domains', 'dns', 'cloudflare', 'dom_1', '--token', 'cf_tok']));
+  assert.deepEqual([call.method, call.args], ['applyCloudflareDns', ['dom_1', { token: 'cf_tok' }]]);
+
+  call = lastCall(await runCli(['domains', 'dns', 'godaddy', 'dom_1', '--key', 'gd_key', '--secret', 'gd_sec']));
+  assert.deepEqual([call.method, call.args], ['applyGoDaddyDns', ['dom_1', { key: 'gd_key', secret: 'gd_sec' }]]);
+
+  call = lastCall(
+    await runCli(['domains', 'dns', 'namecheap', 'dom_1', '--api-user', 'ncuser', '--key', 'nc_key', '--user-name', 'acct']),
+  );
+  assert.deepEqual([call.method, call.args], [
+    'applyNamecheapDns',
+    ['dom_1', { apiUser: 'ncuser', apiKey: 'nc_key', userName: 'acct' }],
+  ]);
+
+  call = lastCall(await runCli(['domains', 'dns', 'namecheap', 'dom_1', '--api-user', 'ncuser', '--key', 'nc_key']));
+  assert.deepEqual(call.args, ['dom_1', { apiUser: 'ncuser', apiKey: 'nc_key' }]);
+});
+
+test('domains claim start / get / verify map to claim / getClaim / verifyClaim', async () => {
+  let call = lastCall(await runCli(['domains', 'claim', 'start', 'yourdomain.com']));
+  assert.deepEqual([call.resource, call.method, call.args], ['domains', 'claim', [{ name: 'yourdomain.com' }]]);
+
+  call = lastCall(await runCli(['domains', 'claim', 'get', 'dom_1']));
+  assert.deepEqual([call.method, call.args], ['getClaim', ['dom_1']]);
+
+  call = lastCall(await runCli(['domains', 'claim', 'verify', 'dom_1']));
+  assert.deepEqual([call.method, call.args], ['verifyClaim', ['dom_1']]);
+});
+
+// ---- contacts (domain-first) ----
+
+test('contacts create requires --domain and maps fields', async () => {
+  const r = await runCli([
+    'contacts', 'create',
+    '--domain', 'yourdomain.com',
+    '--email', 'a@b.com',
+    '--first-name', 'Ada',
+    '--properties', '{"plan":"pro"}',
+  ]);
+  const call = lastCall(r);
+  assert.deepEqual([call.resource, call.method], ['contacts', 'create']);
+  assert.deepEqual(call.args[0], {
+    domain: 'yourdomain.com',
+    email: 'a@b.com',
+    first_name: 'Ada',
+    properties: { plan: 'pro' },
+  });
+
+  const missing = await runCli(['contacts', 'create', '--email', 'a@b.com']);
+  assert.equal(missing.exitCode, 1);
+  assert.match(missing.err, /--domain/);
+});
+
+test('contacts list maps domain + segment filter', async () => {
+  const call = lastCall(
+    await runCli(['contacts', 'list', '--domain', 'yourdomain.com', '--segment-id', 'seg_1', '--limit', '10']),
+  );
+  assert.deepEqual([call.method, call.args], [
+    'list',
+    [{ domain: 'yourdomain.com', segment_id: 'seg_1', limit: 10 }],
+  ]);
+});
+
+test('contacts get / update / delete pass id and optional domain', async () => {
+  let call = lastCall(await runCli(['contacts', 'get', 'a@b.com', '--domain', 'yourdomain.com']));
+  assert.deepEqual([call.method, call.args], ['get', [{ id: 'a@b.com', domain: 'yourdomain.com' }]]);
+
+  call = lastCall(await runCli(['contacts', 'update', 'con_1', '--unsubscribed']));
+  assert.deepEqual([call.method, call.args], ['update', [{ id: 'con_1', unsubscribed: true }]]);
+
+  call = lastCall(await runCli(['contacts', 'delete', 'con_1']));
+  assert.deepEqual([call.method, call.args], ['remove', [{ id: 'con_1' }]]);
+});
+
+test('contacts remove-from-segment / topics / set-topics map to segment and topic methods', async () => {
+  let call = lastCall(await runCli(['contacts', 'remove-from-segment', 'con_1', 'seg_2']));
+  assert.deepEqual([call.resource, call.method, call.args], ['contacts', 'removeFromSegment', ['con_1', 'seg_2']]);
+
+  call = lastCall(await runCli(['contacts', 'topics', 'con_1']));
+  assert.deepEqual([call.method, call.args], ['getTopics', ['con_1']]);
+
+  call = lastCall(
+    await runCli(['contacts', 'set-topics', 'con_1', '--topics', '[{"id":"top_1","subscription":"opt_out"}]']),
+  );
+  assert.deepEqual([call.method, call.args], [
+    'updateTopics',
+    ['con_1', { topics: [{ id: 'top_1', subscription: 'opt_out' }] }],
+  ]);
+
+  const bad = await runCli(['contacts', 'set-topics', 'con_1', '--topics', '{nope']);
+  assert.equal(bad.exitCode, 1);
+  assert.equal(bad.calls.length, 0);
+  assert.match(bad.err, /Invalid JSON for --topics/);
+});
+
+// ---- contact properties ----
+
+test('contact-properties create / list / get / update / delete', async () => {
+  let call = lastCall(
+    await runCli(['contact-properties', 'create', '--key', 'company', '--type', 'string', '--fallback-value', 'Acme']),
+  );
+  assert.deepEqual([call.resource, call.method], ['contactProperties', 'create']);
+  assert.deepEqual(call.args[0], { key: 'company', type: 'string', fallback_value: 'Acme' });
+
+  call = lastCall(await runCli(['contact-properties', 'list', '--limit', '10']));
+  assert.deepEqual([call.method, call.args], ['list', [{ limit: 10 }]]);
+
+  call = lastCall(await runCli(['contact-properties', 'get', 'prop_1']));
+  assert.deepEqual([call.method, call.args], ['get', ['prop_1']]);
+
+  call = lastCall(await runCli(['contact-properties', 'update', 'prop_1', '--fallback-value', 'n/a']));
+  assert.deepEqual([call.method, call.args], ['update', ['prop_1', { fallback_value: 'n/a' }]]);
+
+  call = lastCall(await runCli(['contact-properties', 'delete', 'prop_1']));
+  assert.deepEqual([call.method, call.args], ['remove', ['prop_1']]);
+});
+
+// ---- audiences ----
+
+test('audiences create / list / get / update / delete / import-sheet', async () => {
+  let call = lastCall(await runCli(['audiences', 'create', '--name', 'General']));
+  assert.deepEqual([call.resource, call.method], ['audiences', 'create']);
+  assert.deepEqual(call.args, [{ name: 'General' }]);
+
+  call = lastCall(await runCli(['audiences', 'list', '--limit', '3']));
+  assert.deepEqual([call.method, call.args], ['list', [{ limit: 3 }]]);
+
+  call = lastCall(await runCli(['audiences', 'get', 'aud_1']));
+  assert.deepEqual([call.method, call.args], ['get', ['aud_1']]);
+
+  call = lastCall(await runCli(['audiences', 'update', 'aud_1', '--name', 'Newsletter']));
+  assert.deepEqual([call.method, call.args], ['update', ['aud_1', { name: 'Newsletter' }]]);
+
+  call = lastCall(await runCli(['audiences', 'delete', 'aud_1']));
+  assert.deepEqual([call.method, call.args], ['remove', ['aud_1']]);
+
+  call = lastCall(
+    await runCli([
+      'audiences', 'import-sheet', 'aud_1',
+      '--url', 'https://docs.google.com/spreadsheets/d/abc/edit',
+      '--segment-name', 'July leads',
+    ]),
+  );
+  assert.deepEqual([call.method, call.args], [
+    'importSheet',
+    ['aud_1', { url: 'https://docs.google.com/spreadsheets/d/abc/edit', segment_name: 'July leads' }],
+  ]);
+});
+
+// ---- segments / topics ----
+
+test('segments create / list are domain-scoped', async () => {
+  let call = lastCall(await runCli(['segments', 'create', '--domain', 'yourdomain.com', '--name', 'VIP']));
+  assert.deepEqual([call.resource, call.method], ['segments', 'create']);
+  assert.deepEqual(call.args[0], { domain: 'yourdomain.com', name: 'VIP' });
+
+  call = lastCall(await runCli(['segments', 'list', '--domain', 'yourdomain.com']));
+  assert.deepEqual([call.method, call.args], ['list', [{ domain: 'yourdomain.com' }]]);
+});
+
+test('topics create maps default_subscription', async () => {
+  const call = lastCall(
+    await runCli([
+      'topics', 'create', '--domain', 'yourdomain.com', '--name', 'Product updates',
+      '--default-subscription', 'opt_out', '--description', 'News',
+    ]),
+  );
+  assert.deepEqual(call.args[0], {
+    domain: 'yourdomain.com',
+    name: 'Product updates',
+    default_subscription: 'opt_out',
+    description: 'News',
+  });
+});
+
+// ---- campaigns ----
+
+test('campaigns create and send map flags', async () => {
+  let call = lastCall(
+    await runCli([
+      'campaigns', 'create', '--domain', 'yourdomain.com',
+      '--from', 'Acme <hi@yourdomain.com>', '--subject', 'Sale', '--html', '<p>50% off</p>',
+      '--segment-id', 'seg_1',
+    ]),
+  );
+  assert.deepEqual([call.resource, call.method], ['campaigns', 'create']);
+  assert.deepEqual(call.args[0], {
+    domain: 'yourdomain.com',
+    from: 'Acme <hi@yourdomain.com>',
+    subject: 'Sale',
+    html: '<p>50% off</p>',
+    segment_id: 'seg_1',
+  });
+
+  call = lastCall(await runCli(['campaigns', 'send', 'camp_1', '--scheduled-at', '2026-08-01T00:00:00Z']));
+  assert.deepEqual([call.method, call.args], ['send', ['camp_1', { scheduled_at: '2026-08-01T00:00:00Z' }]]);
+
+  call = lastCall(await runCli(['campaigns', 'send', 'camp_1']));
+  assert.deepEqual([call.method, call.args], ['send', ['camp_1', undefined]]);
+});
+
+test('campaigns ab maps to campaigns.ab', async () => {
+  const call = lastCall(await runCli(['campaigns', 'ab', 'camp_1']));
+  assert.deepEqual([call.resource, call.method, call.args], ['campaigns', 'ab', ['camp_1']]);
+});
+
+// ---- templates / automations ----
+
+test('templates create and publish', async () => {
+  let call = lastCall(await runCli(['templates', 'create', '--name', 'Welcome', '--subject', 'Hi', '--html', '<p>Hi</p>']));
+  assert.deepEqual([call.resource, call.method], ['templates', 'create']);
+  assert.deepEqual(call.args[0], { name: 'Welcome', subject: 'Hi', html: '<p>Hi</p>' });
+
+  call = lastCall(await runCli(['templates', 'publish', 'tmpl_1']));
+  assert.deepEqual([call.method, call.args], ['publish', ['tmpl_1']]);
+});
+
+test('automations create / add-step / runs / stop', async () => {
+  let call = lastCall(
+    await runCli(['automations', 'create', '--name', 'Welcome series', '--domain', 'yourdomain.com', '--trigger', 'contact.created']),
+  );
+  assert.deepEqual(call.args[0], { name: 'Welcome series', domain: 'yourdomain.com', trigger: 'contact.created' });
+
+  call = lastCall(
+    await runCli(['automations', 'add-step', 'auto_1', '--type', 'send_email', '--config', '{"template_id":"tmpl_1"}']),
+  );
+  assert.deepEqual([call.method, call.args], ['addStep', ['auto_1', { type: 'send_email', config: { template_id: 'tmpl_1' } }]]);
+
+  call = lastCall(await runCli(['automations', 'runs', 'auto_1', '--limit', '25']));
+  assert.deepEqual([call.method, call.args], ['runs', ['auto_1', { limit: 25 }]]);
+
+  call = lastCall(await runCli(['automations', 'stop', 'auto_1']));
+  assert.deepEqual([call.method, call.args], ['stop', ['auto_1']]);
+});
+
+test('automations delete-step maps to deleteStep', async () => {
+  const call = lastCall(await runCli(['automations', 'delete-step', 'auto_1', 'step_2']));
+  assert.deepEqual([call.resource, call.method, call.args], ['automations', 'deleteStep', ['auto_1', 'step_2']]);
+});
+
+// ---- webhooks / api-keys / logs / polls / events ----
+
+test('webhooks create splits comma-separated events', async () => {
+  const call = lastCall(
+    await runCli(['webhooks', 'create', '--endpoint', 'https://app.com/hook', '--events', 'email.delivered,email.bounced']),
+  );
+  assert.deepEqual(call.args[0], {
+    endpoint: 'https://app.com/hook',
+    events: ['email.delivered', 'email.bounced'],
+  });
+});
+
+test('api-keys create / list / delete', async () => {
+  let call = lastCall(await runCli(['api-keys', 'create', '--name', 'CI', '--permission', 'sending_access']));
+  assert.deepEqual([call.resource, call.method], ['apiKeys', 'create']);
+  assert.deepEqual(call.args[0], { name: 'CI', permission: 'sending_access' });
+
+  call = lastCall(await runCli(['api-keys', 'list']));
+  assert.deepEqual([call.method, call.args], ['list', []]);
+
+  call = lastCall(await runCli(['api-keys', 'delete', 'key_1']));
+  assert.deepEqual([call.method, call.args], ['remove', ['key_1']]);
+});
+
+test('logs list maps method and numeric status filters', async () => {
+  const call = lastCall(await runCli(['logs', 'list', '--method', 'POST', '--status', '429', '--limit', '100']));
+  assert.deepEqual([call.resource, call.method], ['logs', 'list']);
+  assert.deepEqual(call.args[0], { limit: 100, method: 'POST', status: 429 });
+});
+
+test('polls list and get', async () => {
+  let call = lastCall(await runCli(['polls', 'list']));
+  assert.deepEqual([call.resource, call.method, call.args], ['polls', 'list', [{}]]);
+
+  call = lastCall(await runCli(['polls', 'get', 'em_1']));
+  assert.deepEqual([call.method, call.args], ['get', ['em_1']]);
+});
+
+test('events send maps name/domain/email/data (domain required)', async () => {
+  const call = lastCall(
+    await runCli([
+      'events', 'send', '--domain', 'yourdomain.com', '--name', 'signup.completed',
+      '--email', 'a@b.com', '--data', '{"plan":"pro"}',
+    ]),
+  );
+  assert.deepEqual([call.resource, call.method], ['events', 'send']);
+  assert.deepEqual(call.args[0], {
+    name: 'signup.completed',
+    domain: 'yourdomain.com',
+    email: 'a@b.com',
+    data: { plan: 'pro' },
+  });
+
+  const missing = await runCli(['events', 'send', '--name', 'signup.completed']);
+  assert.equal(missing.exitCode, 1);
+  assert.match(missing.err, /--domain/);
+});
+
+// ---- auth, output modes, error handling ----
+
+test('API key comes from env or --api-key; base URL override is passed through', async () => {
+  let r = await runCli(['emails', 'get', 'em_1']);
+  assert.equal(r.created[0].apiKey, 'mb_test_key');
+  assert.deepEqual(r.created[0].options, {});
+
+  r = await runCli(['emails', 'get', 'em_1', '--api-key', 'mb_flag', '--base-url', 'http://localhost:3000/api'], { env: {} });
+  assert.equal(r.exitCode, 0);
+  assert.deepEqual(r.created[0], { apiKey: 'mb_flag', options: { baseUrl: 'http://localhost:3000/api' } });
+});
+
+test('missing API key fails with exit 1 and a clear message', async () => {
+  const r = await runCli(['emails', 'get', 'em_1'], { env: {} });
+  assert.equal(r.exitCode, 1);
+  assert.equal(r.calls.length, 0);
+  assert.match(r.err, /MAILBLASTR_API_KEY/);
+});
+
+test('API error goes to stderr as {statusCode,name,message} with exit 1', async () => {
+  const error = { statusCode: 422, name: 'validation_error', message: 'domain is required' };
+  const r = await runCli(['emails', 'get', 'em_1'], { response: { data: null, error } });
+  assert.equal(r.exitCode, 1);
+  assert.equal(r.out, '');
+  assert.deepEqual(JSON.parse(r.err), error);
+});
+
+test('output is pretty by default and raw with --json', async () => {
+  const data = { id: 'em_1', object: 'email' };
+  let r = await runCli(['emails', 'get', 'em_1'], { response: { data, error: null } });
+  assert.equal(r.out, `${JSON.stringify(data, null, 2)}\n`);
+
+  r = await runCli(['emails', 'get', 'em_1', '--json'], { response: { data, error: null } });
+  assert.equal(r.out, `${JSON.stringify(data)}\n`);
+});
+
+test('invalid JSON flag fails cleanly without calling the SDK', async () => {
+  const r = await runCli(['events', 'send', '--domain', 'd.com', '--name', 'x', '--data', '{nope']);
+  assert.equal(r.exitCode, 1);
+  assert.equal(r.calls.length, 0);
+  assert.match(r.err, /Invalid JSON for --data/);
+});
+
+test('--help exits 0 at root and resource level', async () => {
+  let r = await runCli(['--help']);
+  assert.equal(r.exitCode, 0);
+  assert.match(r.out, /emails/);
+  assert.match(r.out, /campaigns/);
+
+  r = await runCli(['emails', '--help']);
+  assert.equal(r.exitCode, 0);
+  assert.match(r.out, /send/);
+  assert.match(r.out, /attachments/);
+});
+
+test('unknown command exits non-zero', async () => {
+  const r = await runCli(['bogus']);
+  assert.equal(r.exitCode, 1);
+});

@@ -1,0 +1,139 @@
+package com.mailblastr;
+
+import com.mailblastr.http.ApiClient;
+import com.mailblastr.http.DefaultHttpTransport;
+import com.mailblastr.http.HttpTransport;
+import com.mailblastr.resources.ApiKeys;
+import com.mailblastr.resources.Audiences;
+import com.mailblastr.resources.Automations;
+import com.mailblastr.resources.Batch;
+import com.mailblastr.resources.Campaigns;
+import com.mailblastr.resources.ContactProperties;
+import com.mailblastr.resources.Contacts;
+import com.mailblastr.resources.Domains;
+import com.mailblastr.resources.Emails;
+import com.mailblastr.resources.Events;
+import com.mailblastr.resources.Logs;
+import com.mailblastr.resources.Polls;
+import com.mailblastr.resources.Segments;
+import com.mailblastr.resources.Templates;
+import com.mailblastr.resources.Topics;
+import com.mailblastr.resources.Webhooks;
+
+/**
+ * The MailBlastr API client.
+ *
+ * <pre>{@code
+ * Mailblastr mailblastr = new Mailblastr("mb_xxxxxxxxx");
+ *
+ * SendEmailRequest req = SendEmailRequest.builder()
+ *     .from("Acme <hi@yourdomain.com>")
+ *     .to("a@b.com")
+ *     .subject("hello")
+ *     .html("<p>hi</p>")
+ *     .build();
+ *
+ * MailblastrResponse res = mailblastr.emails().send(req);
+ * String id = res.getString("id");
+ * }</pre>
+ *
+ * <p>Every method returns a {@link MailblastrResponse} (binary downloads
+ * return {@code byte[]}); non-2xx responses throw {@link MailblastrException}.
+ */
+public class Mailblastr {
+    public static final String DEFAULT_BASE_URL = "https://api.mailblastr.com";
+    public static final String VERSION = "0.1.0";
+    public static final String USER_AGENT = "mailblastr-java/" + VERSION;
+
+    private final Emails emails;
+    private final Batch batch;
+    private final Domains domains;
+    private final Audiences audiences;
+    private final Contacts contacts;
+    private final ContactProperties contactProperties;
+    private final Campaigns campaigns;
+    private final Segments segments;
+    private final Topics topics;
+    private final Templates templates;
+    private final Automations automations;
+    private final Webhooks webhooks;
+    private final Logs logs;
+    private final Events events;
+    private final ApiKeys apiKeys;
+    private final Polls polls;
+
+    public Mailblastr(String apiKey) {
+        this(apiKey, DEFAULT_BASE_URL);
+    }
+
+    /** Override the API host, e.g. for a self-hosted deployment. */
+    public Mailblastr(String apiKey, String baseUrl) {
+        this(apiKey, baseUrl, new DefaultHttpTransport());
+    }
+
+    /** Inject a custom {@link HttpTransport} (used by the test suite). */
+    public Mailblastr(String apiKey, String baseUrl, HttpTransport transport) {
+        ApiClient api = new ApiClient(apiKey, baseUrl, USER_AGENT, transport);
+        this.emails = new Emails(api);
+        this.batch = new Batch(api);
+        this.domains = new Domains(api);
+        this.audiences = new Audiences(api);
+        this.contacts = new Contacts(api);
+        this.contactProperties = new ContactProperties(api);
+        this.campaigns = new Campaigns(api);
+        this.segments = new Segments(api);
+        this.topics = new Topics(api);
+        this.templates = new Templates(api);
+        this.automations = new Automations(api);
+        this.webhooks = new Webhooks(api);
+        this.logs = new Logs(api);
+        this.events = new Events(api);
+        this.apiKeys = new ApiKeys(api);
+        this.polls = new Polls(api);
+    }
+
+    /** Sent email (send / batch / list / get / attachments / reschedule / cancel) + {@code emails().receiving()}. */
+    public Emails emails() { return emails; }
+
+    /** Batch send — alias surface for {@code POST /emails/batch}. */
+    public Batch batch() { return batch; }
+
+    /** Sending/receiving domains, incl. claims and one-click DNS applies. */
+    public Domains domains() { return domains; }
+
+    public Audiences audiences() { return audiences; }
+
+    /** Domain-first contacts (flat + nested APIs, batch/CSV import, segments, topics). */
+    public Contacts contacts() { return contacts; }
+
+    /** Custom contact properties (merge tags). */
+    public ContactProperties contactProperties() { return contactProperties; }
+
+    /** Domain-first campaigns (bulk sends, A/B, follow-ups, recurrence). */
+    public Campaigns campaigns() { return campaigns; }
+
+    /** Domain-first segments. */
+    public Segments segments() { return segments; }
+
+    /** Domain-first topics (granular subscription preferences). */
+    public Topics topics() { return topics; }
+
+    public Templates templates() { return templates; }
+
+    /** Domain-first automations (steps, connections, runs). */
+    public Automations automations() { return automations; }
+
+    /** Webhooks, incl. the local {@code verifyWebhookSignature} helper. */
+    public Webhooks webhooks() { return webhooks; }
+
+    /** API request logs (read-only). */
+    public Logs logs() { return logs; }
+
+    /** Custom automation events — {@code domain} is REQUIRED on send. */
+    public Events events() { return events; }
+
+    public ApiKeys apiKeys() { return apiKeys; }
+
+    /** Read-only in-email poll results. */
+    public Polls polls() { return polls; }
+}

@@ -1,0 +1,242 @@
+//! `mailblastr.contacts` — DOMAIN-FIRST contacts: each verified sending
+//! domain owns its own contact pool (the same address on two domains is two
+//! records with separate consent). The flat `/contacts` API requires
+//! `domain`; the nested `/audiences/:id/contacts` API derives the pool from
+//! the path. Also covers bulk/batch/CSV imports, segment membership, and
+//! per-contact topic subscriptions. Types live in [`super::contact_types`].
+
+use std::sync::Arc;
+
+use reqwest::Method;
+use serde_json::json;
+
+use crate::client::{seg, Config};
+use crate::services::contact_types::{
+    Contact, ContactInput, ContactLookup, ContactTopics, CreateContactOptions,
+    DeletedContactResponse, ImportContactsResponse, ImportCsvOptions, ListContactsParams,
+    OnConflict, RemovedFromSegmentResponse, UpdateContactOptions, UpdateContactTopicsOptions,
+};
+use crate::services::segments::Segment;
+use crate::types::{Error, IdResponse, ListResponse, ObjectAck, Result};
+
+/// `mailblastr.contacts`.
+#[derive(Clone, Debug)]
+pub struct ContactsSvc {
+    config: Arc<Config>,
+}
+
+impl ContactsSvc {
+    pub(crate) fn new(config: Arc<Config>) -> Self {
+        Self { config }
+    }
+
+    /// Create a contact. Returns the slim `{ object: 'contact', id }` ack.
+    /// `POST /contacts` (flat, `domain` required) or
+    /// `POST /audiences/:id/contacts` (nested).
+    pub async fn create(&self, options: CreateContactOptions) -> Result<ObjectAck> {
+        let mut body = serde_json::to_value(&options).map_err(Error::Json)?;
+        if let Some(audience_id) = &options.audience_id {
+            // The nested route derives its pool from the path; only the flat
+            // route takes `domain` in the body.
+            if let Some(obj) = body.as_object_mut() {
+                obj.remove("domain");
+            }
+            let path = format!("/audiences/{}/contacts", seg(audience_id));
+            self.config
+                .send(self.config.request(Method::POST, &path).json(&body))
+                .await
+        } else {
+            self.config
+                .send(self.config.request(Method::POST, "/contacts").json(&body))
+                .await
+        }
+    }
+
+    /// Retrieve a contact by id (exact) or email (+ `domain` to pick the
+    /// pool). `GET /contacts/:id` or `GET /audiences/:id/contacts/:id`
+    pub async fn get(&self, lookup: ContactLookup) -> Result<Contact> {
+        let id = seg(&lookup.id);
+        if let Some(audience_id) = &lookup.audience_id {
+            let path = format!("/audiences/{}/contacts/{}", seg(audience_id), id);
+            return self
+                .config
+                .send(self.config.request(Method::GET, &path))
+                .await;
+        }
+        let mut req = self.config.request(Method::GET, &format!("/contacts/{id}"));
+        if let Some(domain) = &lookup.domain {
+            req = req.query(&[("domain", domain.as_str())]);
+        }
+        self.config.send(req).await
+    }
+
+    /// List contacts. Domain-first: `domain` is required on the flat
+    /// `/contacts` list. `GET /contacts` or `GET /audiences/:id/contacts`
+    pub async fn list(&self, params: ListContactsParams) -> Result<ListResponse<Contact>> {
+        let mut query: Vec<(&str, String)> = Vec::new();
+        if params.audience_id.is_none() {
+            if let Some(domain) = &params.domain {
+                query.push(("domain", domain.clone()));
+            }
+        }
+        if let Some(limit) = params.limit {
+            query.push(("limit", limit.to_string()));
+        }
+        if let Some(after) = &params.after {
+            query.push(("after", after.clone()));
+        }
+        if let Some(before) = &params.before {
+            query.push(("before", before.clone()));
+        }
+        if let Some(segment_id) = &params.segment_id {
+            query.push(("segment_id", segment_id.clone()));
+        }
+        let path = match &params.audience_id {
+            Some(audience_id) => format!("/audiences/{}/contacts", seg(audience_id)),
+            None => "/contacts".to_owned(),
+        };
+        self.config
+            .send(self.config.request(Method::GET, &path).query(&query))
+            .await
+    }
+
+    /// Bulk-import contacts from a `Vec` (upserts by email; max 10,000 per
+    /// call). `POST /audiences/:id/contacts/batch`
+    pub async fn batch(
+        &self,
+        audience_id: &str,
+        contacts: Vec<ContactInput>,
+        on_conflict: Option<OnConflict>,
+    ) -> Result<ImportContactsResponse> {
+        let path = format!("/audiences/{}/contacts/batch", seg(audience_id));
+        let mut req = self.config.request(Method::POST, &path);
+        if let Some(oc) = on_conflict {
+            req = req.query(&[("on_conflict", oc.as_str())]);
+        }
+        self.config
+            .send(req.json(&json!({ "contacts": contacts })))
+            .await
+    }
+
+    /// Bulk-import contacts from CSV text (header row optional; upserts by
+    /// email). `POST /audiences/:id/contacts/import`
+    pub async fn import(
+        &self,
+        audience_id: &str,
+        csv: &str,
+        options: ImportCsvOptions,
+    ) -> Result<ImportContactsResponse> {
+        let path = format!("/audiences/{}/contacts/import", seg(audience_id));
+        let mut query: Vec<(&str, String)> = Vec::new();
+        if let Some(oc) = options.on_conflict {
+            query.push(("on_conflict", oc.as_str().to_owned()));
+        }
+        if options.create_properties == Some(false) {
+            query.push(("create_properties", "false".to_owned()));
+        }
+        self.config
+            .send(
+                self.config
+                    .request(Method::POST, &path)
+                    .query(&query)
+                    .json(&json!({ "csv": csv })),
+            )
+            .await
+    }
+
+    /// Update a contact. Returns the slim `{ object: 'contact', id }` ack.
+    /// `PATCH /contacts/:id` or `PATCH /audiences/:id/contacts/:id`
+    pub async fn update(&self, options: UpdateContactOptions) -> Result<ObjectAck> {
+        let mut body = serde_json::to_value(&options).map_err(Error::Json)?;
+        let id = seg(&options.id);
+        if let Some(audience_id) = &options.audience_id {
+            // The nested route derives its pool from the path.
+            if let Some(obj) = body.as_object_mut() {
+                obj.remove("domain");
+            }
+            let path = format!("/audiences/{}/contacts/{}", seg(audience_id), id);
+            self.config
+                .send(self.config.request(Method::PATCH, &path).json(&body))
+                .await
+        } else {
+            self.config
+                .send(
+                    self.config
+                        .request(Method::PATCH, &format!("/contacts/{id}"))
+                        .json(&body),
+                )
+                .await
+        }
+    }
+
+    /// Delete a contact. `DELETE /contacts/:id` or
+    /// `DELETE /audiences/:id/contacts/:id`
+    pub async fn remove(&self, lookup: ContactLookup) -> Result<DeletedContactResponse> {
+        let id = seg(&lookup.id);
+        if let Some(audience_id) = &lookup.audience_id {
+            let path = format!("/audiences/{}/contacts/{}", seg(audience_id), id);
+            return self
+                .config
+                .send(self.config.request(Method::DELETE, &path))
+                .await;
+        }
+        let mut req = self
+            .config
+            .request(Method::DELETE, &format!("/contacts/{id}"));
+        if let Some(domain) = &lookup.domain {
+            req = req.query(&[("domain", domain.as_str())]);
+        }
+        self.config.send(req).await
+    }
+
+    /// Add a contact to a segment. Returns `{ id }` (the segment id).
+    /// `POST /contacts/:id/segments/:segment_id`
+    pub async fn add_to_segment(&self, contact_id: &str, segment_id: &str) -> Result<IdResponse> {
+        let path = format!("/contacts/{}/segments/{}", seg(contact_id), seg(segment_id));
+        self.config
+            .send(self.config.request(Method::POST, &path))
+            .await
+    }
+
+    /// Remove a contact from a segment.
+    /// `DELETE /contacts/:id/segments/:segment_id`
+    pub async fn remove_from_segment(
+        &self,
+        contact_id: &str,
+        segment_id: &str,
+    ) -> Result<RemovedFromSegmentResponse> {
+        let path = format!("/contacts/{}/segments/{}", seg(contact_id), seg(segment_id));
+        self.config
+            .send(self.config.request(Method::DELETE, &path))
+            .await
+    }
+
+    /// List the segments a contact belongs to. `GET /contacts/:id/segments`
+    pub async fn list_segments(&self, contact_id: &str) -> Result<ListResponse<Segment>> {
+        let path = format!("/contacts/{}/segments", seg(contact_id));
+        self.config
+            .send(self.config.request(Method::GET, &path))
+            .await
+    }
+
+    /// Get a contact's topic subscriptions. `GET /contacts/:id/topics`
+    pub async fn get_topics(&self, contact_id: &str) -> Result<ContactTopics> {
+        let path = format!("/contacts/{}/topics", seg(contact_id));
+        self.config
+            .send(self.config.request(Method::GET, &path))
+            .await
+    }
+
+    /// Update a contact's topic subscriptions. Returns `{ id }` (the contact
+    /// id). `PATCH /contacts/:id/topics`
+    pub async fn update_topics(
+        &self,
+        contact_id: &str,
+        options: UpdateContactTopicsOptions,
+    ) -> Result<IdResponse> {
+        let path = format!("/contacts/{}/topics", seg(contact_id));
+        self.config
+            .send(self.config.request(Method::PATCH, &path).json(&options))
+            .await
+    }
+}

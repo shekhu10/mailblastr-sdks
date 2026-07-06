@@ -1,0 +1,48 @@
+import mailblastr
+
+from .helpers import RecordingTestCase
+
+
+class TestDomains(RecordingTestCase):
+    def test_create(self):
+        params = {"name": "acme.com", "capabilities": {"receiving": "enabled"}}
+        mailblastr.Domains.create(params)
+        self.assertCall("POST", "/domains", params)
+
+    def test_get(self):
+        mailblastr.Domains.get("dom_1")
+        self.assertCall("GET", "/domains/dom_1")
+
+    def test_list(self):
+        mailblastr.Domains.list({"limit": 10})
+        self.assertCall("GET", "/domains?limit=10")
+
+    def test_update(self):
+        mailblastr.Domains.update("dom_1", {"click_tracking": True})
+        self.assertCall("PATCH", "/domains/dom_1", {"click_tracking": True})
+
+    def test_verify(self):
+        mailblastr.Domains.verify("dom_1")
+        self.assertCall("POST", "/domains/dom_1/verify")
+
+    def test_claim_flow(self):
+        mailblastr.Domains.claim({"name": "acme.com"})
+        self.assertCall("POST", "/domains/claim", {"name": "acme.com"})
+        mailblastr.Domains.get_claim("dom_1")
+        self.assertCall("GET", "/domains/dom_1/claim")
+        mailblastr.Domains.verify_claim("dom_1")
+        self.assertCall("POST", "/domains/dom_1/claim/verify")
+
+    def test_dns_providers(self):
+        mailblastr.Domains.detect_dns("dom_1")
+        self.assertCall("GET", "/domains/dom_1/dns/detect")
+        mailblastr.Domains.apply_cloudflare_dns("dom_1", {"token": "cf_tok"})
+        self.assertCall("POST", "/domains/dom_1/dns/cloudflare", {"token": "cf_tok"})
+        mailblastr.Domains.apply_godaddy_dns("dom_1", {"key": "k", "secret": "s"})
+        self.assertCall("POST", "/domains/dom_1/dns/godaddy", {"key": "k", "secret": "s"})
+        mailblastr.Domains.apply_namecheap_dns("dom_1", {"apiUser": "u", "apiKey": "k"})
+        self.assertCall("POST", "/domains/dom_1/dns/namecheap", {"apiUser": "u", "apiKey": "k"})
+
+    def test_remove_escapes_id(self):
+        mailblastr.Domains.remove("dom_x/../../admin")
+        self.assertCall("DELETE", "/domains/dom_x%2F..%2F..%2Fadmin")
