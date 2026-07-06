@@ -27,6 +27,19 @@ import type {
 export * from './types';
 export { DEFAULT_BASE_URL, VERSION, USER_AGENT };
 
+/**
+ * Tagged template that percent-encodes every interpolated segment, so an id
+ * like `../api-keys` or `dom_x/../../admin` can't traverse the URL path and
+ * forge a request to a different endpoint. Use for all id-bearing paths; the
+ * static string parts (which contain the intended `/`) pass through verbatim.
+ */
+function p(strings: TemplateStringsArray, ...values: unknown[]): string {
+  return strings.reduce(
+    (acc, s, i) => acc + s + (i < values.length ? encodeURIComponent(String(values[i])) : ''),
+    '',
+  );
+}
+
 /** Build a `?limit=&after=&before=` query string from pagination params. */
 function paginate(params?: PaginationParams): string {
   if (!params) return '';
@@ -47,11 +60,11 @@ class ReceivingEmails {
   }
   /** Retrieve a received email. GET /emails/receiving/:id */
   get(id: string): Promise<Result<ReceivedEmail>> {
-    return this.http.request('GET', `/emails/receiving/${id}`);
+    return this.http.request('GET', p`/emails/receiving/${id}`);
   }
   /** List a received email's attachments. GET /emails/receiving/:id/attachments */
   listAttachments(id: string): Promise<Result<ListResponse<ReceivedAttachment>>> {
-    return this.http.request('GET', `/emails/receiving/${id}/attachments`);
+    return this.http.request('GET', p`/emails/receiving/${id}/attachments`);
   }
   /**
    * Download one attachment of a received email as raw bytes.
@@ -59,7 +72,7 @@ class ReceivingEmails {
    * binary file (not JSON), so the result `data` is an ArrayBuffer.
    */
   getAttachment(id: string, attachmentId: string): Promise<Result<ArrayBuffer>> {
-    return this.http.requestRaw('GET', `/emails/receiving/${id}/attachments/${attachmentId}`);
+    return this.http.requestRaw('GET', p`/emails/receiving/${id}/attachments/${attachmentId}`);
   }
   /**
    * Download the original RFC822/MIME message as raw bytes.
@@ -67,11 +80,11 @@ class ReceivingEmails {
    * ArrayBuffer.
    */
   getRaw(id: string): Promise<Result<ArrayBuffer>> {
-    return this.http.requestRaw('GET', `/emails/receiving/${id}/raw`);
+    return this.http.requestRaw('GET', p`/emails/receiving/${id}/raw`);
   }
   /** Forward a received email. POST /emails/receiving/:id/forward */
   forward(id: string, payload: ForwardReceivedEmailOptions): Promise<Result<CreateEmailResponse>> {
-    return this.http.request('POST', `/emails/receiving/${id}/forward`, payload);
+    return this.http.request('POST', p`/emails/receiving/${id}/forward`, payload);
   }
   /**
    * Reply to a received email's sender, threaded into the same conversation
@@ -79,11 +92,11 @@ class ReceivingEmails {
    * POST /emails/receiving/:id/reply
    */
   reply(id: string, payload: { from: string; html?: string; text?: string; subject?: string }): Promise<Result<CreateEmailResponse>> {
-    return this.http.request('POST', `/emails/receiving/${id}/reply`, payload);
+    return this.http.request('POST', p`/emails/receiving/${id}/reply`, payload);
   }
   /** Delete a received email. DELETE /emails/receiving/:id */
   remove(id: string): Promise<Result<RemovedResponse>> {
-    return this.http.request('DELETE', `/emails/receiving/${id}`);
+    return this.http.request('DELETE', p`/emails/receiving/${id}`);
   }
 }
 
@@ -107,23 +120,23 @@ class Emails {
   }
   /** Retrieve a sent email and its events. GET /emails/:id */
   get(id: string): Promise<Result<Email>> {
-    return this.http.request('GET', `/emails/${id}`);
+    return this.http.request('GET', p`/emails/${id}`);
   }
   /** List a sent email's attachments. GET /emails/:id/attachments */
   listAttachments(id: string): Promise<Result<ListResponse<AttachmentMeta>>> {
-    return this.http.request('GET', `/emails/${id}/attachments`);
+    return this.http.request('GET', p`/emails/${id}/attachments`);
   }
   /** Retrieve one attachment of a sent email. GET /emails/:id/attachments/:attachmentId */
   getAttachment(id: string, attachmentId: string): Promise<Result<AttachmentMeta>> {
-    return this.http.request('GET', `/emails/${id}/attachments/${attachmentId}`);
+    return this.http.request('GET', p`/emails/${id}/attachments/${attachmentId}`);
   }
   /** Reschedule a scheduled email. PATCH /emails/:id */
   update(id: string, payload: { scheduled_at: string }): Promise<Result<{ id: string; object: 'email' }>> {
-    return this.http.request('PATCH', `/emails/${id}`, payload);
+    return this.http.request('PATCH', p`/emails/${id}`, payload);
   }
   /** Cancel a scheduled email. POST /emails/:id/cancel */
   cancel(id: string): Promise<Result<{ id: string; object: 'email' }>> {
-    return this.http.request('POST', `/emails/${id}/cancel`);
+    return this.http.request('POST', p`/emails/${id}/cancel`);
   }
 }
 
@@ -142,18 +155,18 @@ class Domains {
     return this.http.request('POST', '/domains', payload);
   }
   get(id: string): Promise<Result<Domain>> {
-    return this.http.request('GET', `/domains/${id}`);
+    return this.http.request('GET', p`/domains/${id}`);
   }
   list(params?: PaginationParams): Promise<Result<ListResponse<Domain>>> {
     return this.http.request('GET', `/domains${paginate(params)}`);
   }
   /** Returns the slim ack { object: 'domain', id }. */
   update(id: string, payload: UpdateDomainOptions): Promise<Result<ObjectRef<'domain'>>> {
-    return this.http.request('PATCH', `/domains/${id}`, payload);
+    return this.http.request('PATCH', p`/domains/${id}`, payload);
   }
   /** Returns the slim ack { object: 'domain', id }. */
   verify(id: string): Promise<Result<ObjectRef<'domain'>>> {
-    return this.http.request('POST', `/domains/${id}/verify`);
+    return this.http.request('POST', p`/domains/${id}/verify`);
   }
   /** Claim a domain already verified elsewhere. POST /domains/claim */
   claim(payload: ClaimDomainOptions): Promise<Result<DomainClaim>> {
@@ -161,11 +174,11 @@ class Domains {
   }
   /** Retrieve a domain's claim record. GET /domains/:id/claim */
   getClaim(id: string): Promise<Result<DomainClaim>> {
-    return this.http.request('GET', `/domains/${id}/claim`);
+    return this.http.request('GET', p`/domains/${id}/claim`);
   }
   /** Verify a domain claim. POST /domains/:id/claim/verify */
   verifyClaim(id: string): Promise<Result<DomainClaim>> {
-    return this.http.request('POST', `/domains/${id}/claim/verify`);
+    return this.http.request('POST', p`/domains/${id}/claim/verify`);
   }
   /**
    * Detect a domain's DNS provider and the one-click apply methods available
@@ -173,15 +186,15 @@ class Domains {
    * GET /domains/:id/dns/detect
    */
   detectDns(id: string): Promise<Result<{ provider: unknown; nameservers: string[]; methods: Array<Record<string, unknown>> }>> {
-    return this.http.request('GET', `/domains/${id}/dns/detect`);
+    return this.http.request('GET', p`/domains/${id}/dns/detect`);
   }
   /** Apply this domain's DNS records via the Cloudflare API, then auto-verify. POST /domains/:id/dns/cloudflare */
   applyCloudflareDns(id: string, payload: { token: string }): Promise<Result<Record<string, unknown>>> {
-    return this.http.request('POST', `/domains/${id}/dns/cloudflare`, payload);
+    return this.http.request('POST', p`/domains/${id}/dns/cloudflare`, payload);
   }
   /** Apply this domain's DNS records via the GoDaddy API, then auto-verify. POST /domains/:id/dns/godaddy */
   applyGoDaddyDns(id: string, payload: { key: string; secret: string }): Promise<Result<Record<string, unknown>>> {
-    return this.http.request('POST', `/domains/${id}/dns/godaddy`, payload);
+    return this.http.request('POST', p`/domains/${id}/dns/godaddy`, payload);
   }
   /**
    * Apply this domain's DNS records via the Namecheap API (existing records are
@@ -189,10 +202,10 @@ class Domains {
    * whitelisted in the account's API settings. POST /domains/:id/dns/namecheap
    */
   applyNamecheapDns(id: string, payload: { apiUser: string; apiKey: string; userName?: string }): Promise<Result<Record<string, unknown>>> {
-    return this.http.request('POST', `/domains/${id}/dns/namecheap`, payload);
+    return this.http.request('POST', p`/domains/${id}/dns/namecheap`, payload);
   }
   remove(id: string): Promise<Result<RemovedResponse>> {
-    return this.http.request('DELETE', `/domains/${id}`);
+    return this.http.request('DELETE', p`/domains/${id}`);
   }
 }
 
@@ -202,7 +215,7 @@ class Audiences {
     return this.http.request('POST', '/audiences', payload);
   }
   get(id: string): Promise<Result<Audience>> {
-    return this.http.request('GET', `/audiences/${id}`);
+    return this.http.request('GET', p`/audiences/${id}`);
   }
   list(params?: PaginationParams): Promise<Result<ListResponse<Audience>>> {
     return this.http.request('GET', `/audiences${paginate(params)}`);
@@ -220,10 +233,10 @@ class Audiences {
   }
   /** Rename an audience. PATCH /audiences/:id */
   update(id: string, payload: { name: string }): Promise<Result<Audience>> {
-    return this.http.request('PATCH', `/audiences/${id}`, payload);
+    return this.http.request('PATCH', p`/audiences/${id}`, payload);
   }
   remove(id: string): Promise<Result<RemovedResponse>> {
-    return this.http.request('DELETE', `/audiences/${id}`);
+    return this.http.request('DELETE', p`/audiences/${id}`);
   }
 }
 
@@ -236,12 +249,12 @@ class Contacts {
    */
   create(payload: CreateContactOptions): Promise<Result<ObjectRef<'contact'>>> {
     const { audienceId, ...body } = payload;
-    return this.http.request('POST', audienceId ? `/audiences/${audienceId}/contacts` : '/contacts', body);
+    return this.http.request('POST', audienceId ? p`/audiences/${audienceId}/contacts` : '/contacts', body);
   }
   /** Retrieve a contact by id or email. Omit `audienceId` to resolve across all your audiences. */
   get(params: { audienceId?: string; id: string }): Promise<Result<Contact>> {
     const id = encodeURIComponent(params.id);
-    return this.http.request('GET', params.audienceId ? `/audiences/${params.audienceId}/contacts/${id}` : `/contacts/${id}`);
+    return this.http.request('GET', params.audienceId ? `/audiences/${encodeURIComponent(params.audienceId)}/contacts/${id}` : `/contacts/${id}`);
   }
   list(params: ListContactsParams = {}): Promise<Result<ListResponse<Contact>>> {
     const q = new URLSearchParams();
@@ -251,7 +264,7 @@ class Contacts {
     // segment_id filter is honored by both the flat and audience-scoped list.
     if (params.segment_id != null) q.set('segment_id', params.segment_id);
     const qs = q.toString();
-    const base = params.audienceId ? `/audiences/${params.audienceId}/contacts` : '/contacts';
+    const base = params.audienceId ? `/audiences/${encodeURIComponent(params.audienceId)}/contacts` : '/contacts';
     return this.http.request('GET', `${base}${qs ? `?${qs}` : ''}`);
   }
   /**
@@ -260,7 +273,7 @@ class Contacts {
    */
   batch(params: { audienceId: string; contacts: ContactInput[]; on_conflict?: 'upsert' | 'skip' }): Promise<Result<ImportContactsResponse>> {
     const qs = params.on_conflict ? `?on_conflict=${params.on_conflict}` : '';
-    return this.http.request('POST', `/audiences/${params.audienceId}/contacts/batch${qs}`, { contacts: params.contacts });
+    return this.http.request('POST', `/audiences/${encodeURIComponent(params.audienceId)}/contacts/batch${qs}`, { contacts: params.contacts });
   }
   /**
    * Bulk-import contacts from CSV text (header row optional). Upserts by email.
@@ -276,26 +289,26 @@ class Contacts {
     if (params.on_conflict) q.set('on_conflict', params.on_conflict);
     if (params.create_properties === false) q.set('create_properties', 'false');
     const qs = q.toString();
-    return this.http.request('POST', `/audiences/${params.audienceId}/contacts/import${qs ? `?${qs}` : ''}`, { csv: params.csv });
+    return this.http.request('POST', `/audiences/${encodeURIComponent(params.audienceId)}/contacts/import${qs ? `?${qs}` : ''}`, { csv: params.csv });
   }
   /** Update a contact. Returns the slim ack { object: 'contact', id }. Omit `audienceId` for the flat API. */
   update(payload: UpdateContactOptions): Promise<Result<ObjectRef<'contact'>>> {
     const { audienceId, id, ...body } = payload;
     const eid = encodeURIComponent(id);
-    return this.http.request('PATCH', audienceId ? `/audiences/${audienceId}/contacts/${eid}` : `/contacts/${eid}`, body);
+    return this.http.request('PATCH', audienceId ? `/audiences/${encodeURIComponent(audienceId)}/contacts/${eid}` : `/contacts/${eid}`, body);
   }
   /** Delete a contact. The id is returned under `contact`. Omit `audienceId` for the flat API. */
   remove(params: { audienceId?: string; id: string }): Promise<Result<{ object: 'contact'; contact: string; deleted: true }>> {
     const id = encodeURIComponent(params.id);
-    return this.http.request('DELETE', params.audienceId ? `/audiences/${params.audienceId}/contacts/${id}` : `/contacts/${id}`);
+    return this.http.request('DELETE', params.audienceId ? `/audiences/${encodeURIComponent(params.audienceId)}/contacts/${id}` : `/contacts/${id}`);
   }
   /** Add a contact to a segment. POST /contacts/:id/segments/:segmentId → { id } (the segment id). */
   addToSegment(id: string, segmentId: string): Promise<Result<{ id: string }>> {
-    return this.http.request('POST', `/contacts/${encodeURIComponent(id)}/segments/${segmentId}`);
+    return this.http.request('POST', `/contacts/${encodeURIComponent(id)}/segments/${encodeURIComponent(segmentId)}`);
   }
   /** Remove a contact from a segment. DELETE /contacts/:id/segments/:segmentId → { id, audienceId, deleted }. */
   removeFromSegment(id: string, segmentId: string): Promise<Result<{ id: string; audienceId: string; deleted: boolean }>> {
-    return this.http.request('DELETE', `/contacts/${encodeURIComponent(id)}/segments/${segmentId}`);
+    return this.http.request('DELETE', `/contacts/${encodeURIComponent(id)}/segments/${encodeURIComponent(segmentId)}`);
   }
   /** List the segments a contact belongs to. GET /contacts/:id/segments */
   listSegments(id: string): Promise<Result<ListResponse<Segment>>> {
@@ -318,17 +331,17 @@ class ContactProperties {
     return this.http.request('POST', '/contact-properties', payload);
   }
   get(id: string): Promise<Result<ContactProperty>> {
-    return this.http.request('GET', `/contact-properties/${id}`);
+    return this.http.request('GET', p`/contact-properties/${id}`);
   }
   list(params?: PaginationParams): Promise<Result<ListResponse<ContactProperty>>> {
     return this.http.request('GET', `/contact-properties${paginate(params)}`);
   }
   /** Returns the slim ack { object: 'contact_property', id }. */
   update(id: string, payload: UpdateContactPropertyOptions): Promise<Result<ObjectRef<'contact_property'>>> {
-    return this.http.request('PATCH', `/contact-properties/${id}`, payload);
+    return this.http.request('PATCH', p`/contact-properties/${id}`, payload);
   }
   remove(id: string): Promise<Result<RemovedResponse>> {
-    return this.http.request('DELETE', `/contact-properties/${id}`);
+    return this.http.request('DELETE', p`/contact-properties/${id}`);
   }
 }
 
@@ -352,32 +365,32 @@ class Campaigns {
     return this.http.request('POST', '/campaigns', payload);
   }
   get(id: string): Promise<Result<Campaign>> {
-    return this.http.request('GET', `/campaigns/${id}`);
+    return this.http.request('GET', p`/campaigns/${id}`);
   }
   list(params?: PaginationParams): Promise<Result<ListResponse<Campaign>>> {
     return this.http.request('GET', `/campaigns${paginate(params)}`);
   }
   update(id: string, payload: UpdateCampaignOptions): Promise<Result<{ id: string }>> {
-    return this.http.request('PATCH', `/campaigns/${id}`, payload);
+    return this.http.request('PATCH', p`/campaigns/${id}`, payload);
   }
   /** Send now, or schedule with { scheduled_at }. */
   send(id: string, payload?: { scheduled_at?: string }): Promise<Result<{ id: string }>> {
-    return this.http.request('POST', `/campaigns/${id}/send`, payload ?? {});
+    return this.http.request('POST', p`/campaigns/${id}/send`, payload ?? {});
   }
   /** Cancel a scheduled campaign (returns it to draft). POST /campaigns/:id/cancel */
   cancel(id: string): Promise<Result<Campaign>> {
-    return this.http.request('POST', `/campaigns/${id}/cancel`);
+    return this.http.request('POST', p`/campaigns/${id}/cancel`);
   }
   /** Per-campaign analytics (counts, engagement rates, top links). GET /campaigns/:id/stats */
   stats(id: string): Promise<Result<CampaignStats>> {
-    return this.http.request('GET', `/campaigns/${id}/stats`);
+    return this.http.request('GET', p`/campaigns/${id}/stats`);
   }
   /** A/B winner evaluation for an A/B campaign. GET /campaigns/:id/ab */
   ab(id: string): Promise<Result<CampaignAbResult>> {
-    return this.http.request('GET', `/campaigns/${id}/ab`);
+    return this.http.request('GET', p`/campaigns/${id}/ab`);
   }
   remove(id: string): Promise<Result<RemovedResponse>> {
-    return this.http.request('DELETE', `/campaigns/${id}`);
+    return this.http.request('DELETE', p`/campaigns/${id}`);
   }
 }
 
@@ -387,20 +400,20 @@ class Segments {
     return this.http.request('POST', '/segments', payload);
   }
   get(id: string): Promise<Result<Segment>> {
-    return this.http.request('GET', `/segments/${id}`);
+    return this.http.request('GET', p`/segments/${id}`);
   }
   list(params?: PaginationParams): Promise<Result<ListResponse<Segment>>> {
     return this.http.request('GET', `/segments${paginate(params)}`);
   }
   /** Preview the contacts a segment currently resolves to. */
   contacts(id: string): Promise<Result<ListResponse<Contact>>> {
-    return this.http.request('GET', `/segments/${id}/contacts`);
+    return this.http.request('GET', p`/segments/${id}/contacts`);
   }
   update(id: string, payload: UpdateSegmentOptions): Promise<Result<Segment>> {
-    return this.http.request('PATCH', `/segments/${id}`, payload);
+    return this.http.request('PATCH', p`/segments/${id}`, payload);
   }
   remove(id: string): Promise<Result<RemovedResponse>> {
-    return this.http.request('DELETE', `/segments/${id}`);
+    return this.http.request('DELETE', p`/segments/${id}`);
   }
 }
 
@@ -411,25 +424,25 @@ class Templates {
     return this.http.request('POST', '/templates', payload);
   }
   get(id: string): Promise<Result<Template>> {
-    return this.http.request('GET', `/templates/${id}`);
+    return this.http.request('GET', p`/templates/${id}`);
   }
   list(params?: PaginationParams): Promise<Result<ListResponse<Template>>> {
     return this.http.request('GET', `/templates${paginate(params)}`);
   }
   /** Returns the slim ack { object: 'template', id }. */
   update(id: string, payload: UpdateTemplateOptions): Promise<Result<ObjectRef<'template'>>> {
-    return this.http.request('PATCH', `/templates/${id}`, payload);
+    return this.http.request('PATCH', p`/templates/${id}`, payload);
   }
   /** Duplicate a template. POST /templates/:id/duplicate → { object: 'template', id }. */
   duplicate(id: string, payload?: DuplicateTemplateOptions): Promise<Result<ObjectRef<'template'>>> {
-    return this.http.request('POST', `/templates/${id}/duplicate`, payload ?? {});
+    return this.http.request('POST', p`/templates/${id}/duplicate`, payload ?? {});
   }
   /** Publish a template (make its latest draft live). POST /templates/:id/publish → { object: 'template', id }. */
   publish(id: string): Promise<Result<ObjectRef<'template'>>> {
-    return this.http.request('POST', `/templates/${id}/publish`);
+    return this.http.request('POST', p`/templates/${id}/publish`);
   }
   remove(id: string): Promise<Result<RemovedResponse>> {
-    return this.http.request('DELETE', `/templates/${id}`);
+    return this.http.request('DELETE', p`/templates/${id}`);
   }
 }
 
@@ -439,16 +452,16 @@ class Topics {
     return this.http.request('POST', '/topics', payload);
   }
   get(id: string): Promise<Result<Topic>> {
-    return this.http.request('GET', `/topics/${id}`);
+    return this.http.request('GET', p`/topics/${id}`);
   }
   list(params?: PaginationParams): Promise<Result<ListResponse<Topic>>> {
     return this.http.request('GET', `/topics${paginate(params)}`);
   }
   update(id: string, payload: UpdateTopicOptions): Promise<Result<Topic>> {
-    return this.http.request('PATCH', `/topics/${id}`, payload);
+    return this.http.request('PATCH', p`/topics/${id}`, payload);
   }
   remove(id: string): Promise<Result<RemovedResponse>> {
-    return this.http.request('DELETE', `/topics/${id}`);
+    return this.http.request('DELETE', p`/topics/${id}`);
   }
 }
 
@@ -458,36 +471,36 @@ class Automations {
     return this.http.request('POST', '/automations', payload);
   }
   get(id: string): Promise<Result<Automation>> {
-    return this.http.request('GET', `/automations/${id}`);
+    return this.http.request('GET', p`/automations/${id}`);
   }
   list(params?: PaginationParams): Promise<Result<ListResponse<Automation>>> {
     return this.http.request('GET', `/automations${paginate(params)}`);
   }
   update(id: string, payload: UpdateAutomationOptions): Promise<Result<Automation>> {
-    return this.http.request('PATCH', `/automations/${id}`, payload);
+    return this.http.request('PATCH', p`/automations/${id}`, payload);
   }
   /** Append a step to an automation. POST /automations/:id/steps → the created step. */
   addStep(id: string, payload: AddAutomationStepOptions): Promise<Result<AutomationStep>> {
-    return this.http.request('POST', `/automations/${id}/steps`, payload);
+    return this.http.request('POST', p`/automations/${id}/steps`, payload);
   }
   /** Delete a step from an automation. DELETE /automations/:id/steps/:stepId → { id, deleted }. */
   deleteStep(id: string, stepId: string): Promise<Result<{ id: string; deleted: boolean }>> {
-    return this.http.request('DELETE', `/automations/${id}/steps/${stepId}`);
+    return this.http.request('DELETE', p`/automations/${id}/steps/${stepId}`);
   }
   /** List an automation's runs. GET /automations/:id/runs */
   runs(id: string, params?: PaginationParams): Promise<Result<ListResponse<AutomationRun>>> {
-    return this.http.request('GET', `/automations/${id}/runs${paginate(params)}`);
+    return this.http.request('GET', `/automations/${encodeURIComponent(id)}/runs${paginate(params)}`);
   }
   /** Retrieve a single automation run. GET /automations/:id/runs/:runId */
   getRun(id: string, runId: string): Promise<Result<AutomationRun>> {
-    return this.http.request('GET', `/automations/${id}/runs/${runId}`);
+    return this.http.request('GET', p`/automations/${id}/runs/${runId}`);
   }
   /** Stop an automation — prevents new runs; in-progress runs finish. POST /automations/:id/stop */
   stop(id: string): Promise<Result<Automation>> {
-    return this.http.request('POST', `/automations/${id}/stop`);
+    return this.http.request('POST', p`/automations/${id}/stop`);
   }
   remove(id: string): Promise<Result<RemovedResponse>> {
-    return this.http.request('DELETE', `/automations/${id}`);
+    return this.http.request('DELETE', p`/automations/${id}`);
   }
 }
 
@@ -498,14 +511,14 @@ class Webhooks {
     return this.http.request('POST', '/webhooks', payload);
   }
   get(id: string): Promise<Result<Webhook>> {
-    return this.http.request('GET', `/webhooks/${id}`);
+    return this.http.request('GET', p`/webhooks/${id}`);
   }
   list(params?: PaginationParams): Promise<Result<ListResponse<Webhook>>> {
     return this.http.request('GET', `/webhooks${paginate(params)}`);
   }
   /** Returns the slim ack { object: 'webhook', id }. */
   update(id: string, payload: UpdateWebhookOptions): Promise<Result<ObjectRef<'webhook'>>> {
-    return this.http.request('PATCH', `/webhooks/${id}`, payload);
+    return this.http.request('PATCH', p`/webhooks/${id}`, payload);
   }
   /**
    * Rotate the signing secret. The new plaintext `signing_secret` is returned
@@ -513,14 +526,14 @@ class Webhooks {
    * POST /webhooks/:id/rotate
    */
   rotate(id: string): Promise<Result<ObjectRef<'webhook'> & { signing_secret: string }>> {
-    return this.http.request('POST', `/webhooks/${id}/rotate`);
+    return this.http.request('POST', p`/webhooks/${id}/rotate`);
   }
   /** Send a synchronous test delivery and return the endpoint's live result. POST /webhooks/:id/test */
   test(id: string): Promise<Result<{ object: 'webhook_test'; id: string; [k: string]: unknown }>> {
-    return this.http.request('POST', `/webhooks/${id}/test`);
+    return this.http.request('POST', p`/webhooks/${id}/test`);
   }
   remove(id: string): Promise<Result<RemovedResponse>> {
-    return this.http.request('DELETE', `/webhooks/${id}`);
+    return this.http.request('DELETE', p`/webhooks/${id}`);
   }
   /**
    * Verify a webhook delivery's Svix-style signature against your endpoint's
@@ -640,7 +653,7 @@ class Logs {
     return this.http.request('GET', `/logs${q ? `?${q}` : ''}`);
   }
   get(id: string): Promise<Result<LogEntry>> {
-    return this.http.request('GET', `/logs/${id}`);
+    return this.http.request('GET', p`/logs/${id}`);
   }
 }
 
@@ -660,7 +673,7 @@ class Events {
   }
   /** Delete a custom-event definition. DELETE /events/:id */
   remove(id: string): Promise<Result<RemovedResponse>> {
-    return this.http.request('DELETE', `/events/${id}`);
+    return this.http.request('DELETE', p`/events/${id}`);
   }
 }
 
@@ -673,7 +686,7 @@ class ApiKeys {
     return this.http.request('GET', '/api-keys');
   }
   remove(id: string): Promise<Result<RemovedResponse>> {
-    return this.http.request('DELETE', `/api-keys/${id}`);
+    return this.http.request('DELETE', p`/api-keys/${id}`);
   }
 }
 
