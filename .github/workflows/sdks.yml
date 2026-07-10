@@ -1,0 +1,105 @@
+name: SDKs
+
+# Test every language SDK on its own toolchain. Java (Maven) and Rust (cargo)
+# are included so the two SDKs that can't be built without their toolchains are
+# verified in CI, not just locally.
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  npm:
+    runs-on: ubuntu-latest
+    defaults: { run: { working-directory: mailblastr-npm } }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: '20' }
+      - run: npm install
+      - run: npm run build
+      - run: npm test
+
+  cli:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: '20' }
+      # The CLI depends on the npm SDK via `file:../mailblastr-npm`, whose `main`
+      # is dist/. Build it first so the CLI can import it.
+      - name: Build the npm SDK dependency
+        run: npm install && npm run build
+        working-directory: mailblastr-npm
+      - name: Install & test CLI
+        run: npm install && npm test
+        working-directory: mailblastr-cli
+
+  python:
+    runs-on: ubuntu-latest
+    defaults: { run: { working-directory: mailblastr-python } }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: '3.12' }
+      - run: python -m unittest discover -s tests -t .
+
+  ruby:
+    runs-on: ubuntu-latest
+    defaults: { run: { working-directory: mailblastr-ruby } }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ruby/setup-ruby@v1
+        with: { ruby-version: '3.3' }
+      - run: ruby -Ilib -Itest -e 'Dir["test/*_test.rb"].each { |f| require File.expand_path(f) }'
+
+  java:
+    runs-on: ubuntu-latest
+    defaults: { run: { working-directory: mailblastr-java } }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with: { distribution: 'temurin', java-version: '21', cache: 'maven' }
+      # pom sets skipTests=true (the SDK uses a custom no-JUnit harness), so
+      # compile then run AllTests.main directly; it System.exit(1)s on failure.
+      - run: mvn -B -q compile test-compile
+      - run: java -cp target/classes:target/test-classes com.mailblastr.tests.AllTests
+
+  php:
+    runs-on: ubuntu-latest
+    defaults: { run: { working-directory: mailblastr-php } }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: shivammathur/setup-php@v2
+        with: { php-version: '8.3' }
+      - run: php -l src/Transport/CurlTransport.php
+      - run: php tests/run.php
+
+  go:
+    runs-on: ubuntu-latest
+    defaults: { run: { working-directory: mailblastr-go } }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with: { go-version: 'stable' }
+      - run: go build ./...
+      - run: go test ./...
+
+  rust:
+    runs-on: ubuntu-latest
+    defaults: { run: { working-directory: mailblastr-rust } }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo build --verbose
+      - run: cargo test --verbose
+
+  dotnet:
+    runs-on: ubuntu-latest
+    defaults: { run: { working-directory: mailblastr-dotnet } }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with: { dotnet-version: '8.0.x' }
+      - run: dotnet test tests/Mailblastr.Tests/Mailblastr.Tests.csproj
