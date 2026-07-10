@@ -414,6 +414,64 @@ test('contacts remove-from-segment / topics / set-topics map to segment and topi
   assert.match(bad.err, /Invalid JSON for --topics/);
 });
 
+test('contacts batch reads --file / --data and maps to contacts.batch (SDK-3)', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mbcli-'));
+  const file = path.join(dir, 'contacts.json');
+  fs.writeFileSync(file, JSON.stringify([{ email: 'a@x.com' }, { email: 'b@x.com', first_name: 'B' }]));
+
+  let call = lastCall(await runCli(['contacts', 'batch', 'aud_1', '--file', file, '--on-conflict', 'skip']));
+  assert.deepEqual([call.resource, call.method], ['contacts', 'batch']);
+  assert.deepEqual(call.args[0], { audienceId: 'aud_1', contacts: [{ email: 'a@x.com' }, { email: 'b@x.com', first_name: 'B' }], on_conflict: 'skip' });
+
+  call = lastCall(await runCli(['contacts', 'batch', 'aud_1', '--data', '[{"email":"c@x.com"}]']));
+  assert.deepEqual(call.args[0], { audienceId: 'aud_1', contacts: [{ email: 'c@x.com' }] });
+
+  // Guards: no input, both inputs, non-array, unreadable file.
+  let bad = await runCli(['contacts', 'batch', 'aud_1']);
+  assert.equal(bad.exitCode, 1);
+  assert.match(bad.err, /--file .* or --data/);
+  bad = await runCli(['contacts', 'batch', 'aud_1', '--data', '{"email":"x"}']);
+  assert.equal(bad.exitCode, 1);
+  assert.match(bad.err, /must be a JSON array/);
+});
+
+test('contacts import reads --csv and maps to contacts.import with strict flag (SDK-3)', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mbcli-'));
+  const csvFile = path.join(dir, 'contacts.csv');
+  fs.writeFileSync(csvFile, 'email,first_name\nz@x.com,Zed\n');
+
+  let call = lastCall(await runCli(['contacts', 'import', 'aud_1', '--csv', csvFile, '--on-conflict', 'upsert']));
+  assert.deepEqual([call.resource, call.method], ['contacts', 'import']);
+  assert.deepEqual(call.args[0], { audienceId: 'aud_1', csv: 'email,first_name\nz@x.com,Zed\n', on_conflict: 'upsert' });
+
+  // --no-create-properties → create_properties:false is threaded through.
+  call = lastCall(await runCli(['contacts', 'import', 'aud_1', '--csv', csvFile, '--no-create-properties']));
+  assert.equal(call.args[0].create_properties, false);
+
+  const bad = await runCli(['contacts', 'import', 'aud_1', '--csv', '/nope/missing.csv']);
+  assert.equal(bad.exitCode, 1);
+  assert.match(bad.err, /Cannot read --csv/);
+});
+
+test('webhooks verify computes a local signature check (SDK-4)', async () => {
+  const call = lastCall(await runCli([
+    'webhooks', 'verify',
+    '--secret', 'whsec_test',
+    '--payload', '{"type":"email.delivered"}',
+    '--svix-id', 'msg_1', '--svix-timestamp', '1700000000', '--svix-signature', 'v1,abc',
+    '--tolerance', '0',
+  ]));
+  assert.deepEqual([call.resource, call.method], ['webhooks', 'verify']);
+  assert.equal(call.args[0], '{"type":"email.delivered"}');
+  assert.deepEqual(call.args[1], { 'svix-id': 'msg_1', 'svix-timestamp': '1700000000', 'svix-signature': 'v1,abc' });
+  assert.equal(call.args[2], 'whsec_test');
+  assert.deepEqual(call.args[3], { toleranceSec: 0 });
+
+  const bad = await runCli(['webhooks', 'verify', '--secret', 's', '--svix-id', 'm', '--svix-timestamp', 't', '--svix-signature', 'x']);
+  assert.equal(bad.exitCode, 1);
+  assert.match(bad.err, /--payload .* or --payload-file/);
+});
+
 // ---- contact properties ----
 
 test('contact-properties create / list / get / update / delete', async () => {

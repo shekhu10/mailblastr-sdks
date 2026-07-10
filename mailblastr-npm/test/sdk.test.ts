@@ -52,6 +52,44 @@ test('emails.send forwards the Idempotency-Key header', async () => {
   assert.equal(calls[0].headers['Idempotency-Key'], 'k1');
 });
 
+test('retries a 429 (honoring Retry-After) then succeeds; a 422 is not retried', async () => {
+  let n = 0;
+  const seenSignals: boolean[] = [];
+  const fn = (async (_url: string, init: any) => {
+    seenSignals.push(!!init.signal);
+    n += 1;
+    if (n === 1) {
+      return { ok: false, status: 429, headers: { get: (h: string) => (h.toLowerCase() === 'retry-after' ? '0' : null) }, text: async () => '' } as unknown as Response;
+    }
+    return { ok: true, status: 200, headers: { get: () => null }, text: async () => JSON.stringify({ id: 'ok' }) } as unknown as Response;
+  }) as unknown as typeof fetch;
+  const mb = new MailBlastr('mb_test', { baseUrl: 'https://api.test', fetch: fn, maxRetries: 2 });
+  const res = await mb.emails.send({ from: 'a@x.com', to: 'b@y.com', subject: 'Hi', html: 'x' });
+  assert.equal(n, 2, 'the 429 was retried exactly once');
+  assert.deepEqual(res, { data: { id: 'ok' }, error: null });
+  assert.ok(seenSignals.every((s) => s), 'every attempt carried a timeout AbortSignal');
+});
+
+test('gives up after maxRetries on a persistent 429 and returns the error', async () => {
+  let n = 0;
+  const fn = (async () => {
+    n += 1;
+    return { ok: false, status: 429, headers: { get: () => '0' }, text: async () => JSON.stringify({ statusCode: 429, name: 'rate_limited', message: 'slow down' }) } as unknown as Response;
+  }) as unknown as typeof fetch;
+  const mb = new MailBlastr('mb_test', { baseUrl: 'https://api.test', fetch: fn, maxRetries: 2 });
+  const res = await mb.emails.send({ from: 'a@x.com', to: 'b@y.com', subject: 'Hi', html: 'x' });
+  assert.equal(n, 3, 'initial attempt + 2 retries');
+  assert.equal(res.error?.statusCode, 429);
+});
+
+test('maxRetries: 0 disables retries', async () => {
+  let n = 0;
+  const fn = (async () => { n += 1; return { ok: false, status: 503, headers: { get: () => null }, text: async () => '' } as unknown as Response; }) as unknown as typeof fetch;
+  const mb = new MailBlastr('mb_test', { baseUrl: 'https://api.test', fetch: fn, maxRetries: 0 });
+  await mb.emails.send({ from: 'a@x.com', to: 'b@y.com', subject: 'Hi', html: 'x' });
+  assert.equal(n, 1, 'no retries when maxRetries is 0');
+});
+
 test('a non-2xx returns { error } with the MailBlastr error shape', async () => {
   const { fn } = mockFetch(422, { statusCode: 422, name: 'validation_error', message: 'bad' });
   const mb = new MailBlastr('mb_test', { baseUrl: 'https://api.test', fetch: fn });
@@ -400,8 +438,10 @@ test('automations resource maps every method', async () => {
   await mb.automations.get('au1');
   await mb.automations.update('au1', { status: 'enabled' });
   await mb.automations.addStep('au1', { type: 'send_email', config: { template_id: 't1' } });
+  await mb.automations.updateStep('au1', 'st1', { type: 'send_email', config: { template_id: 't2' } });
   await mb.automations.runs('au1');
   await mb.automations.getRun('au1', 'run1');
+  await mb.automations.stop('au1');
   await mb.automations.remove('au1');
   assert.deepEqual(calls.map((c) => `${c.method} ${c.url}`), [
     'POST https://api.test/automations',
@@ -409,10 +449,13 @@ test('automations resource maps every method', async () => {
     'GET https://api.test/automations/au1',
     'PATCH https://api.test/automations/au1',
     'POST https://api.test/automations/au1/steps',
+    'PATCH https://api.test/automations/au1/steps/st1',
     'GET https://api.test/automations/au1/runs',
     'GET https://api.test/automations/au1/runs/run1',
+    'POST https://api.test/automations/au1/stop',
     'DELETE https://api.test/automations/au1',
   ]);
+  assert.deepEqual(calls[5].body, { type: 'send_email', config: { template_id: 't2' } });
 });
 
 test('webhooks resource maps every method', async () => {
@@ -615,13 +658,26 @@ test('logs + events map to the right routes', async () => {
   await mb.events.send({ name: 'signup.completed', domain: 'x.com', email: 'c@x.com', data: { plan: 'pro' } });
   await mb.events.create({ name: 'signup.completed', schema: { plan: 'string' } });
   await mb.events.list();
+  await mb.events.update('ev1', { schema: { plan: 'string', seats: 'number' } });
+  await mb.events.remove('ev1');
   assert.deepEqual(calls.map((c) => `${c.method} ${c.url}`), [
     'GET https://api.test/logs?limit=20&before=cur2',
     'GET https://api.test/logs/l1',
     'POST https://api.test/events/send',
     'POST https://api.test/events',
     'GET https://api.test/events',
+    'PATCH https://api.test/events/ev1',
+    'DELETE https://api.test/events/ev1',
   ]);
   assert.deepEqual(calls[2].body, { name: 'signup.completed', domain: 'x.com', email: 'c@x.com', data: { plan: 'pro' } });
   assert.deepEqual(calls[3].body, { name: 'signup.completed', schema: { plan: 'string' } });
+  assert.deepEqual(calls[5].body, { schema: { plan: 'string', seats: 'number' } });
+});
+
+test('domains.mxCheck maps to GET /domains/mx-check', async () => {
+  const { fn, calls } = mockFetch(200, { has_mx: false, ours: false, records: [] });
+  const mb = new MailBlastr('mb_test', { baseUrl: 'https://api.test', fetch: fn });
+  await mb.domains.mxCheck('mail.example.com');
+  assert.equal(calls[0].method, 'GET');
+  assert.equal(calls[0].url, 'https://api.test/domains/mx-check?name=mail.example.com');
 });

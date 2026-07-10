@@ -255,11 +255,27 @@ export interface ContactInput {
 }
 /** Result of a batch / CSV contact import. */
 export interface ImportContactsResponse {
-  object: 'list';
+  object: 'contact_import';
   imported: number; // newly inserted
   updated: number;  // existing contacts updated
   skipped: number;  // rows dropped: missing/invalid email OR left untouched under on_conflict:'skip'
   total: number;    // distinct contacts processed
+  ignored_columns?: string[]; // CSV headers that matched no registered property (CSV import only)
+}
+
+/** MX preflight result for a hostname (GET /domains/mx-check). */
+export interface MxCheckResponse {
+  /** Whether the hostname has any MX records. */
+  has_mx: boolean;
+  /** Whether every MX record points at our inbound host (receiving-ready). */
+  ours: boolean;
+  records: Array<{ exchange: string; priority: number }>;
+}
+
+/** Update a custom-event definition's payload schema (PATCH /events/:id). The
+ * name is immutable — create a new event to rename. */
+export interface UpdateEventOptions {
+  schema?: Record<string, unknown> | null;
 }
 /** Cursor paging for listing contacts (limit ≤ 100). */
 export interface ListContactsParams {
@@ -624,8 +640,10 @@ export interface ReceivedEmail {
   /** Parsed message headers as a name → value map. */
   headers?: Record<string, string>;
   message_id?: string;
-  /** AI reply intent (replies only): 'interested' | 'neutral' | 'not_interested'. */
-  category?: string | null;
+  /** AI reply intent (replies only). */
+  category?: 'interested' | 'neutral' | 'not_interested' | null;
+  /** When this message is a reply to an email you sent, that sent email's id. */
+  reply_to_email_id?: string | null;
   spf?: string;
   verdicts?: Record<string, unknown>;
   attachments?: ReceivedAttachment[];

@@ -1,6 +1,7 @@
 'use strict';
 
-const { parseJson, clean, withPagination, pagination } = require('../helpers');
+const fs = require('node:fs');
+const { CliError, parseJson, clean, withPagination, pagination } = require('../helpers');
 
 function register({ group, leaf, act }) {
   const contacts = group('contacts', 'Manage contacts (domain-first: each sending domain has its own pool)');
@@ -100,6 +101,46 @@ function register({ group, leaf, act }) {
     ),
     ({ client, opts, args: [id] }) =>
       client.contacts.updateTopics(id, { topics: parseJson(opts.topics, '--topics') }),
+  );
+
+  // Bulk import — from a JSON array of contacts, or a CSV file (SDK-3).
+  act(
+    leaf(contacts, 'batch <audienceId>', 'Bulk-import contacts from a JSON array (upsert by email; max 10,000)')
+      .option('--file <path>', 'path to a JSON file containing an array of contact objects')
+      .option('--data <json>', 'inline JSON array of contact objects')
+      .option('--on-conflict <mode>', "how to resolve an existing email: 'upsert' (default) or 'skip'"),
+    ({ client, opts, args: [audienceId] }) => {
+      if (opts.file && opts.data) throw new CliError('Provide only one of --file or --data.');
+      if (!opts.file && !opts.data) throw new CliError('Provide --file <path> or --data <json array>.');
+      let contactsArr;
+      if (opts.file) {
+        let raw;
+        try { raw = fs.readFileSync(opts.file, 'utf8'); }
+        catch (err) { throw new CliError(`Cannot read --file ${opts.file}: ${err.message}`); }
+        contactsArr = parseJson(raw, `--file ${opts.file}`);
+      } else {
+        contactsArr = parseJson(opts.data, '--data');
+      }
+      if (!Array.isArray(contactsArr)) throw new CliError('The contacts payload must be a JSON array.');
+      return client.contacts.batch(clean({ audienceId, contacts: contactsArr, on_conflict: opts.onConflict }));
+    },
+  );
+
+  act(
+    leaf(contacts, 'import <audienceId>', 'Bulk-import contacts from a CSV file (email column required; header row optional)')
+      .requiredOption('--csv <path>', 'path to a CSV file')
+      .option('--on-conflict <mode>', "how to resolve an existing email: 'upsert' (default) or 'skip'")
+      .option('--no-create-properties', 'strict mode: keep only columns matching a registered property'),
+    ({ client, opts, args: [audienceId] }) => {
+      let csv;
+      try { csv = fs.readFileSync(opts.csv, 'utf8'); }
+      catch (err) { throw new CliError(`Cannot read --csv ${opts.csv}: ${err.message}`); }
+      // commander sets opts.createProperties=false for --no-create-properties (default true).
+      return client.contacts.import(clean({
+        audienceId, csv, on_conflict: opts.onConflict,
+        create_properties: opts.createProperties === false ? false : undefined,
+      }));
+    },
   );
 }
 

@@ -92,6 +92,10 @@ public class ReceivedEmail
     [JsonPropertyName("category")]
     public string? Category { get; set; }
 
+    /// <summary>The sent email this message replied to, when the reply was recognised.</summary>
+    [JsonPropertyName("reply_to_email_id")]
+    public string? ReplyToEmailId { get; set; }
+
     [JsonPropertyName("spf")]
     public string? Spf { get; set; }
 

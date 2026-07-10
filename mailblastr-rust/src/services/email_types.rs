@@ -437,6 +437,8 @@ pub struct ReceivedEmail {
     pub message_id: Option<String>,
     /// AI reply intent (replies only): `interested` | `neutral` | `not_interested`.
     pub category: Option<String>,
+    /// The sent email this message replied to, when the reply was recognised.
+    pub reply_to_email_id: Option<String>,
     pub spf: Option<String>,
     pub verdicts: Option<Value>,
     pub attachments: Option<Vec<ReceivedAttachment>>,

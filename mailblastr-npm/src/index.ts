@@ -4,7 +4,7 @@ import type {
   Result, RequestOptions, PaginationParams, ObjectRef,
   SendEmailOptions, CreateEmailResponse, Email, SentEmailListItem,
   AttachmentMeta, ReceivedAttachment, ReceivedEmail, ForwardReceivedEmailOptions,
-  CreateDomainOptions, UpdateDomainOptions, Domain,
+  CreateDomainOptions, UpdateDomainOptions, Domain, MxCheckResponse,
   DomainClaim, ClaimDomainOptions,
   Audience, Contact, CreateContactOptions, UpdateContactOptions,
   ContactInput, ImportContactsResponse, ListContactsParams,
@@ -19,7 +19,7 @@ import type {
   AddAutomationStepOptions, AutomationStep, AutomationRun,
   Webhook, CreateWebhookOptions, UpdateWebhookOptions,
   WebhookHeaders, VerifyWebhookResult, VerifyWebhookOptions,
-  LogEntry, SendEventOptions, SendEventResponse, CreateEventOptions, EventDefinition,
+  LogEntry, SendEventOptions, SendEventResponse, CreateEventOptions, UpdateEventOptions, EventDefinition,
   ApiKey, CreateApiKeyOptions, CreateApiKeyResponse,
   ListResponse, RemovedResponse,
 } from './types';
@@ -171,6 +171,11 @@ class Domains {
   /** Claim a domain already verified elsewhere. POST /domains/claim */
   claim(payload: ClaimDomainOptions): Promise<Result<DomainClaim>> {
     return this.http.request('POST', '/domains/claim', payload);
+  }
+  /** MX preflight for a hostname before enabling receiving: does it already have
+   * MX records, and do they all point at our inbound host? GET /domains/mx-check */
+  mxCheck(name: string): Promise<Result<MxCheckResponse>> {
+    return this.http.request('GET', `/domains/mx-check?name=${encodeURIComponent(name)}`);
   }
   /** Retrieve a domain's claim record. GET /domains/:id/claim */
   getClaim(id: string): Promise<Result<DomainClaim>> {
@@ -520,6 +525,11 @@ class Automations {
   addStep(id: string, payload: AddAutomationStepOptions): Promise<Result<AutomationStep>> {
     return this.http.request('POST', p`/automations/${id}/steps`, payload);
   }
+  /** Update a step in place (type/config; the graph key stays stable). The
+   * automation must be disabled. PATCH /automations/:id/steps/:stepId → the step. */
+  updateStep(id: string, stepId: string, payload: AddAutomationStepOptions): Promise<Result<AutomationStep>> {
+    return this.http.request('PATCH', p`/automations/${id}/steps/${stepId}`, payload);
+  }
   /** Delete a step from an automation. DELETE /automations/:id/steps/:stepId → { id, deleted }. */
   deleteStep(id: string, stepId: string): Promise<Result<{ id: string; deleted: boolean }>> {
     return this.http.request('DELETE', p`/automations/${id}/steps/${stepId}`);
@@ -707,6 +717,11 @@ class Events {
   /** List custom-event definitions. GET /events */
   list(params?: PaginationParams): Promise<Result<ListResponse<EventDefinition>>> {
     return this.http.request('GET', `/events${paginate(params)}`);
+  }
+  /** Update a custom-event definition's payload schema (the name is immutable).
+   * PATCH /events/:id */
+  update(id: string, payload: UpdateEventOptions): Promise<Result<EventDefinition>> {
+    return this.http.request('PATCH', p`/events/${id}`, payload);
   }
   /** Delete a custom-event definition. DELETE /events/:id */
   remove(id: string): Promise<Result<RemovedResponse>> {

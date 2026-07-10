@@ -43,14 +43,17 @@ type ReceivedEmail struct {
 	MessageId string            `json:"message_id,omitempty"`
 	// Category is the AI reply intent (replies only): "interested" |
 	// "neutral" | "not_interested".
-	Category     string               `json:"category,omitempty"`
-	Spf          string               `json:"spf,omitempty"`
-	Verdicts     map[string]any       `json:"verdicts,omitempty"`
-	Attachments  []ReceivedAttachment `json:"attachments,omitempty"`
-	RawAvailable bool                 `json:"raw_available"`
-	Raw          *ReceivedEmailRaw    `json:"raw,omitempty"`
-	RawUrl       string               `json:"raw_url,omitempty"`
-	CreatedAt    string               `json:"created_at"`
+	Category string `json:"category,omitempty"`
+	// ReplyToEmailId is the id of the sent email this message replied to,
+	// when the reply was recognised.
+	ReplyToEmailId string               `json:"reply_to_email_id,omitempty"`
+	Spf            string               `json:"spf,omitempty"`
+	Verdicts       map[string]any       `json:"verdicts,omitempty"`
+	Attachments    []ReceivedAttachment `json:"attachments,omitempty"`
+	RawAvailable   bool                 `json:"raw_available"`
+	Raw            *ReceivedEmailRaw    `json:"raw,omitempty"`
+	RawUrl         string               `json:"raw_url,omitempty"`
+	CreatedAt      string               `json:"created_at"`
 }
 
 // ForwardReceivedEmailRequest forwards a received email.
