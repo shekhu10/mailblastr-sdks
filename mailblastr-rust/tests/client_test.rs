@@ -67,6 +67,102 @@ fn spawn_stub(status: u16, body: &'static str) -> (String, JoinHandle<String>) {
     (format!("http://{addr}"), handle)
 }
 
+/// Spawn a stub that answers a SEQUENCE of responses, one per incoming
+/// connection (the client sends `Connection: close`, so each retry reconnects).
+/// The thread is detached: a broken retry loop makes fewer requests, which
+/// surfaces as the client call failing — never as a hang.
+fn spawn_stub_seq(responses: Vec<(u16, &'static str, Option<&'static str>)>) -> String {
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind stub listener");
+    let addr = listener.local_addr().expect("stub addr");
+    thread::spawn(move || {
+        for (status, body, retry_after) in responses {
+            let (mut stream, _) = match listener.accept() {
+                Ok(s) => s,
+                Err(_) => break,
+            };
+            let mut buf: Vec<u8> = Vec::new();
+            let mut tmp = [0u8; 4096];
+            loop {
+                let n = match stream.read(&mut tmp) {
+                    Ok(n) => n,
+                    Err(_) => break,
+                };
+                if n == 0 {
+                    break;
+                }
+                buf.extend_from_slice(&tmp[..n]);
+                if let Some(header_end) = find_subsequence(&buf, b"\r\n\r\n") {
+                    let headers = String::from_utf8_lossy(&buf[..header_end]);
+                    let content_length = headers
+                        .lines()
+                        .find_map(|line| {
+                            let (name, value) = line.split_once(':')?;
+                            if name.trim().eq_ignore_ascii_case("content-length") {
+                                value.trim().parse::<usize>().ok()
+                            } else {
+                                None
+                            }
+                        })
+                        .unwrap_or(0);
+                    if buf.len() >= header_end + 4 + content_length {
+                        break;
+                    }
+                }
+            }
+            let ra = retry_after
+                .map(|v| format!("Retry-After: {v}\r\n"))
+                .unwrap_or_default();
+            let response = format!(
+                "HTTP/1.1 {status} Status\r\nContent-Type: application/json\r\n{ra}Content-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                body.len(),
+            );
+            let _ = stream.write_all(response.as_bytes());
+            let _ = stream.flush();
+        }
+    });
+    format!("http://{addr}")
+}
+
+#[tokio::test]
+async fn retries_a_429_then_succeeds() {
+    // First attempt is rate-limited (Retry-After: 0 → no real wait); the retry
+    // gets a 200. Reaching "em_ok" proves the client reconnected and retried.
+    let base_url = spawn_stub_seq(vec![
+        (
+            429,
+            r#"{"statusCode":429,"name":"rate_limited","message":"slow down"}"#,
+            Some("0"),
+        ),
+        (200, r#"{"id":"em_ok"}"#, None),
+    ]);
+    let mb = Mailblastr::with_base_url("mb_test_key", base_url);
+    let email = CreateEmailBaseOptions::new("Acme <hi@x.com>", ["b@y.com"], "Hi").with_html("<p>x</p>");
+    let sent = mb
+        .emails
+        .send(email)
+        .await
+        .expect("send should succeed after retrying the 429");
+    assert_eq!(sent.id, "em_ok");
+}
+
+#[tokio::test]
+async fn does_not_retry_a_422() {
+    // A single 422 stub: if the client wrongly retried, the second attempt would
+    // hit a closed listener and the error would change — it must surface the 422.
+    let base_url = spawn_stub_seq(vec![(
+        422,
+        r#"{"statusCode":422,"name":"validation_error","message":"bad"}"#,
+        None,
+    )]);
+    let mb = Mailblastr::with_base_url("mb_test_key", base_url);
+    let email = CreateEmailBaseOptions::new("Acme <hi@x.com>", ["b@y.com"], "Hi").with_html("<p>x</p>");
+    let err = mb.emails.send(email).await.expect_err("422 should fail");
+    match err {
+        Error::Api { status_code, .. } => assert_eq!(status_code, 422),
+        other => panic!("expected Error::Api(422), got {other:?}"),
+    }
+}
+
 #[tokio::test]
 async fn sends_an_email_with_auth_and_json_body() {
     let (base_url, handle) = spawn_stub(200, r#"{"id":"em_123"}"#);

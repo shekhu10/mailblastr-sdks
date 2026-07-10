@@ -20,6 +20,8 @@ import com.mailblastr.resources.Templates;
 import com.mailblastr.resources.Topics;
 import com.mailblastr.resources.Webhooks;
 
+import java.time.Duration;
+
 /**
  * The MailBlastr API client.
  *
@@ -69,6 +71,18 @@ public class Mailblastr {
     /** Override the API host, e.g. for a self-hosted deployment. */
     public Mailblastr(String apiKey, String baseUrl) {
         this(apiKey, baseUrl, new DefaultHttpTransport());
+    }
+
+    /**
+     * Override the API host and the HTTP-core robustness policy.
+     *
+     * @param timeout    per-request (and connect) timeout; {@code null} or a non-positive
+     *                   value means "no timeout". Defaults to 30 seconds.
+     * @param maxRetries extra automatic attempts on HTTP 429/503 (0 disables retries).
+     *                   Defaults to 2 (up to 3 total attempts).
+     */
+    public Mailblastr(String apiKey, String baseUrl, Duration timeout, int maxRetries) {
+        this(apiKey, baseUrl, new DefaultHttpTransport(timeout, maxRetries));
     }
 
     /** Inject a custom {@link HttpTransport} (used by the test suite). */

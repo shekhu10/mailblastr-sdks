@@ -49,7 +49,11 @@ class Client
 
     /**
      * @param string $apiKey  Your API key, e.g. 'mb_xxxxxxxxx'.
-     * @param array  $options 'baseUrl' (string), 'transport' (TransportInterface).
+     * @param array  $options 'baseUrl' (string), 'transport' (TransportInterface),
+     *                        'timeout' (int seconds per request, default 30; 0 = no timeout),
+     *                        'maxRetries' (int automatic retries on 429/503, default 2; 0 disables).
+     *                        'timeout'/'maxRetries' apply only to the default curl transport;
+     *                        a supplied 'transport' is used as-is.
      */
     public function __construct(string $apiKey, array $options = [])
     {
@@ -60,7 +64,10 @@ class Client
         }
         $this->apiKey = $apiKey;
         $this->baseUrl = rtrim((string) ($options['baseUrl'] ?? self::DEFAULT_BASE_URL), '/');
-        $transport = $options['transport'] ?? new CurlTransport();
+        $transport = $options['transport'] ?? new CurlTransport(
+            (int) ($options['timeout'] ?? 30),
+            (int) ($options['maxRetries'] ?? 2),
+        );
         if (!$transport instanceof TransportInterface) {
             throw new \InvalidArgumentException('Mailblastr: "transport" must implement TransportInterface.');
         }

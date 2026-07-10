@@ -209,6 +209,74 @@ public class MailblastrClientTests
     }
 
     [Fact]
+    public async Task Retries_On429_ThenSucceeds()
+    {
+        var stub = new StubHttpMessageHandler();
+        // First attempt rate-limited (Retry-After: 0 keeps the test fast), then 200.
+        stub.ScriptedResponses.Enqueue((HttpStatusCode.TooManyRequests, """{"name":"rate_limited","message":"slow down"}""", "0"));
+        stub.ScriptedResponses.Enqueue((HttpStatusCode.OK, """{"id":"em_123"}""", null));
+        var client = MailblastrClient.Create("mb_test_key", new MailblastrClientOptions { HttpMessageHandler = stub });
+
+        var created = await client.EmailSendAsync(new EmailMessage
+        {
+            From = "a@b.com",
+            To = "user@example.com",
+            Subject = "Hi",
+        });
+
+        Assert.Equal("em_123", created.Id);
+        // Two total attempts: the 429 then the 200.
+        Assert.Equal(2, stub.Requests.Count);
+        Assert.Equal("Bearer", stub.Requests[0].Headers.Authorization!.Scheme);
+        Assert.Equal("Bearer", stub.Requests[1].Headers.Authorization!.Scheme);
+    }
+
+    [Fact]
+    public async Task Retries_ExhaustMaxRetries_ThenThrowsLastError()
+    {
+        var stub = new StubHttpMessageHandler
+        {
+            StatusCode = HttpStatusCode.ServiceUnavailable,
+            ResponseBody = """{"name":"unavailable","message":"try later"}""",
+        };
+        // maxRetries=1 => 2 total attempts, both 503.
+        var client = MailblastrClient.Create("mb_test_key", new MailblastrClientOptions
+        {
+            HttpMessageHandler = stub,
+            MaxRetries = 1,
+        });
+
+        var ex = await Assert.ThrowsAsync<MailblastrException>(() => client.EmailRetrieveAsync("em_1"));
+
+        Assert.Equal(503, ex.StatusCode);
+        Assert.Equal(2, stub.Requests.Count);
+    }
+
+    [Fact]
+    public async Task DoesNotRetry_On500_OrWhenMaxRetriesZero()
+    {
+        // 500 is never retried, even with retries enabled.
+        var stub500 = new StubHttpMessageHandler
+        {
+            StatusCode = HttpStatusCode.InternalServerError,
+            ResponseBody = """{"name":"server_error","message":"boom"}""",
+        };
+        var client500 = MailblastrClient.Create("mb_test_key", new MailblastrClientOptions { HttpMessageHandler = stub500, MaxRetries = 3 });
+        await Assert.ThrowsAsync<MailblastrException>(() => client500.EmailRetrieveAsync("em_1"));
+        Assert.Single(stub500.Requests);
+
+        // MaxRetries=0 disables retry even for 429.
+        var stub429 = new StubHttpMessageHandler
+        {
+            StatusCode = HttpStatusCode.TooManyRequests,
+            ResponseBody = """{"name":"rate_limited","message":"slow down"}""",
+        };
+        var client429 = MailblastrClient.Create("mb_test_key", new MailblastrClientOptions { HttpMessageHandler = stub429, MaxRetries = 0 });
+        await Assert.ThrowsAsync<MailblastrException>(() => client429.EmailRetrieveAsync("em_1"));
+        Assert.Single(stub429.Requests);
+    }
+
+    [Fact]
     public async Task BaseUrl_Override_IsRespectedAndTrailingSlashTrimmed()
     {
         var stub = new StubHttpMessageHandler { ResponseBody = """{"object":"list","has_more":false,"data":[]}""" };

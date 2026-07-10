@@ -18,6 +18,14 @@ public sealed class StubHttpMessageHandler : HttpMessageHandler
 
     public string ResponseBody { get; set; } = "{}";
 
+    /// <summary>
+    /// Optional scripted responses returned in order (one per request). When
+    /// non-empty, each request dequeues the next entry; once drained the handler
+    /// falls back to <see cref="StatusCode"/>/<see cref="ResponseBody"/>. The
+    /// optional <c>RetryAfter</c> sets the <c>Retry-After</c> response header.
+    /// </summary>
+    public Queue<(HttpStatusCode Status, string Body, string? RetryAfter)> ScriptedResponses { get; } = new();
+
     public HttpRequestMessage LastRequest => Requests[^1];
 
     public string? LastRequestBody => RequestBodies[^1];
@@ -29,10 +37,23 @@ public sealed class StubHttpMessageHandler : HttpMessageHandler
             ? null
             : await request.Content.ReadAsStringAsync(cancellationToken));
 
-        return new HttpResponseMessage(StatusCode)
+        var status = StatusCode;
+        var body = ResponseBody;
+        string? retryAfter = null;
+        if (ScriptedResponses.Count > 0)
         {
-            Content = new StringContent(ResponseBody, Encoding.UTF8, "application/json"),
+            (status, body, retryAfter) = ScriptedResponses.Dequeue();
+        }
+
+        var response = new HttpResponseMessage(status)
+        {
+            Content = new StringContent(body, Encoding.UTF8, "application/json"),
             RequestMessage = request,
         };
+        if (retryAfter is not null)
+        {
+            response.Headers.TryAddWithoutValidation("Retry-After", retryAfter);
+        }
+        return response;
     }
 }

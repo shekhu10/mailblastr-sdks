@@ -10,12 +10,41 @@ export interface ClientConfig {
   baseUrl?: string;
   /** Override the fetch implementation (e.g. for tests or older runtimes). */
   fetch?: typeof fetch;
+  /** Per-request timeout in milliseconds. Default 30000 (30s). 0 disables it. */
+  timeoutMs?: number;
+  /**
+   * Max automatic retries on a rate-limit (429) or service-unavailable (503)
+   * response — the only two the server guarantees were NOT applied, so retrying
+   * can't duplicate a side-effect (e.g. a double send). Honors `Retry-After`,
+   * else exponential backoff. Default 2 (→ up to 3 attempts). 0 disables retries.
+   */
+  maxRetries?: number;
+}
+
+const DEFAULT_TIMEOUT_MS = 30_000;
+const DEFAULT_MAX_RETRIES = 2;
+const RETRYABLE_STATUS = new Set([429, 503]);
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/** Parse a Retry-After header (delta-seconds or HTTP-date) → ms, capped at 30s. */
+function retryAfterMs(header: string | null): number | null {
+  if (!header) return null;
+  const secs = Number(header);
+  if (Number.isFinite(secs)) return Math.min(Math.max(0, secs * 1000), 30_000);
+  const when = Date.parse(header);
+  if (!Number.isNaN(when)) return Math.min(Math.max(0, when - Date.now()), 30_000);
+  return null;
 }
 
 export class HttpClient {
   private readonly apiKey: string;
   private readonly baseUrl: string;
   private readonly fetchImpl: typeof fetch;
+  private readonly timeoutMs: number;
+  private readonly maxRetries: number;
 
   constructor(apiKey: string, config: ClientConfig = {}) {
     if (!apiKey || typeof apiKey !== 'string') {
@@ -28,6 +57,19 @@ export class HttpClient {
       throw new Error('MailBlastr: no global fetch available. Use Node 18+ or pass { fetch } in the options.');
     }
     this.fetchImpl = f;
+    this.timeoutMs = config.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+    this.maxRetries = Math.max(0, config.maxRetries ?? DEFAULT_MAX_RETRIES);
+  }
+
+  /** Issue the fetch with a timeout, retrying only 429/503 (Retry-After aware). */
+  private async send(url: string, init: RequestInit): Promise<Response> {
+    for (let attempt = 0; ; attempt++) {
+      const signal = this.timeoutMs > 0 ? AbortSignal.timeout(this.timeoutMs) : undefined;
+      const res = await this.fetchImpl(url, { ...init, signal });
+      if (!RETRYABLE_STATUS.has(res.status) || attempt >= this.maxRetries) return res;
+      const wait = retryAfterMs(res.headers.get('retry-after')) ?? Math.min(30_000, 500 * 2 ** attempt);
+      await sleep(wait);
+    }
   }
 
   async request<T>(method: string, path: string, body?: unknown, options: RequestOptions = {}): Promise<Result<T>> {
@@ -40,7 +82,7 @@ export class HttpClient {
 
     let res: Response;
     try {
-      res = await this.fetchImpl(`${this.baseUrl}${path}`, {
+      res = await this.send(`${this.baseUrl}${path}`, {
         method,
         headers,
         body: body === undefined ? undefined : JSON.stringify(body),
@@ -83,7 +125,7 @@ export class HttpClient {
 
     let res: Response;
     try {
-      res = await this.fetchImpl(`${this.baseUrl}${path}`, { method, headers });
+      res = await this.send(`${this.baseUrl}${path}`, { method, headers });
     } catch (err) {
       return { data: null, error: { statusCode: 0, name: 'network_error', message: (err as Error).message } };
     }

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"sync/atomic"
 	"testing"
 )
 
@@ -79,6 +80,48 @@ func TestErrorParsingNonJSONBody(t *testing.T) {
 	}
 	if apiErr.Name != "application_error" {
 		t.Errorf("Name = %q, want application_error", apiErr.Name)
+	}
+}
+
+func TestRetryOn429(t *testing.T) {
+	var calls atomic.Int32
+	client := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		if calls.Add(1) == 1 {
+			// Retry-After: 0 makes the retry immediate (keeps the test fast)
+			// and exercises the Retry-After delta-seconds path.
+			w.Header().Set("Retry-After", "0")
+			w.WriteHeader(http.StatusTooManyRequests)
+			w.Write([]byte(`{"statusCode":429,"name":"rate_limited","message":"slow down"}`))
+			return
+		}
+		w.Write([]byte(`{"object":"email","id":"em_1"}`))
+	})
+
+	email, err := client.Emails.Get("em_1")
+	if err != nil {
+		t.Fatalf("Get after retry: %v", err)
+	}
+	if got := calls.Load(); got != 2 {
+		t.Errorf("server calls = %d, want 2 (one 429 then a successful retry)", got)
+	}
+	if email == nil || email.Id != "em_1" {
+		t.Errorf("email = %+v, want id em_1 from the retried response", email)
+	}
+}
+
+func TestNoRetryOn500(t *testing.T) {
+	var calls atomic.Int32
+	client := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		w.WriteHeader(http.StatusInternalServerError)
+		w.Write([]byte(`{"statusCode":500,"name":"server_error","message":"boom"}`))
+	})
+
+	if _, err := client.Emails.Get("em_1"); err == nil {
+		t.Fatal("expected an error on 500")
+	}
+	if got := calls.Load(); got != 1 {
+		t.Errorf("server calls = %d, want 1 (500 is not retryable)", got)
 	}
 }
 

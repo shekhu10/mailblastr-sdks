@@ -3,7 +3,9 @@
 
 use std::fmt;
 use std::sync::Arc;
+use std::time::{Duration, SystemTime};
 
+use reqwest::header::HeaderMap;
 use reqwest::{Method, RequestBuilder};
 use serde::de::DeserializeOwned;
 
@@ -12,6 +14,20 @@ use crate::types::{Error, PaginationParams, Result};
 
 /// The production MailBlastr API host.
 pub const DEFAULT_BASE_URL: &str = "https://api.mailblastr.com";
+
+/// Default per-request timeout, in seconds. Overridable via
+/// [`MailblastrBuilder::timeout`]; `0` / [`MailblastrBuilder::no_timeout`]
+/// disables it.
+pub const DEFAULT_TIMEOUT_SECS: u64 = 30;
+
+/// Default number of automatic retries (up to `1 + max_retries` total
+/// attempts). Overridable via [`MailblastrBuilder::max_retries`]; `0` disables
+/// retrying.
+pub const DEFAULT_MAX_RETRIES: u32 = 2;
+
+/// Upper bound (seconds) on any single backoff wait, whether it comes from a
+/// `Retry-After` header or exponential backoff.
+const MAX_BACKOFF_SECS: f64 = 30.0;
 
 /// This crate's version (kept in sync with `Cargo.toml`).
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -24,6 +40,8 @@ pub(crate) struct Config {
     api_key: String,
     base_url: String,
     client: reqwest::Client,
+    /// Max automatic retries on 429/503 (see [`Config::execute`]).
+    max_retries: u32,
 }
 
 impl fmt::Debug for Config {
@@ -44,12 +62,53 @@ impl Config {
             .header(reqwest::header::USER_AGENT, USER_AGENT)
     }
 
+    /// The single request chokepoint: send `req`, and on HTTP `429`/`503`
+    /// retry up to `max_retries` times, honoring `Retry-After` (else
+    /// exponential backoff). Both the JSON ([`Config::send`]) and raw
+    /// ([`Config::send_raw`]) paths funnel through here, so both inherit the
+    /// configured timeout (carried by the [`reqwest::Client`]) and retry
+    /// policy. Returns the final response status and fully-read body.
+    ///
+    /// Only `429` and `503` are retried — never other `5xx`, network errors,
+    /// or timeouts — because those are the only statuses the server
+    /// guarantees were not applied, so a retry cannot duplicate a
+    /// non-idempotent side effect (e.g. sending an email twice).
+    async fn execute(&self, req: RequestBuilder) -> Result<(reqwest::StatusCode, Vec<u8>)> {
+        // Buffer the request so it can be rebuilt per attempt. `try_clone`
+        // yields a fresh builder for the in-memory bodies this SDK sends
+        // (`.json(..)`); a non-cloneable streaming body returns `None`, in
+        // which case we make a single attempt and cannot retry.
+        let mut next = Some(req);
+        let mut attempt: u32 = 0;
+        loop {
+            let current = next
+                .take()
+                .expect("request builder is present at the start of each attempt");
+            // Pre-clone for a possible retry before `send` consumes `current`.
+            let spare = current.try_clone();
+
+            let resp = current.send().await?;
+            let status = resp.status();
+            let code = status.as_u16();
+            let retryable = code == 429 || code == 503;
+
+            if !retryable || attempt >= self.max_retries || spare.is_none() {
+                let bytes = resp.bytes().await?.to_vec();
+                return Ok((status, bytes));
+            }
+
+            let wait =
+                parse_retry_after(resp.headers()).unwrap_or_else(|| backoff_delay(attempt));
+            tokio::time::sleep(wait).await;
+            next = spare; // guaranteed `Some` here (checked above)
+            attempt += 1;
+        }
+    }
+
     /// Execute a request and decode the JSON response; non-2xx statuses are
     /// mapped to [`Error::Api`] parsed from the standard error body.
     pub(crate) async fn send<T: DeserializeOwned>(&self, req: RequestBuilder) -> Result<T> {
-        let resp = req.send().await?;
-        let status = resp.status();
-        let bytes = resp.bytes().await?;
+        let (status, bytes) = self.execute(req).await?;
         if !status.is_success() {
             return Err(api_error(status.as_u16(), &bytes));
         }
@@ -60,14 +119,47 @@ impl Config {
     /// attachment / RFC822 downloads). Errors are still JSON and are mapped
     /// like [`Config::send`].
     pub(crate) async fn send_raw(&self, req: RequestBuilder) -> Result<Vec<u8>> {
-        let resp = req.send().await?;
-        let status = resp.status();
-        let bytes = resp.bytes().await?;
+        let (status, bytes) = self.execute(req).await?;
         if !status.is_success() {
             return Err(api_error(status.as_u16(), &bytes));
         }
-        Ok(bytes.to_vec())
+        Ok(bytes)
     }
+}
+
+/// Parse a `Retry-After` header into a wait duration, capped at
+/// [`MAX_BACKOFF_SECS`]. Accepts an integer/decimal number of seconds
+/// (negative treated as `0`) or an HTTP-date; returns `None` when the header
+/// is absent or unparseable.
+fn parse_retry_after(headers: &HeaderMap) -> Option<Duration> {
+    let raw = headers
+        .get(reqwest::header::RETRY_AFTER)?
+        .to_str()
+        .ok()?
+        .trim();
+
+    // Numeric seconds (integer or decimal).
+    if let Ok(secs) = raw.parse::<f64>() {
+        if secs.is_finite() {
+            return Some(Duration::from_secs_f64(secs.clamp(0.0, MAX_BACKOFF_SECS)));
+        }
+    }
+
+    // HTTP-date: wait until that instant (never negative, capped).
+    if let Ok(when) = httpdate::parse_http_date(raw) {
+        let wait = when
+            .duration_since(SystemTime::now())
+            .unwrap_or(Duration::ZERO);
+        return Some(wait.min(Duration::from_secs_f64(MAX_BACKOFF_SECS)));
+    }
+
+    None
+}
+
+/// Exponential backoff for retry `attempt` (0-based): `min(30s, 0.5s * 2^attempt)`.
+fn backoff_delay(attempt: u32) -> Duration {
+    let secs = (0.5 * 2f64.powi(attempt as i32)).min(MAX_BACKOFF_SECS);
+    Duration::from_secs_f64(secs)
 }
 
 /// Parse the standard `{ statusCode, name, message }` error body, falling
@@ -143,31 +235,128 @@ pub struct Mailblastr {
 }
 
 impl Mailblastr {
-    /// Create a client against the production API (`https://api.mailblastr.com`).
+    /// Create a client against the production API (`https://api.mailblastr.com`)
+    /// with the default 30s timeout and up to 2 retries.
     pub fn new(api_key: impl Into<String>) -> Self {
-        Self::with_base_url(api_key, DEFAULT_BASE_URL)
+        Self::builder(api_key).build()
     }
 
     /// Point the client at a different host (a proxy, a staging environment,
-    /// or a local test stub). A trailing `/` on `base_url` is trimmed.
+    /// or a local test stub). A trailing `/` on `base_url` is trimmed. Keeps
+    /// the default timeout and retry policy.
     pub fn with_base_url(api_key: impl Into<String>, base_url: impl Into<String>) -> Self {
-        Self::with_client(api_key, base_url, reqwest::Client::new())
+        Self::builder(api_key).base_url(base_url).build()
     }
 
     /// Full control: bring your own [`reqwest::Client`] (timeouts, proxies,
-    /// connection pools).
+    /// connection pools). The supplied client's own timeout applies; the
+    /// builder's `timeout` is not imposed on a user-supplied client. The
+    /// default retry policy still applies — use [`Mailblastr::builder`] to
+    /// change it.
     pub fn with_client(
         api_key: impl Into<String>,
         base_url: impl Into<String>,
         client: reqwest::Client,
     ) -> Self {
-        let base = base_url.into();
-        let config = Arc::new(Config {
-            api_key: api_key.into(),
-            base_url: base.trim_end_matches('/').to_owned(),
-            client,
-        });
+        Self::builder(api_key)
+            .base_url(base_url)
+            .client(client)
+            .build()
+    }
+
+    /// Start a [`MailblastrBuilder`] to configure the base URL, request
+    /// timeout, retry count, or an entirely custom [`reqwest::Client`].
+    pub fn builder(api_key: impl Into<String>) -> MailblastrBuilder {
+        MailblastrBuilder::new(api_key)
+    }
+}
+
+/// Builder for a [`Mailblastr`] client. Configures the base URL, the
+/// per-request timeout (default 30s), the automatic-retry count (default 2),
+/// and optionally a bring-your-own [`reqwest::Client`].
+pub struct MailblastrBuilder {
+    api_key: String,
+    base_url: String,
+    timeout: Option<Duration>,
+    max_retries: u32,
+    client: Option<reqwest::Client>,
+}
+
+impl fmt::Debug for MailblastrBuilder {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("MailblastrBuilder")
+            .field("api_key", &"mb_***redacted***")
+            .field("base_url", &self.base_url)
+            .field("timeout", &self.timeout)
+            .field("max_retries", &self.max_retries)
+            .field("client", &self.client.is_some())
+            .finish()
+    }
+}
+
+impl MailblastrBuilder {
+    fn new(api_key: impl Into<String>) -> Self {
         Self {
+            api_key: api_key.into(),
+            base_url: DEFAULT_BASE_URL.to_owned(),
+            timeout: Some(Duration::from_secs(DEFAULT_TIMEOUT_SECS)),
+            max_retries: DEFAULT_MAX_RETRIES,
+            client: None,
+        }
+    }
+
+    /// Override the API host. A trailing `/` is trimmed at build time.
+    pub fn base_url(mut self, base_url: impl Into<String>) -> Self {
+        self.base_url = base_url.into();
+        self
+    }
+
+    /// Set the per-request timeout applied to every call (JSON and raw). A
+    /// zero duration disables it (equivalent to [`Self::no_timeout`]). Ignored
+    /// when a client is supplied via [`Self::client`].
+    pub fn timeout(mut self, timeout: Duration) -> Self {
+        self.timeout = if timeout.is_zero() { None } else { Some(timeout) };
+        self
+    }
+
+    /// Disable the request timeout entirely.
+    pub fn no_timeout(mut self) -> Self {
+        self.timeout = None;
+        self
+    }
+
+    /// Set the maximum number of automatic retries on HTTP `429`/`503`
+    /// (`0` disables retrying; total attempts are `1 + max_retries`).
+    pub fn max_retries(mut self, max_retries: u32) -> Self {
+        self.max_retries = max_retries;
+        self
+    }
+
+    /// Escape hatch: use a fully custom [`reqwest::Client`]. Its own timeout,
+    /// proxy, and pool settings apply as-is; the builder's [`Self::timeout`]
+    /// is not imposed on it.
+    pub fn client(mut self, client: reqwest::Client) -> Self {
+        self.client = Some(client);
+        self
+    }
+
+    /// Build the [`Mailblastr`] client.
+    pub fn build(self) -> Mailblastr {
+        let client = self.client.unwrap_or_else(|| {
+            let mut builder = reqwest::Client::builder();
+            if let Some(timeout) = self.timeout {
+                builder = builder.timeout(timeout);
+            }
+            builder.build().expect("failed to build reqwest client")
+        });
+
+        let config = Arc::new(Config {
+            api_key: self.api_key,
+            base_url: self.base_url.trim_end_matches('/').to_owned(),
+            client,
+            max_retries: self.max_retries,
+        });
+        Mailblastr {
             emails: EmailsSvc::new(Arc::clone(&config)),
             batch: BatchSvc::new(Arc::clone(&config)),
             domains: DomainsSvc::new(Arc::clone(&config)),
@@ -229,5 +418,44 @@ mod tests {
             }
             other => panic!("expected Api error, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn backoff_is_exponential_and_capped_at_30s() {
+        assert_eq!(backoff_delay(0), Duration::from_millis(500));
+        assert_eq!(backoff_delay(1), Duration::from_secs(1));
+        assert_eq!(backoff_delay(2), Duration::from_secs(2));
+        assert_eq!(backoff_delay(3), Duration::from_secs(4));
+        // 0.5 * 2^20 far exceeds the cap → clamped to 30s.
+        assert_eq!(backoff_delay(20), Duration::from_secs(30));
+    }
+
+    #[test]
+    fn retry_after_parses_seconds_and_dates_with_cap() {
+        use reqwest::header::{HeaderMap, HeaderValue, RETRY_AFTER};
+
+        let parse = |v: &str| {
+            let mut h = HeaderMap::new();
+            h.insert(RETRY_AFTER, HeaderValue::from_str(v).unwrap());
+            parse_retry_after(&h)
+        };
+
+        // Integer / decimal seconds.
+        assert_eq!(parse("5"), Some(Duration::from_secs(5)));
+        assert_eq!(parse("0.5"), Some(Duration::from_millis(500)));
+        // Negative is treated as 0; oversized is capped at 30s.
+        assert_eq!(parse("-3"), Some(Duration::ZERO));
+        assert_eq!(parse("120"), Some(Duration::from_secs(30)));
+        // Unparseable / absent → None (falls back to exponential backoff).
+        assert_eq!(parse("soon"), None);
+        assert_eq!(parse_retry_after(&HeaderMap::new()), None);
+
+        // HTTP-date in the past → no wait.
+        let past = httpdate::fmt_http_date(std::time::UNIX_EPOCH + Duration::from_secs(1));
+        assert_eq!(parse(&past), Some(Duration::ZERO));
+
+        // HTTP-date far in the future → capped at 30s.
+        let future = httpdate::fmt_http_date(SystemTime::now() + Duration::from_secs(600));
+        assert_eq!(parse(&future), Some(Duration::from_secs(30)));
     }
 }

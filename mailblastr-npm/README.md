@@ -53,8 +53,16 @@ await mb.emails.send({
 ```ts
 const mb = new MailBlastr('mb_xxxxxxxxx', {
   baseUrl: 'https://api.mailblastr.com', // override your API host
+  timeoutMs: 30000,  // per-request timeout (default 30s; 0 disables)
+  maxRetries: 2,     // auto-retry 429/503 responses (default 2; 0 disables)
 });
 ```
+
+Requests time out after 30 seconds by default. A `429` (rate limited) or `503`
+(service unavailable) response is retried up to `maxRetries` times, honoring the
+`Retry-After` header (otherwise exponential backoff). Only those two statuses are
+retried — never other errors, network failures, or timeouts — so a non-idempotent
+request (like sending an email) is never duplicated by a retry.
 
 ## Resources
 

@@ -1,6 +1,8 @@
 """Internal HTTP layer for the MailBlastr SDK. Stdlib only (urllib + json)."""
 
+import email.utils
 import json
+import time
 import urllib.error
 import urllib.request
 from urllib.parse import quote, urlencode
@@ -12,6 +14,15 @@ DEFAULT_BASE_URL = "https://api.mailblastr.com"
 # Keep in sync with pyproject.toml "version".
 VERSION = "0.1.0"
 USER_AGENT = f"mailblastr-python/{VERSION}"
+
+# Defaults for the timeout + retry policy. Override per client via the
+# module-level `mailblastr.timeout` (seconds) and `mailblastr.max_retries`.
+DEFAULT_TIMEOUT = 30.0  # seconds
+DEFAULT_MAX_RETRIES = 2
+# Only 429 (rate limited) and 503 (unavailable) are retried: the server
+# guarantees neither was applied, so a retry can't duplicate a side-effect
+# (e.g. a double send). Honors Retry-After.
+_RETRYABLE_STATUS = (429, 503)
 
 
 def path_escape(value):
@@ -54,7 +65,27 @@ def _config():
             'mailblastr.api_key must be set, e.g. mailblastr.api_key = "mb_xxxxxxxxx"',
         )
     base_url = (getattr(mailblastr, "base_url", None) or DEFAULT_BASE_URL).rstrip("/")
-    return api_key, base_url
+    timeout = getattr(mailblastr, "timeout", None)
+    timeout = DEFAULT_TIMEOUT if timeout is None else float(timeout)
+    max_retries = getattr(mailblastr, "max_retries", None)
+    max_retries = DEFAULT_MAX_RETRIES if max_retries is None else max(0, int(max_retries))
+    return api_key, base_url, timeout, max_retries
+
+
+def _retry_after_seconds(header):
+    """Parse a Retry-After header (delta-seconds or HTTP-date) → seconds, capped
+    at 30s. Returns None when absent/unparseable."""
+    if not header:
+        return None
+    try:
+        return min(max(0.0, float(header)), 30.0)
+    except (TypeError, ValueError):
+        pass
+    parsed = email.utils.parsedate_to_datetime(header)
+    if parsed is not None:
+        delta = parsed.timestamp() - time.time()
+        return min(max(0.0, delta), 30.0)
+    return None
 
 
 def _headers(api_key, json_body, options):
@@ -87,12 +118,12 @@ def _error_from(status, raw):
 def request(method, path, body=None, options=None):
     """Make a JSON API request. Returns the parsed JSON body (``None`` when the
     response is empty). Raises :class:`MailblastrError` on any non-2xx status."""
-    api_key, base_url = _config()
+    api_key, base_url, timeout, max_retries = _config()
     data = None if body is None else json.dumps(body).encode("utf-8")
     req = urllib.request.Request(
         base_url + path, data=data, headers=_headers(api_key, True, options), method=method
     )
-    raw = _send(req)
+    raw = _send(req, timeout, max_retries)
     if not raw:
         return None
     try:
@@ -105,18 +136,27 @@ def request_raw(method, path, options=None):
     """Make a request to an endpoint that streams raw binary bytes (attachment /
     raw MIME downloads). Returns ``bytes``. Raises :class:`MailblastrError` on
     any non-2xx status (the error body is JSON even on binary routes)."""
-    api_key, base_url = _config()
+    api_key, base_url, timeout, max_retries = _config()
     req = urllib.request.Request(
         base_url + path, data=None, headers=_headers(api_key, False, options), method=method
     )
-    return _send(req)
+    return _send(req, timeout, max_retries)
 
 
-def _send(req):
-    try:
-        with urllib.request.urlopen(req) as res:
-            return res.read()
-    except urllib.error.HTTPError as err:
-        raise _error_from(err.code, err.read()) from None
-    except urllib.error.URLError as err:
-        raise MailblastrError(0, "network_error", str(getattr(err, "reason", err))) from None
+def _send(req, timeout, max_retries):
+    """Send with a socket timeout, retrying only 429/503 (Retry-After aware)."""
+    attempt = 0
+    while True:
+        try:
+            with urllib.request.urlopen(req, timeout=timeout) as res:
+                return res.read()
+        except urllib.error.HTTPError as err:
+            if err.code in _RETRYABLE_STATUS and attempt < max_retries:
+                retry_after = _retry_after_seconds(err.headers.get("Retry-After") if err.headers else None)
+                time.sleep(retry_after if retry_after is not None else min(30.0, 0.5 * (2 ** attempt)))
+                attempt += 1
+                continue
+            raise _error_from(err.code, err.read()) from None
+        except urllib.error.URLError as err:
+            # Includes socket.timeout (raised as URLError.reason on timeout).
+            raise MailblastrError(0, "network_error", str(getattr(err, "reason", err))) from None

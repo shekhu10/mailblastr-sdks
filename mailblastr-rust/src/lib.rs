@@ -37,6 +37,9 @@ mod client;
 pub mod services;
 pub mod types;
 
-pub use client::{Mailblastr, DEFAULT_BASE_URL, USER_AGENT, VERSION};
+pub use client::{
+    Mailblastr, MailblastrBuilder, DEFAULT_BASE_URL, DEFAULT_MAX_RETRIES, DEFAULT_TIMEOUT_SECS,
+    USER_AGENT, VERSION,
+};
 pub use services::*;
 pub use types::*;

@@ -21,9 +21,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"net/url"
 	"strconv"
+	"strings"
+	"time"
 )
 
 const (
@@ -33,6 +36,15 @@ const (
 	DefaultBaseURL = "https://api.mailblastr.com"
 
 	defaultUserAgent = "mailblastr-go/" + Version
+
+	// DefaultTimeout is the per-request timeout applied to every HTTP call.
+	DefaultTimeout = 30 * time.Second
+	// DefaultMaxRetries is how many times a retryable (429/503) response is
+	// retried, i.e. up to DefaultMaxRetries+1 total attempts.
+	DefaultMaxRetries = 2
+
+	// maxBackoff caps how long the client will wait between retries.
+	maxBackoff = 30 * time.Second
 )
 
 // MailblastrError is the error type returned for any non-2xx API response.
@@ -136,10 +148,22 @@ type Client struct {
 
 	// BaseURL is the API host (default DefaultBaseURL). No trailing slash.
 	BaseURL string
-	// HTTPClient is the underlying *http.Client (default http.DefaultClient).
+	// HTTPClient is the underlying *http.Client. NewClient gives the client its
+	// own instance (not http.DefaultClient) so tuning it never affects other
+	// callers.
 	HTTPClient *http.Client
 	// UserAgent is sent with every request.
 	UserAgent string
+
+	// Timeout bounds every HTTP request (JSON and raw/binary paths alike),
+	// applied per attempt via a request context. Default DefaultTimeout (30s).
+	// A value of 0 disables the timeout.
+	Timeout time.Duration
+	// MaxRetries is how many times a 429 or 503 response is retried before the
+	// error is returned. Default DefaultMaxRetries (2); 0 disables retries.
+	// Only 429/503 are retried — never other 5xx, network errors, or timeouts,
+	// so a non-idempotent write is never silently duplicated.
+	MaxRetries int
 
 	Emails            *EmailsService
 	Batch             *BatchService
@@ -165,8 +189,10 @@ func NewClient(apiKey string) *Client {
 	c := &Client{
 		apiKey:     apiKey,
 		BaseURL:    DefaultBaseURL,
-		HTTPClient: http.DefaultClient,
+		HTTPClient: &http.Client{Timeout: DefaultTimeout},
 		UserAgent:  defaultUserAgent,
+		Timeout:    DefaultTimeout,
+		MaxRetries: DefaultMaxRetries,
 	}
 	c.Emails = &EmailsService{client: c, Receiving: &ReceivingService{client: c}}
 	c.Batch = &BatchService{client: c}
@@ -187,18 +213,23 @@ func NewClient(apiKey string) *Client {
 	return c
 }
 
-func (c *Client) newRequest(ctx context.Context, method, path string, body any, opts *RequestOptions) (*http.Request, error) {
+// newRequest builds the request and returns the marshaled body bytes alongside
+// it so the do-request chokepoint can re-create the body reader on each retry
+// (a request body is consumed once per send).
+func (c *Client) newRequest(ctx context.Context, method, path string, body any, opts *RequestOptions) (*http.Request, []byte, error) {
+	var bodyBytes []byte
 	var reader io.Reader
 	if body != nil {
 		b, err := json.Marshal(body)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
+		bodyBytes = b
 		reader = bytes.NewReader(b)
 	}
 	req, err := http.NewRequestWithContext(ctx, method, c.BaseURL+path, reader)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	req.Header.Set("Authorization", "Bearer "+c.apiKey)
 	req.Header.Set("User-Agent", c.UserAgent)
@@ -208,7 +239,7 @@ func (c *Client) newRequest(ctx context.Context, method, path string, body any, 
 	if opts != nil && opts.IdempotencyKey != "" {
 		req.Header.Set("Idempotency-Key", opts.IdempotencyKey)
 	}
-	return req, nil
+	return req, bodyBytes, nil
 }
 
 func (c *Client) httpClient() *http.Client {
@@ -239,20 +270,105 @@ func parseAPIError(status int, body []byte) *MailblastrError {
 	return apiErr
 }
 
-// do executes the request; on 2xx it unmarshals the JSON body into v (when v
-// is non-nil), on non-2xx it returns a *MailblastrError.
-func (c *Client) do(req *http.Request, v any) error {
-	resp, err := c.httpClient().Do(req)
+// maxRetries returns the configured retry budget, clamping negatives to 0.
+func (c *Client) maxRetries() int {
+	if c.MaxRetries < 0 {
+		return 0
+	}
+	return c.MaxRetries
+}
+
+// isRetryable reports whether a status code may be safely retried. Only 429 and
+// 503 qualify: the server guarantees the request was not applied, so retrying
+// cannot duplicate a non-idempotent side effect (e.g. sending an email twice).
+func isRetryable(status int) bool {
+	return status == http.StatusTooManyRequests || status == http.StatusServiceUnavailable
+}
+
+// capDelay clamps a wait duration to [0, maxBackoff].
+func capDelay(d time.Duration) time.Duration {
+	if d < 0 {
+		return 0
+	}
+	if d > maxBackoff {
+		return maxBackoff
+	}
+	return d
+}
+
+// backoffDelay computes how long to wait before the next retry. It honors the
+// Retry-After header — delta-seconds (integer or decimal) or an HTTP-date —
+// capping at maxBackoff and treating negatives as 0. When Retry-After is absent
+// or unparseable it falls back to exponential backoff min(30s, 0.5s*2^attempt),
+// where attempt is 0 for the first retry.
+func backoffDelay(retryAfter string, attempt int) time.Duration {
+	if h := strings.TrimSpace(retryAfter); h != "" {
+		if secs, err := strconv.ParseFloat(h, 64); err == nil {
+			return capDelay(time.Duration(secs * float64(time.Second)))
+		}
+		if t, err := http.ParseTime(h); err == nil {
+			return capDelay(time.Until(t))
+		}
+	}
+	return capDelay(time.Duration(float64(500*time.Millisecond) * math.Pow(2, float64(attempt))))
+}
+
+// doRequest is the single HTTP chokepoint shared by the JSON (do) and raw
+// (requestRaw) paths, so both get the per-request timeout and the 429/503
+// retry loop. reqBody is the buffered request body (nil for bodyless calls);
+// it is re-wrapped in a fresh reader before each attempt because a body is
+// consumed once per send.
+func (c *Client) doRequest(req *http.Request, reqBody []byte) (int, []byte, error) {
+	maxRetries := c.maxRetries()
+	for attempt := 0; ; attempt++ {
+		if reqBody != nil {
+			req.Body = io.NopCloser(bytes.NewReader(reqBody))
+			req.ContentLength = int64(len(reqBody))
+		}
+
+		status, header, body, err := c.attempt(req)
+		if err != nil {
+			// Network errors and timeouts are not retried.
+			return 0, nil, err
+		}
+		if !isRetryable(status) || attempt >= maxRetries {
+			return status, body, nil
+		}
+		time.Sleep(backoffDelay(header.Get("Retry-After"), attempt))
+	}
+}
+
+// attempt performs a single HTTP round-trip with the per-request timeout applied
+// as a context deadline, fully reading (and closing) the response body before it
+// returns so the deadline covers the body read too.
+func (c *Client) attempt(req *http.Request) (int, http.Header, []byte, error) {
+	ctx := req.Context()
+	if c.Timeout > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, c.Timeout)
+		defer cancel()
+	}
+	resp, err := c.httpClient().Do(req.WithContext(ctx))
 	if err != nil {
-		return err
+		return 0, nil, nil, err
 	}
 	defer resp.Body.Close()
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
+		return 0, nil, nil, err
+	}
+	return resp.StatusCode, resp.Header, body, nil
+}
+
+// do executes the request through the chokepoint; on 2xx it unmarshals the JSON
+// body into v (when v is non-nil), on non-2xx it returns a *MailblastrError.
+func (c *Client) do(req *http.Request, reqBody []byte, v any) error {
+	status, body, err := c.doRequest(req, reqBody)
+	if err != nil {
 		return err
 	}
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return parseAPIError(resp.StatusCode, body)
+	if status < 200 || status >= 300 {
+		return parseAPIError(status, body)
 	}
 	if v == nil || len(body) == 0 {
 		return nil
@@ -262,12 +378,12 @@ func (c *Client) do(req *http.Request, v any) error {
 
 // request is the shared typed JSON call helper used by every service.
 func request[T any](ctx context.Context, c *Client, method, path string, body any, opts *RequestOptions) (*T, error) {
-	req, err := c.newRequest(ctx, method, path, body, opts)
+	req, reqBody, err := c.newRequest(ctx, method, path, body, opts)
 	if err != nil {
 		return nil, err
 	}
 	out := new(T)
-	if err := c.do(req, out); err != nil {
+	if err := c.do(req, reqBody, out); err != nil {
 		return nil, err
 	}
 	return out, nil
@@ -277,21 +393,16 @@ func request[T any](ctx context.Context, c *Client, method, path string, body an
 // (e.g. a received-email attachment download). On error the JSON error body
 // is parsed like request.
 func requestRaw(ctx context.Context, c *Client, method, path string) ([]byte, error) {
-	req, err := c.newRequest(ctx, method, path, nil, nil)
+	req, _, err := c.newRequest(ctx, method, path, nil, nil)
 	if err != nil {
 		return nil, err
 	}
-	resp, err := c.httpClient().Do(req)
+	status, body, err := c.doRequest(req, nil)
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, err
-	}
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, parseAPIError(resp.StatusCode, body)
+	if status < 200 || status >= 300 {
+		return nil, parseAPIError(status, body)
 	}
 	return body, nil
 }

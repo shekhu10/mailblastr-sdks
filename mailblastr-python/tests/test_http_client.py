@@ -36,7 +36,7 @@ class TestHttpClient(unittest.TestCase):
     def test_request_sends_bearer_auth_json_and_user_agent(self):
         captured = {}
 
-        def fake_urlopen(req):
+        def fake_urlopen(req, **kwargs):
             captured["req"] = req
             return FakeResponse(b'{"id": "em_1"}')
 
@@ -64,7 +64,7 @@ class TestHttpClient(unittest.TestCase):
     def test_get_request_has_no_body(self):
         captured = {}
 
-        def fake_urlopen(req):
+        def fake_urlopen(req, **kwargs):
             captured["req"] = req
             return FakeResponse(b'{"object":"list","data":[]}')
 
@@ -77,7 +77,7 @@ class TestHttpClient(unittest.TestCase):
         mailblastr.base_url = "http://localhost:3000/"  # trailing slash stripped
         captured = {}
 
-        def fake_urlopen(req):
+        def fake_urlopen(req, **kwargs):
             captured["req"] = req
             return FakeResponse(b"{}")
 
@@ -128,7 +128,7 @@ class TestHttpClient(unittest.TestCase):
     def test_request_raw_returns_bytes_and_has_no_content_type(self):
         captured = {}
 
-        def fake_urlopen(req):
+        def fake_urlopen(req, **kwargs):
             captured["req"] = req
             return FakeResponse(b"\x89PNG...")
 
@@ -141,6 +141,73 @@ class TestHttpClient(unittest.TestCase):
     def test_empty_response_returns_none(self):
         with mock.patch("urllib.request.urlopen", return_value=FakeResponse(b"")):
             self.assertIsNone(http_client.request("DELETE", "/webhooks/wh_1"))
+
+    def test_passes_timeout_to_urlopen(self):
+        captured = {}
+
+        def fake_urlopen(req, **kwargs):
+            captured.update(kwargs)
+            return FakeResponse(b'{"ok": true}')
+
+        mailblastr.timeout = 12.5
+        self.addCleanup(setattr, mailblastr, "timeout", None)
+        with mock.patch("urllib.request.urlopen", side_effect=fake_urlopen):
+            http_client.request("GET", "/emails")
+        self.assertEqual(captured.get("timeout"), 12.5)
+
+    def test_retries_429_then_succeeds(self):
+        mailblastr.max_retries = 2
+        self.addCleanup(setattr, mailblastr, "max_retries", None)
+        calls = {"n": 0}
+
+        def fake_urlopen(req, **kwargs):
+            calls["n"] += 1
+            if calls["n"] == 1:
+                raise urllib.error.HTTPError(
+                    "https://api.mailblastr.com/emails", 429, "Too Many",
+                    {"Retry-After": "0"}, io.BytesIO(b""),
+                )
+            return FakeResponse(b'{"id": "em_ok"}')
+
+        with mock.patch("urllib.request.urlopen", side_effect=fake_urlopen):
+            with mock.patch("time.sleep"):  # don't actually wait
+                result = http_client.request("POST", "/emails", {"x": 1})
+        self.assertEqual(calls["n"], 2)
+        self.assertEqual(result, {"id": "em_ok"})
+
+    def test_gives_up_after_max_retries_on_persistent_503(self):
+        mailblastr.max_retries = 2
+        self.addCleanup(setattr, mailblastr, "max_retries", None)
+        calls = {"n": 0}
+
+        def fake_urlopen(req, **kwargs):
+            calls["n"] += 1
+            raise urllib.error.HTTPError(
+                "https://api.mailblastr.com/emails", 503, "Unavailable", {}, io.BytesIO(b""),
+            )
+
+        with mock.patch("urllib.request.urlopen", side_effect=fake_urlopen):
+            with mock.patch("time.sleep"):
+                with self.assertRaises(MailblastrError) as ctx:
+                    http_client.request("GET", "/emails")
+        self.assertEqual(calls["n"], 3)  # initial + 2 retries
+        self.assertEqual(ctx.exception.status_code, 503)
+
+    def test_422_is_not_retried(self):
+        mailblastr.max_retries = 2
+        self.addCleanup(setattr, mailblastr, "max_retries", None)
+        calls = {"n": 0}
+
+        def fake_urlopen(req, **kwargs):
+            calls["n"] += 1
+            raise urllib.error.HTTPError(
+                "https://api.mailblastr.com/emails", 422, "Bad", {}, io.BytesIO(b""),
+            )
+
+        with mock.patch("urllib.request.urlopen", side_effect=fake_urlopen):
+            with self.assertRaises(MailblastrError):
+                http_client.request("POST", "/emails", {"x": 1})
+        self.assertEqual(calls["n"], 1)
 
 
 if __name__ == "__main__":

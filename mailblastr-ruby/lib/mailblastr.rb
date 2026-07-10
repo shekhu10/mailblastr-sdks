@@ -33,6 +33,14 @@ require "mailblastr/polls"
 module Mailblastr
   DEFAULT_BASE_URL = "https://api.mailblastr.com"
 
+  # Per-request network timeout, in seconds, applied to both the connect
+  # (open) and read phases. 0 or nil means "no timeout".
+  DEFAULT_TIMEOUT = 30
+
+  # How many times a retryable response (HTTP 429/503) is retried before
+  # giving up. 0 disables retries (a single attempt).
+  DEFAULT_MAX_RETRIES = 2
+
   class << self
     # Your API key, e.g. "mb_xxxxxxxxx". Required before any call.
     attr_accessor :api_key
@@ -40,8 +48,22 @@ module Mailblastr
     # Override the API host (defaults to https://api.mailblastr.com).
     attr_writer :base_url
 
+    # Per-request timeout in seconds (default 30). Set 0 (or nil) for none.
+    attr_writer :timeout
+
+    # Max automatic retries on HTTP 429/503 (default 2, i.e. up to 3 tries).
+    attr_writer :max_retries
+
     def base_url
       @base_url || DEFAULT_BASE_URL
+    end
+
+    def timeout
+      @timeout.nil? ? DEFAULT_TIMEOUT : @timeout
+    end
+
+    def max_retries
+      @max_retries.nil? ? DEFAULT_MAX_RETRIES : @max_retries
     end
 
     #   Mailblastr.configure do |config|

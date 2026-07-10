@@ -77,7 +77,15 @@ mailblastr.Batch.send([
 
 ```python
 mailblastr.base_url = "https://api.mailblastr.com"   # override your API host
+mailblastr.timeout = 30            # per-request timeout in seconds (default 30)
+mailblastr.max_retries = 2         # auto-retry 429/503 responses (default 2; 0 disables)
 ```
+
+Requests time out after 30 seconds by default. A `429` (rate limited) or `503`
+(service unavailable) response is retried up to `max_retries` times, honoring the
+`Retry-After` header (otherwise exponential backoff). Only those two statuses are
+retried — never other errors, network failures, or timeouts — so a non-idempotent
+request (like sending an email) is never duplicated by a retry.
 
 ## The domain-first model
 

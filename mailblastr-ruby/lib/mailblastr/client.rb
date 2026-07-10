@@ -4,6 +4,7 @@ require "net/http"
 require "json"
 require "uri"
 require "cgi"
+require "time"
 
 module Mailblastr
   # Internal HTTP layer. Every resource funnels through Client.request;
@@ -17,6 +18,14 @@ module Mailblastr
       patch: Net::HTTP::Patch,
       delete: Net::HTTP::Delete
     }.freeze
+
+    # Only 429 and 503 are safe to retry automatically: the server guarantees
+    # it did NOT apply the request, so a retry cannot duplicate a non-idempotent
+    # side effect (e.g. sending an email twice). Everything else propagates.
+    RETRYABLE_STATUSES = [429, 503].freeze
+
+    # Upper bound (seconds) on any single backoff wait.
+    MAX_BACKOFF_SECONDS = 30.0
 
     # Perform an API request and return the parsed JSON body (a Hash/Array),
     # or the raw body String when `raw: true` (binary download endpoints).
@@ -36,7 +45,67 @@ module Mailblastr
       end
 
       req = build_request(verb, uri, body, options, key)
-      handle_response(deliver(req, uri), raw: raw)
+      handle_response(deliver_with_retries(req, uri), raw: raw)
+    end
+
+    # The single request chokepoint: both the JSON and raw/binary paths funnel
+    # through here, so both get the timeout (applied inside deliver) and the
+    # bounded 429/503 retry loop. Non-retryable responses return immediately;
+    # network/timeout errors are NOT caught here (they propagate as before).
+    def deliver_with_retries(req, uri)
+      max = Mailblastr.max_retries.to_i
+      attempt = 0
+      loop do
+        resp = deliver(req, uri)
+        code = resp.code.to_i
+        return resp unless RETRYABLE_STATUSES.include?(code) && attempt < max
+
+        wait = retry_after_seconds(response_header(resp, "Retry-After"))
+        wait ||= [MAX_BACKOFF_SECONDS, 0.5 * (2**attempt)].min
+        backoff_sleep(wait) if wait.positive?
+        attempt += 1
+      end
+    end
+
+    # Wraps Kernel#sleep so tests can stub out the wait. Extracted so the
+    # retry loop stays deterministic under test.
+    def backoff_sleep(seconds)
+      sleep(seconds)
+    end
+
+    # Read a response header without assuming the response object shape
+    # (Net::HTTPResponse supports #[]; test doubles may not).
+    def response_header(resp, name)
+      return nil unless resp.respond_to?(:[])
+
+      resp[name]
+    rescue StandardError
+      nil
+    end
+
+    # Parse a Retry-After header into a number of seconds to wait:
+    # a numeric delta-seconds value, or an HTTP-date to wait until.
+    # Negative is treated as 0, and the wait is capped at 30 seconds.
+    # Returns nil when the header is absent or unparseable.
+    def retry_after_seconds(value)
+      return nil if value.nil?
+
+      str = value.to_s.strip
+      return nil if str.empty?
+
+      seconds =
+        begin
+          Float(str)
+        rescue ArgumentError, TypeError
+          begin
+            Time.httpdate(str) - Time.now
+          rescue ArgumentError
+            return nil
+          end
+        end
+
+      seconds = 0.0 if seconds.negative?
+      [seconds.to_f, MAX_BACKOFF_SECONDS].min
     end
 
     def build_request(verb, uri, body, options, key)
@@ -55,8 +124,15 @@ module Mailblastr
     end
 
     # The single seam that touches the network (stub me in tests).
+    # Applies the configured open/read timeout; 0 or nil means "no timeout".
     def deliver(req, uri)
-      Net::HTTP.start(uri.host, uri.port, use_ssl: uri.scheme == "https") do |http|
+      opts = { use_ssl: uri.scheme == "https" }
+      t = Mailblastr.timeout
+      if !t.nil? && t.to_f > 0
+        opts[:open_timeout] = t
+        opts[:read_timeout] = t
+      end
+      Net::HTTP.start(uri.host, uri.port, **opts) do |http|
         http.request(req)
       end
     end

@@ -22,10 +22,15 @@ public partial class MailblastrClient : IMailblastr, IDisposable
 
     private const string UserAgent = "mailblastr-dotnet/" + Version;
 
+    /// <summary>Retryable HTTP statuses: only 429 and 503 are guaranteed not applied.</summary>
+    private static readonly TimeSpan MaxRetryWait = TimeSpan.FromSeconds(30);
+
     private readonly HttpClient _http;
     private readonly bool _ownsHttpClient;
     private readonly string _apiKey;
     private readonly string _baseUrl;
+    private readonly TimeSpan _timeout;
+    private readonly int _maxRetries;
 
     /// <summary>Create a client with the default configuration.</summary>
     /// <param name="apiKey">Your MailBlastr API key, e.g. <c>mb_xxxxxxxxx</c>.</param>
@@ -44,6 +49,8 @@ public partial class MailblastrClient : IMailblastr, IDisposable
         _apiKey = apiKey;
         options ??= new MailblastrClientOptions();
         _baseUrl = string.IsNullOrEmpty(options.BaseUrl) ? DefaultBaseUrl : options.BaseUrl.TrimEnd('/');
+        _timeout = options.Timeout < TimeSpan.Zero ? TimeSpan.Zero : options.Timeout;
+        _maxRetries = options.MaxRetries < 0 ? 0 : options.MaxRetries;
 
         if (options.HttpClient is not null)
         {
@@ -54,6 +61,9 @@ public partial class MailblastrClient : IMailblastr, IDisposable
         {
             _http = options.HttpMessageHandler is null ? new HttpClient() : new HttpClient(options.HttpMessageHandler);
             _ownsHttpClient = true;
+            // We own this client, so let our per-attempt CancellationTokenSource
+            // fully govern the timeout instead of HttpClient's default 100s.
+            _http.Timeout = Timeout.InfiniteTimeSpan;
         }
     }
 
@@ -87,63 +97,130 @@ public partial class MailblastrClient : IMailblastr, IDisposable
 
     private async Task<T> RequestAsync<T>(HttpMethod method, string path, object? body, string? idempotencyKey, CancellationToken cancellationToken)
     {
-        using var request = BuildRequest(method, path, body, idempotencyKey);
-        HttpResponseMessage response;
+        using var response = await SendWithRetriesAsync(
+            () => BuildRequest(method, path, body, idempotencyKey), cancellationToken).ConfigureAwait(false);
+
+        var text = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
+        if (!response.IsSuccessStatusCode)
+        {
+            throw CreateError((int)response.StatusCode, text);
+        }
         try
         {
-            response = await _http.SendAsync(request, cancellationToken).ConfigureAwait(false);
+            var value = JsonSerializer.Deserialize<T>(text, MailblastrJson.Options);
+            if (value is null)
+            {
+                throw new MailblastrException((int)response.StatusCode, "invalid_response", "The API returned an empty response body.");
+            }
+            return value;
         }
-        catch (HttpRequestException ex)
+        catch (JsonException ex)
         {
-            throw new MailblastrException(0, "network_error", ex.Message, ex);
-        }
-
-        using (response)
-        {
-            var text = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
-            if (!response.IsSuccessStatusCode)
-            {
-                throw CreateError((int)response.StatusCode, text);
-            }
-            try
-            {
-                var value = JsonSerializer.Deserialize<T>(text, MailblastrJson.Options);
-                if (value is null)
-                {
-                    throw new MailblastrException((int)response.StatusCode, "invalid_response", "The API returned an empty response body.");
-                }
-                return value;
-            }
-            catch (JsonException ex)
-            {
-                throw new MailblastrException((int)response.StatusCode, "invalid_response", $"Failed to parse the API response as JSON: {ex.Message}", ex);
-            }
+            throw new MailblastrException((int)response.StatusCode, "invalid_response", $"Failed to parse the API response as JSON: {ex.Message}", ex);
         }
     }
 
     /// <summary>For endpoints that stream raw binary bytes (attachment / raw MIME downloads).</summary>
     private async Task<byte[]> RequestBytesAsync(HttpMethod method, string path, CancellationToken cancellationToken)
     {
-        using var request = BuildRequest(method, path, body: null, idempotencyKey: null);
-        HttpResponseMessage response;
-        try
+        using var response = await SendWithRetriesAsync(
+            () => BuildRequest(method, path, body: null, idempotencyKey: null), cancellationToken).ConfigureAwait(false);
+
+        if (!response.IsSuccessStatusCode)
         {
-            response = await _http.SendAsync(request, cancellationToken).ConfigureAwait(false);
+            var text = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
+            throw CreateError((int)response.StatusCode, text);
         }
-        catch (HttpRequestException ex)
+        return await response.Content.ReadAsByteArrayAsync(cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// The single send chokepoint shared by the JSON and raw-bytes paths. Applies
+    /// the per-attempt timeout and the bounded 429/503 retry loop. The factory is
+    /// invoked once per attempt because an <see cref="HttpRequestMessage"/> can only
+    /// be sent a single time.
+    /// </summary>
+    private async Task<HttpResponseMessage> SendWithRetriesAsync(Func<HttpRequestMessage> requestFactory, CancellationToken cancellationToken)
+    {
+        for (int attempt = 0; ; attempt++)
         {
-            throw new MailblastrException(0, "network_error", ex.Message, ex);
+            HttpResponseMessage response;
+            using (var request = requestFactory())
+            using (var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken))
+            {
+                if (_timeout > TimeSpan.Zero)
+                {
+                    timeoutCts.CancelAfter(_timeout);
+                }
+                try
+                {
+                    response = await _http.SendAsync(request, timeoutCts.Token).ConfigureAwait(false);
+                }
+                catch (OperationCanceledException) when (timeoutCts.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
+                {
+                    // The per-attempt timeout fired (not the caller's cancellation). Not retried.
+                    throw new MailblastrException(0, "timeout",
+                        $"The request timed out after {_timeout.TotalSeconds.ToString(CultureInfo.InvariantCulture)}s.");
+                }
+                catch (HttpRequestException ex)
+                {
+                    // Network/connection failures are not retried (may have applied).
+                    throw new MailblastrException(0, "network_error", ex.Message, ex);
+                }
+            }
+
+            var status = (int)response.StatusCode;
+            if ((status != 429 && status != 503) || attempt >= _maxRetries)
+            {
+                return response;
+            }
+
+            var wait = RetryAfterDelay(response.Headers.RetryAfter) ?? ExponentialBackoff(attempt);
+            response.Dispose();
+            if (wait > TimeSpan.Zero)
+            {
+                await Task.Delay(wait, cancellationToken).ConfigureAwait(false);
+            }
+        }
+    }
+
+    /// <summary>
+    /// Parse the <c>Retry-After</c> header into a wait duration: a delta-seconds
+    /// value, or an HTTP-date to wait until. Negative is clamped to zero, the wait
+    /// is capped at 30s, and an absent/unparseable header yields <c>null</c>.
+    /// </summary>
+    private static TimeSpan? RetryAfterDelay(System.Net.Http.Headers.RetryConditionHeaderValue? retryAfter)
+    {
+        if (retryAfter is null)
+        {
+            return null;
         }
 
-        using (response)
+        TimeSpan wait;
+        if (retryAfter.Delta is TimeSpan delta)
         {
-            if (!response.IsSuccessStatusCode)
-            {
-                var text = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
-                throw CreateError((int)response.StatusCode, text);
-            }
-            return await response.Content.ReadAsByteArrayAsync(cancellationToken).ConfigureAwait(false);
+            wait = delta;
         }
+        else if (retryAfter.Date is DateTimeOffset date)
+        {
+            wait = date - DateTimeOffset.UtcNow;
+        }
+        else
+        {
+            return null;
+        }
+
+        if (wait < TimeSpan.Zero) wait = TimeSpan.Zero;
+        if (wait > MaxRetryWait) wait = MaxRetryWait;
+        return wait;
+    }
+
+    /// <summary>Exponential backoff = min(30s, 0.5s * 2^attempt), attempt 0 = first retry.</summary>
+    private static TimeSpan ExponentialBackoff(int attempt)
+    {
+        var seconds = 0.5 * Math.Pow(2, attempt);
+        if (seconds > MaxRetryWait.TotalSeconds) seconds = MaxRetryWait.TotalSeconds;
+        return TimeSpan.FromSeconds(seconds);
     }
 
     private static MailblastrException CreateError(int httpStatus, string body)
