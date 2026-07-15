@@ -151,12 +151,23 @@ def _send(req, timeout, max_retries):
             with urllib.request.urlopen(req, timeout=timeout) as res:
                 return res.read()
         except urllib.error.HTTPError as err:
-            if err.code in _RETRYABLE_STATUS and attempt < max_retries:
-                retry_after = _retry_after_seconds(err.headers.get("Retry-After") if err.headers else None)
+            should_retry = err.code in _RETRYABLE_STATUS and attempt < max_retries
+            retry_after = None
+            raw = b""
+            try:
+                if should_retry:
+                    retry_after = _retry_after_seconds(err.headers.get("Retry-After") if err.headers else None)
+                else:
+                    raw = err.read()
+            finally:
+                # HTTPError is also a file-like response. Leaving it open leaks
+                # its socket/file descriptor on every 4xx/5xx and each retry.
+                err.close()
+            if should_retry:
                 time.sleep(retry_after if retry_after is not None else min(30.0, 0.5 * (2 ** attempt)))
                 attempt += 1
                 continue
-            raise _error_from(err.code, err.read()) from None
+            raise _error_from(err.code, raw) from None
         except urllib.error.URLError as err:
             # Includes socket.timeout (raised as URLError.reason on timeout).
             raise MailblastrError(0, "network_error", str(getattr(err, "reason", err))) from None

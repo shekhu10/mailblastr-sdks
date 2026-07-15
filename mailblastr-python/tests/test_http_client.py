@@ -89,8 +89,9 @@ class TestHttpClient(unittest.TestCase):
         body = json.dumps(
             {"statusCode": 422, "name": "validation_error", "message": "domain is required"}
         ).encode("utf-8")
+        response_body = io.BytesIO(body)
         err = urllib.error.HTTPError(
-            "https://api.mailblastr.com/segments", 422, "Unprocessable", {}, io.BytesIO(body)
+            "https://api.mailblastr.com/segments", 422, "Unprocessable", {}, response_body
         )
         with mock.patch("urllib.request.urlopen", side_effect=err):
             with self.assertRaises(MailblastrError) as ctx:
@@ -100,6 +101,7 @@ class TestHttpClient(unittest.TestCase):
         self.assertEqual(e.statusCode, 422)
         self.assertEqual(e.name, "validation_error")
         self.assertEqual(e.message, "domain is required")
+        self.assertTrue(response_body.closed)
 
     def test_non_json_error_body_falls_back_to_status(self):
         err = urllib.error.HTTPError(
@@ -179,11 +181,14 @@ class TestHttpClient(unittest.TestCase):
         mailblastr.max_retries = 2
         self.addCleanup(setattr, mailblastr, "max_retries", None)
         calls = {"n": 0}
+        error_bodies = []
 
         def fake_urlopen(req, **kwargs):
             calls["n"] += 1
+            body = io.BytesIO(b"")
+            error_bodies.append(body)
             raise urllib.error.HTTPError(
-                "https://api.mailblastr.com/emails", 503, "Unavailable", {}, io.BytesIO(b""),
+                "https://api.mailblastr.com/emails", 503, "Unavailable", {}, body,
             )
 
         with mock.patch("urllib.request.urlopen", side_effect=fake_urlopen):
@@ -192,6 +197,7 @@ class TestHttpClient(unittest.TestCase):
                     http_client.request("GET", "/emails")
         self.assertEqual(calls["n"], 3)  # initial + 2 retries
         self.assertEqual(ctx.exception.status_code, 503)
+        self.assertTrue(all(body.closed for body in error_bodies))
 
     def test_422_is_not_retried(self):
         mailblastr.max_retries = 2
