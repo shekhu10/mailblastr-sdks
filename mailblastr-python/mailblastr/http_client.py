@@ -9,7 +9,7 @@ from urllib.parse import quote, urlencode
 
 from .exceptions import MailblastrError
 
-DEFAULT_BASE_URL = "https://api.mailblastr.com"
+DEFAULT_BASE_URL = "https://www.mailblastr.com/api"
 
 # Keep in sync with pyproject.toml "version".
 VERSION = "0.1.0"

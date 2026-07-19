@@ -1,6 +1,6 @@
 import type { MailBlastrError, Result, RequestOptions } from './types';
 
-export const DEFAULT_BASE_URL = 'https://api.mailblastr.com';
+export const DEFAULT_BASE_URL = 'https://www.mailblastr.com/api';
 
 /** Keep in sync with package.json "version". */
 export const VERSION = '1.0.0';

@@ -65,7 +65,7 @@ await mailblastr.EmailSendAsync(new EmailMessage
 ```csharp
 IMailblastr mailblastr = MailblastrClient.Create("mb_xxxxxxxxx", new MailblastrClientOptions
 {
-    BaseUrl = "https://api.mailblastr.com",   // override your API host
+    BaseUrl = "https://www.mailblastr.com/api",   // override your API host
     HttpClient = myPooledHttpClient,          // e.g. from IHttpClientFactory
 });
 ```

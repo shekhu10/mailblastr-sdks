@@ -31,7 +31,7 @@ require "mailblastr/polls"
 #   })
 #   sent["id"] # => "..."
 module Mailblastr
-  DEFAULT_BASE_URL = "https://api.mailblastr.com"
+  DEFAULT_BASE_URL = "https://www.mailblastr.com/api"
 
   # Per-request network timeout, in seconds, applied to both the connect
   # (open) and read phases. 0 or nil means "no timeout".
@@ -45,7 +45,7 @@ module Mailblastr
     # Your API key, e.g. "mb_xxxxxxxxx". Required before any call.
     attr_accessor :api_key
 
-    # Override the API host (defaults to https://api.mailblastr.com).
+    # Override the API host (defaults to https://www.mailblastr.com/api).
     attr_writer :base_url
 
     # Per-request timeout in seconds (default 30). Set 0 (or nil) for none.

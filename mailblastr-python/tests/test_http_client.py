@@ -51,7 +51,7 @@ class TestHttpClient(unittest.TestCase):
         req = captured["req"]
         self.assertEqual(result, {"id": "em_1"})
         self.assertEqual(req.get_method(), "POST")
-        self.assertEqual(req.full_url, "https://api.mailblastr.com/emails")
+        self.assertEqual(req.full_url, "https://www.mailblastr.com/api/emails")
         self.assertEqual(req.get_header("Authorization"), "Bearer mb_test_key")
         self.assertEqual(req.get_header("Content-type"), "application/json")
         self.assertEqual(req.get_header("User-agent"), http_client.USER_AGENT)
@@ -91,7 +91,7 @@ class TestHttpClient(unittest.TestCase):
         ).encode("utf-8")
         response_body = io.BytesIO(body)
         err = urllib.error.HTTPError(
-            "https://api.mailblastr.com/segments", 422, "Unprocessable", {}, response_body
+            "https://www.mailblastr.com/api/segments", 422, "Unprocessable", {}, response_body
         )
         with mock.patch("urllib.request.urlopen", side_effect=err):
             with self.assertRaises(MailblastrError) as ctx:
@@ -105,7 +105,7 @@ class TestHttpClient(unittest.TestCase):
 
     def test_non_json_error_body_falls_back_to_status(self):
         err = urllib.error.HTTPError(
-            "https://api.mailblastr.com/emails", 500, "Boom", {}, io.BytesIO(b"<html>oops</html>")
+            "https://www.mailblastr.com/api/emails", 500, "Boom", {}, io.BytesIO(b"<html>oops</html>")
         )
         with mock.patch("urllib.request.urlopen", side_effect=err):
             with self.assertRaises(MailblastrError) as ctx:
@@ -166,7 +166,7 @@ class TestHttpClient(unittest.TestCase):
             calls["n"] += 1
             if calls["n"] == 1:
                 raise urllib.error.HTTPError(
-                    "https://api.mailblastr.com/emails", 429, "Too Many",
+                    "https://www.mailblastr.com/api/emails", 429, "Too Many",
                     {"Retry-After": "0"}, io.BytesIO(b""),
                 )
             return FakeResponse(b'{"id": "em_ok"}')
@@ -188,7 +188,7 @@ class TestHttpClient(unittest.TestCase):
             body = io.BytesIO(b"")
             error_bodies.append(body)
             raise urllib.error.HTTPError(
-                "https://api.mailblastr.com/emails", 503, "Unavailable", {}, body,
+                "https://www.mailblastr.com/api/emails", 503, "Unavailable", {}, body,
             )
 
         with mock.patch("urllib.request.urlopen", side_effect=fake_urlopen):
@@ -207,7 +207,7 @@ class TestHttpClient(unittest.TestCase):
         def fake_urlopen(req, **kwargs):
             calls["n"] += 1
             raise urllib.error.HTTPError(
-                "https://api.mailblastr.com/emails", 422, "Bad", {}, io.BytesIO(b""),
+                "https://www.mailblastr.com/api/emails", 422, "Bad", {}, io.BytesIO(b""),
             )
 
         with mock.patch("urllib.request.urlopen", side_effect=fake_urlopen):

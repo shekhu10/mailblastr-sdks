@@ -67,7 +67,7 @@ let email = CreateEmailBaseOptions::new(from, to, "Your invoice")
 
 ```rust
 // Override the API host (proxy, staging, tests):
-let mailblastr = Mailblastr::with_base_url("mb_xxxxxxxxx", "https://api.mailblastr.com");
+let mailblastr = Mailblastr::with_base_url("mb_xxxxxxxxx", "https://www.mailblastr.com/api");
 
 // Bring your own reqwest client (timeouts, proxies, pools):
 let client = reqwest::Client::builder()

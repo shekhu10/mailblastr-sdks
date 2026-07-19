@@ -63,7 +63,7 @@ if err != nil {
 
 ```go
 client := mailblastr.NewClient("mb_xxxxxxxxx")
-client.BaseURL = "https://api.mailblastr.com" // override your API host
+client.BaseURL = "https://www.mailblastr.com/api" // override your API host
 client.HTTPClient = &http.Client{Timeout: 30 * time.Second}
 ```
 

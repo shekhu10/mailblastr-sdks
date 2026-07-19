@@ -15,7 +15,7 @@ namespace Mailblastr;
 public partial class MailblastrClient : IMailblastr, IDisposable
 {
     /// <summary>Default API host.</summary>
-    public const string DefaultBaseUrl = "https://api.mailblastr.com";
+    public const string DefaultBaseUrl = "https://www.mailblastr.com/api";
 
     /// <summary>SDK version. Keep in sync with the csproj &lt;Version&gt;.</summary>
     public const string Version = "0.1.0";

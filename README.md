@@ -14,4 +14,4 @@ Official client libraries and tools for the [MailBlastr](https://www.mailblastr.
 | [`mailblastr-dotnet`](./mailblastr-dotnet) | .NET 8 | `dotnet add package Mailblastr` | 21 tests |
 | [`mailblastr-cli`](./mailblastr-cli) | Node CLI | `npm i -g mailblastr-cli` | 42 tests |
 
-Every package: base URL `https://api.mailblastr.com`, Bearer `mb_…` keys, the API's `{statusCode, name, message}` error shape, percent-encoded path ids, and `domain`-scoped contacts/segments/topics/campaigns per the [docs](https://www.mailblastr.com/docs/api/introduction).
+Every package: base URL `https://www.mailblastr.com/api`, Bearer `mb_…` keys, the API's `{statusCode, name, message}` error shape, percent-encoded path ids, and `domain`-scoped contacts/segments/topics/campaigns per the [docs](https://www.mailblastr.com/docs/api/introduction).

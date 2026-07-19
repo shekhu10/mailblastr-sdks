@@ -76,7 +76,7 @@ mailblastr.Batch.send([
 ### Options
 
 ```python
-mailblastr.base_url = "https://api.mailblastr.com"   # override your API host
+mailblastr.base_url = "https://www.mailblastr.com/api"   # override your API host
 mailblastr.timeout = 30            # per-request timeout in seconds (default 30)
 mailblastr.max_retries = 2         # auto-retry 429/503 responses (default 2; 0 disables)
 ```

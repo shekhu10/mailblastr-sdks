@@ -66,7 +66,7 @@ $mailblastr->emails->send([
 
 ```php
 $mailblastr = Mailblastr::client('mb_xxxxxxxxx', [
-    'baseUrl' => 'https://api.mailblastr.com', // override your API host
+    'baseUrl' => 'https://www.mailblastr.com/api', // override your API host
 ]);
 ```
 

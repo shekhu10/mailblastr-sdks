@@ -23,7 +23,7 @@ use Mailblastr\Transport\TransportInterface;
  */
 class Client
 {
-    public const DEFAULT_BASE_URL = 'https://api.mailblastr.com';
+    public const DEFAULT_BASE_URL = 'https://www.mailblastr.com/api';
     public const USER_AGENT = 'mailblastr-php/' . Mailblastr::VERSION;
 
     private string $apiKey;

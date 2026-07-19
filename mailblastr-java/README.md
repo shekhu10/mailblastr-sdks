@@ -91,9 +91,9 @@ SendEmailRequest request = SendEmailRequest.builder()
 
 ```java
 // Override the API host:
-Mailblastr mailblastr = new Mailblastr("mb_xxxxxxxxx", "https://api.mailblastr.com");
+Mailblastr mailblastr = new Mailblastr("mb_xxxxxxxxx", "https://www.mailblastr.com/api");
 // Inject a custom transport (e.g. for tests):
-Mailblastr mailblastr = new Mailblastr("mb_xxxxxxxxx", "https://api.mailblastr.com", myTransport);
+Mailblastr mailblastr = new Mailblastr("mb_xxxxxxxxx", "https://www.mailblastr.com/api", myTransport);
 ```
 
 ## Resources

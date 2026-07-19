@@ -3,7 +3,7 @@ namespace Mailblastr;
 /// <summary>Optional configuration for <see cref="MailblastrClient"/>.</summary>
 public class MailblastrClientOptions
 {
-    /// <summary>API host override. Defaults to <c>https://api.mailblastr.com</c>.</summary>
+    /// <summary>API host override. Defaults to <c>https://www.mailblastr.com/api</c>.</summary>
     public string BaseUrl { get; set; } = MailblastrClient.DefaultBaseUrl;
 
     /// <summary>

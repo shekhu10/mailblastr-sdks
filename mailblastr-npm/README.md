@@ -52,7 +52,7 @@ await mb.emails.send({
 
 ```ts
 const mb = new MailBlastr('mb_xxxxxxxxx', {
-  baseUrl: 'https://api.mailblastr.com', // override your API host
+  baseUrl: 'https://www.mailblastr.com/api', // override your API host
   timeoutMs: 30000,  // per-request timeout (default 30s; 0 disables)
   maxRetries: 2,     // auto-retry 429/503 responses (default 2; 0 disables)
 });

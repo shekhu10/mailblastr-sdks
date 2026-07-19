@@ -13,7 +13,7 @@ use crate::services::*;
 use crate::types::{Error, PaginationParams, Result};
 
 /// The production MailBlastr API host.
-pub const DEFAULT_BASE_URL: &str = "https://api.mailblastr.com";
+pub const DEFAULT_BASE_URL: &str = "https://www.mailblastr.com/api";
 
 /// Default per-request timeout, in seconds. Overridable via
 /// [`MailblastrBuilder::timeout`]; `0` / [`MailblastrBuilder::no_timeout`]
@@ -235,7 +235,7 @@ pub struct Mailblastr {
 }
 
 impl Mailblastr {
-    /// Create a client against the production API (`https://api.mailblastr.com`)
+    /// Create a client against the production API (`https://www.mailblastr.com/api`)
     /// with the default 30s timeout and up to 2 retries.
     pub fn new(api_key: impl Into<String>) -> Self {
         Self::builder(api_key).build()

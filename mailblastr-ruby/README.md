@@ -26,7 +26,7 @@ Mailblastr.api_key = "mb_xxxxxxxxx"
 # or
 Mailblastr.configure do |config|
   config.api_key = ENV["MAILBLASTR_API_KEY"]
-  # config.base_url = "https://api.mailblastr.com" # override your API host
+  # config.base_url = "https://www.mailblastr.com/api" # override your API host
 end
 ```
 

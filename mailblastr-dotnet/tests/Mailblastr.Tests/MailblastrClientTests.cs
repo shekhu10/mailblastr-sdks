@@ -36,7 +36,7 @@ public class MailblastrClientTests
 
         Assert.Equal("em_123", created.Id);
         Assert.Equal(HttpMethod.Post, stub.LastRequest.Method);
-        Assert.Equal("https://api.mailblastr.com/emails", stub.LastRequest.RequestUri!.AbsoluteUri);
+        Assert.Equal("https://www.mailblastr.com/api/emails", stub.LastRequest.RequestUri!.AbsoluteUri);
         Assert.Equal("Bearer", stub.LastRequest.Headers.Authorization!.Scheme);
         Assert.Equal("mb_test_key", stub.LastRequest.Headers.Authorization!.Parameter);
         Assert.Contains("order-1", stub.LastRequest.Headers.GetValues("Idempotency-Key"));
@@ -61,7 +61,7 @@ public class MailblastrClientTests
             new EmailMessage { From = "a@b.com", To = "z@y.com", Subject = "2" },
         });
 
-        Assert.Equal("https://api.mailblastr.com/emails/batch", stub.LastRequest.RequestUri!.AbsoluteUri);
+        Assert.Equal("https://www.mailblastr.com/api/emails/batch", stub.LastRequest.RequestUri!.AbsoluteUri);
         Assert.Equal(2, results.Count);
         Assert.Equal("em_2", results[1].Id);
         // The batch body is a bare JSON array.
@@ -107,7 +107,7 @@ public class MailblastrClientTests
         });
 
         Assert.Equal("con_1", created.Id);
-        Assert.Equal("https://api.mailblastr.com/contacts", stub.LastRequest.RequestUri!.AbsoluteUri);
+        Assert.Equal("https://www.mailblastr.com/api/contacts", stub.LastRequest.RequestUri!.AbsoluteUri);
 
         using var body = JsonDocument.Parse(stub.LastRequestBody!);
         Assert.Equal("acme.com", body.RootElement.GetProperty("domain").GetString());
@@ -125,7 +125,7 @@ public class MailblastrClientTests
             Email = "user@example.com",
         });
 
-        Assert.Equal("https://api.mailblastr.com/audiences/aud_9/contacts", stub.LastRequest.RequestUri!.AbsoluteUri);
+        Assert.Equal("https://www.mailblastr.com/api/audiences/aud_9/contacts", stub.LastRequest.RequestUri!.AbsoluteUri);
         using var body = JsonDocument.Parse(stub.LastRequestBody!);
         Assert.False(body.RootElement.TryGetProperty("domain", out _));
         Assert.False(body.RootElement.TryGetProperty("audience_id", out _));
@@ -139,7 +139,7 @@ public class MailblastrClientTests
         await client.ContactRetrieveAsync("user@example.com", domain: "acme.com");
 
         Assert.Equal(
-            "https://api.mailblastr.com/contacts/user%40example.com?domain=acme.com",
+            "https://www.mailblastr.com/api/contacts/user%40example.com?domain=acme.com",
             stub.LastRequest.RequestUri!.AbsoluteUri);
     }
 
@@ -151,7 +151,7 @@ public class MailblastrClientTests
         await client.SegmentListAsync("acme.com", new PaginationOptions { Limit = 5, After = "seg_1" });
 
         Assert.Equal(
-            "https://api.mailblastr.com/segments?domain=acme.com&limit=5&after=seg_1",
+            "https://www.mailblastr.com/api/segments?domain=acme.com&limit=5&after=seg_1",
             stub.LastRequest.RequestUri!.AbsoluteUri);
     }
 
@@ -162,7 +162,7 @@ public class MailblastrClientTests
 
         await client.EmailRetrieveAsync("../api-keys");
 
-        Assert.Equal("https://api.mailblastr.com/emails/..%2Fapi-keys", stub.LastRequest.RequestUri!.AbsoluteUri);
+        Assert.Equal("https://www.mailblastr.com/api/emails/..%2Fapi-keys", stub.LastRequest.RequestUri!.AbsoluteUri);
     }
 
     [Fact]
@@ -189,7 +189,7 @@ public class MailblastrClientTests
             Data = new Dictionary<string, object?> { ["plan"] = "pro" },
         });
 
-        Assert.Equal("https://api.mailblastr.com/events/send", stub.LastRequest.RequestUri!.AbsoluteUri);
+        Assert.Equal("https://www.mailblastr.com/api/events/send", stub.LastRequest.RequestUri!.AbsoluteUri);
         Assert.Equal(1, result.Enrolled);
         using var body = JsonDocument.Parse(stub.LastRequestBody!);
         Assert.Equal("acme.com", body.RootElement.GetProperty("domain").GetString());
@@ -204,7 +204,7 @@ public class MailblastrClientTests
         await client.LogListAsync(new LogListOptions { Limit = 100, Method = "POST", Status = 429 });
 
         Assert.Equal(
-            "https://api.mailblastr.com/logs?limit=100&method=POST&status=429",
+            "https://www.mailblastr.com/api/logs?limit=100&method=POST&status=429",
             stub.LastRequest.RequestUri!.AbsoluteUri);
     }
 
