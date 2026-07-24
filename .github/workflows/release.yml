@@ -1,0 +1,168 @@
+# Release: publish every SDK to its registry when a version tag is pushed
+# (`git tag v1.0.0 && git push origin v1.0.0`) or on manual dispatch.
+#
+# Jobs are independent — a registry whose credentials aren't configured yet
+# simply fails alone; add its secret and re-run just that job. Credentials:
+#   npm       secrets.NPM_TOKEN            (granular automation token, publish
+#             scope; the cli job waits for the sdk publish)
+#   PyPI      NO secret — configure GitHub Trusted Publishing on pypi.org
+#             (pending publisher: repo shekhu10/mailblastr-sdks,
+#              workflow release.yml, environment blank)
+#   RubyGems  secrets.RUBYGEMS_API_KEY     (push scope; account has MFA)
+#   crates.io secrets.CARGO_REGISTRY_TOKEN (publish-new + publish-update)
+#   NuGet     secrets.NUGET_API_KEY        (push new packages + versions)
+#   Maven     secrets.CENTRAL_USERNAME / CENTRAL_PASSWORD (central.sonatype.com
+#             portal token) + GPG_PRIVATE_KEY / GPG_PASSPHRASE (armored key)
+#   Go        NO secret — the `go-tag` job pushes the mailblastr-go/vX.Y.Z
+#             sub-tag the Go module proxy needs (repo must be PUBLIC)
+#   Packagist NO secret — one-time: submit the repo on packagist.org and
+#             enable the GitHub auto-update hook; tags become versions
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  npm-sdk:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write # npm provenance attestation
+    defaults: { run: { working-directory: mailblastr-npm } }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: '20', registry-url: 'https://registry.npmjs.org' }
+      - run: npm install
+      - run: npm test
+      - run: npm publish --provenance --access public
+        env: { NODE_AUTH_TOKEN: '${{ secrets.NPM_TOKEN }}' }
+
+  npm-cli:
+    # Publishes after the SDK so `mailblastr@^1.0.0` is resolvable.
+    needs: npm-sdk
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    defaults: { run: { working-directory: mailblastr-cli } }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: '20', registry-url: 'https://registry.npmjs.org' }
+      - name: Wait for mailblastr on the registry
+        run: |
+          for i in $(seq 1 30); do
+            npm view mailblastr version >/dev/null 2>&1 && exit 0
+            sleep 10
+          done
+          echo "mailblastr not visible on npm after 5m" >&2; exit 1
+      - run: npm install
+      - run: npm test
+      - run: npm publish --provenance --access public
+        env: { NODE_AUTH_TOKEN: '${{ secrets.NPM_TOKEN }}' }
+
+  pypi:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write # PyPI Trusted Publishing (OIDC) — no token secret
+    defaults: { run: { working-directory: mailblastr-python } }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: '3.12' }
+      - run: python -m unittest discover -s tests -t .
+      - run: pipx run build
+      - uses: pypa/gh-action-pypi-publish@release/v1
+        with: { packages-dir: mailblastr-python/dist }
+
+  rubygems:
+    runs-on: ubuntu-latest
+    defaults: { run: { working-directory: mailblastr-ruby } }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ruby/setup-ruby@v1
+        with: { ruby-version: '3.3' }
+      - run: ruby -Ilib -Itest -e 'Dir["test/*_test.rb"].each { |f| require File.expand_path(f) }'
+      - run: gem build mailblastr.gemspec
+      - name: Push to RubyGems
+        run: |
+          mkdir -p ~/.gem
+          printf -- "---\n:rubygems_api_key: %s\n" "$GEM_HOST_API_KEY" > ~/.gem/credentials
+          chmod 0600 ~/.gem/credentials
+          gem push mailblastr-*.gem
+        env: { GEM_HOST_API_KEY: '${{ secrets.RUBYGEMS_API_KEY }}' }
+
+  crates:
+    runs-on: ubuntu-latest
+    defaults: { run: { working-directory: mailblastr-rust } }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo test
+      - run: cargo publish --no-verify
+        env: { CARGO_REGISTRY_TOKEN: '${{ secrets.CARGO_REGISTRY_TOKEN }}' }
+
+  nuget:
+    runs-on: ubuntu-latest
+    defaults: { run: { working-directory: mailblastr-dotnet } }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with: { dotnet-version: '8.0.x' }
+      - run: dotnet test tests/Mailblastr.Tests/Mailblastr.Tests.csproj
+      - run: dotnet pack src/Mailblastr/Mailblastr.csproj -c Release -o out
+      - run: dotnet nuget push "out/*.nupkg" --api-key "$NUGET_API_KEY" --source https://api.nuget.org/v3/index.json --skip-duplicate
+        env: { NUGET_API_KEY: '${{ secrets.NUGET_API_KEY }}' }
+
+  maven-central:
+    runs-on: ubuntu-latest
+    defaults: { run: { working-directory: mailblastr-java } }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: maven
+          server-id: central
+          server-username: CENTRAL_USERNAME
+          server-password: CENTRAL_PASSWORD
+          gpg-private-key: ${{ secrets.GPG_PRIVATE_KEY }}
+          gpg-passphrase: GPG_PASSPHRASE
+      - run: mvn -B -q compile test-compile
+      - run: java -cp target/classes:target/test-classes com.mailblastr.tests.AllTests
+      - run: mvn -B -P release deploy
+        env:
+          CENTRAL_USERNAME: ${{ secrets.CENTRAL_USERNAME }}
+          CENTRAL_PASSWORD: ${{ secrets.CENTRAL_PASSWORD }}
+          GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
+
+  go-tag:
+    # Go modules install straight from git: the proxy needs a
+    # `mailblastr-go/vX.Y.Z` tag for the subdirectory module. Derive it from
+    # the release tag and push it (idempotent if it already exists).
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Push subdirectory tag for the Go module
+        run: |
+          VERSION="${GITHUB_REF_NAME}"                # e.g. v1.0.0
+          TAG="mailblastr-go/${VERSION}"
+          if git rev-parse -q --verify "refs/tags/${TAG}" >/dev/null; then
+            echo "${TAG} already exists"; exit 0
+          fi
+          git tag "${TAG}" "${GITHUB_SHA}"
+          git push origin "${TAG}"
+      - name: Nudge the Go module proxy
+        run: |
+          curl -fsS "https://proxy.golang.org/github.com/shekhu10/mailblastr-sdks/mailblastr-go/@v/${GITHUB_REF_NAME}.info" || true

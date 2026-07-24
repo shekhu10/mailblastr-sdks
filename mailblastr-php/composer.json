@@ -1,7 +1,6 @@
 {
     "name": "mailblastr/mailblastr",
     "description": "Official MailBlastr PHP SDK — send transactional and marketing email from your own verified domain.",
-    "version": "0.1.0",
     "type": "library",
     "license": "MIT",
     "keywords": ["mailblastr", "email", "api", "sdk", "transactional", "marketing"],

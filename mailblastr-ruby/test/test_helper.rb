@@ -63,9 +63,15 @@ module ClientStubHelper
 
   # Assert the canonical trio on the most recent request: HTTP method,
   # request path (including query string), and the Bearer auth header.
+  # Tests speak in SDK-relative paths ("/webhooks"); the client prepends the
+  # base URL's own path (default https://www.mailblastr.com/api → "/api"),
+  # so strip that prefix before comparing — the suite stays base-URL agnostic.
   def assert_request(method, path_with_query)
     assert_equal method.to_s.upcase, last_request.method
-    assert_equal path_with_query, last_request.path
+    base_prefix = URI(Mailblastr.base_url || Mailblastr::DEFAULT_BASE_URL).path.chomp("/")
+    actual = last_request.path
+    actual = actual.delete_prefix(base_prefix) unless base_prefix.empty?
+    assert_equal path_with_query, actual
     assert_equal "Bearer #{TEST_API_KEY}", last_request["Authorization"]
     assert_equal "mailblastr-ruby/#{Mailblastr::VERSION}", last_request["User-Agent"]
   end

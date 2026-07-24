@@ -48,16 +48,26 @@ class FakeTransport implements TransportInterface
         return $this->requests[count($this->requests) - 1];
     }
 
-    /** The path portion (with query) of the most recent request URL. */
+    /**
+     * The path portion (with query) of the most recent request URL, RELATIVE
+     * to the client's base URL. Tests speak in SDK paths ("/contacts"); the
+     * default base https://www.mailblastr.com/api contributes an "/api"
+     * prefix on the wire, which is stripped here so the suite stays
+     * base-URL agnostic.
+     */
     public function lastPath(): string
     {
         $url = $this->last()['url'];
         $pos = strpos($url, '://');
-        if ($pos === false) {
-            return $url;
+        if ($pos !== false) {
+            $slash = strpos($url, '/', $pos + 3);
+            $url = $slash === false ? '' : substr($url, $slash);
         }
-        $slash = strpos($url, '/', $pos + 3);
-        return $slash === false ? '' : substr($url, $slash);
+        $basePath = rtrim((string) parse_url(\Mailblastr\Client::DEFAULT_BASE_URL, PHP_URL_PATH), '/');
+        if ($basePath !== '' && str_starts_with($url, $basePath)) {
+            $url = substr($url, strlen($basePath));
+        }
+        return $url;
     }
 
     /** The decoded JSON body of the most recent request (null when none). */

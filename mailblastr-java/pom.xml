@@ -6,7 +6,7 @@
 
   <groupId>com.mailblastr</groupId>
   <artifactId>mailblastr</artifactId>
-  <version>0.1.0</version>
+  <version>1.0.0</version>
   <packaging>jar</packaging>
 
   <name>mailblastr</name>
@@ -25,6 +25,22 @@
     <name>MailBlastr</name>
     <url>https://www.mailblastr.com</url>
   </organization>
+
+  <!-- Maven Central requires scm + developers metadata on every artifact. -->
+  <scm>
+    <url>https://github.com/shekhu10/mailblastr-sdks</url>
+    <connection>scm:git:https://github.com/shekhu10/mailblastr-sdks.git</connection>
+    <developerConnection>scm:git:git@github.com:shekhu10/mailblastr-sdks.git</developerConnection>
+    <tag>v1.0.0</tag>
+  </scm>
+  <developers>
+    <developer>
+      <name>MailBlastr</name>
+      <email>support@mailblastr.com</email>
+      <organization>MailBlastr</organization>
+      <organizationUrl>https://www.mailblastr.com</organizationUrl>
+    </developer>
+  </developers>
 
   <properties>
     <maven.compiler.release>11</maven.compiler.release>
@@ -51,6 +67,77 @@
           <skipTests>true</skipTests>
         </configuration>
       </plugin>
+      <!-- Central requires -sources and -javadoc jars on every release. -->
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-source-plugin</artifactId>
+        <version>3.3.1</version>
+        <executions>
+          <execution>
+            <id>attach-sources</id>
+            <goals><goal>jar-no-fork</goal></goals>
+          </execution>
+        </executions>
+      </plugin>
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-javadoc-plugin</artifactId>
+        <version>3.11.2</version>
+        <configuration>
+          <doclint>none</doclint>
+        </configuration>
+        <executions>
+          <execution>
+            <id>attach-javadocs</id>
+            <goals><goal>jar</goal></goals>
+          </execution>
+        </executions>
+      </plugin>
     </plugins>
   </build>
+
+  <!-- `mvn -P release deploy` publishes to Maven Central via the Central
+       Portal: GPG-signs every artifact and uploads through the
+       central-publishing plugin. Credentials come from ~/.m2/settings.xml or
+       CI env (server id `central` = a portal token from
+       https://central.sonatype.com/account). -->
+  <profiles>
+    <profile>
+      <id>release</id>
+      <build>
+        <plugins>
+          <plugin>
+            <groupId>org.apache.maven.plugins</groupId>
+            <artifactId>maven-gpg-plugin</artifactId>
+            <version>3.2.7</version>
+            <executions>
+              <execution>
+                <id>sign-artifacts</id>
+                <phase>verify</phase>
+                <goals><goal>sign</goal></goals>
+                <configuration>
+                  <!-- Loopback pinentry so CI (no tty) can use the passphrase. -->
+                  <gpgArguments>
+                    <arg>--pinentry-mode</arg>
+                    <arg>loopback</arg>
+                  </gpgArguments>
+                </configuration>
+              </execution>
+            </executions>
+          </plugin>
+          <plugin>
+            <groupId>org.sonatype.central</groupId>
+            <artifactId>central-publishing-maven-plugin</artifactId>
+            <version>0.9.0</version>
+            <extensions>true</extensions>
+            <configuration>
+              <publishingServerId>central</publishingServerId>
+              <autoPublish>true</autoPublish>
+              <waitUntil>published</waitUntil>
+            </configuration>
+          </plugin>
+        </plugins>
+      </build>
+    </profile>
+  </profiles>
 </project>

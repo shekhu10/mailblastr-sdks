@@ -20,7 +20,7 @@ namespace Mailblastr;
  */
 final class Mailblastr
 {
-    public const VERSION = '0.1.0';
+    public const VERSION = '1.0.0';
 
     /**
      * Create a MailBlastr API client.

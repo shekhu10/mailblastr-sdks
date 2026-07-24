@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "mailblastr"
-version = "0.1.0"
+version = "1.0.0"
 description = "Official MailBlastr Python SDK — send transactional and marketing email from your own verified domain."
 readme = "README.md"
 license = { text = "MIT" }
@@ -12,7 +12,7 @@ requires-python = ">=3.8"
 authors = [{ name = "MailBlastr" }]
 keywords = ["mailblastr", "email", "transactional", "marketing", "smtp"]
 classifiers = [
-  "Development Status :: 4 - Beta",
+  "Development Status :: 5 - Production/Stable",
   "Intended Audience :: Developers",
   "License :: OSI Approved :: MIT License",
   "Operating System :: OS Independent",
@@ -29,6 +29,7 @@ classifiers = [
 [project.urls]
 Homepage = "https://www.mailblastr.com"
 Documentation = "https://www.mailblastr.com/docs"
+Repository = "https://github.com/shekhu10/mailblastr-sdks"
 
 [tool.setuptools.packages.find]
 include = ["mailblastr*"]

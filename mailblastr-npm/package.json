@@ -16,10 +16,11 @@
   "homepage": "https://www.mailblastr.com",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/shekhu10/mailblastr-npm.git"
+    "url": "git+https://github.com/shekhu10/mailblastr-sdks.git",
+    "directory": "mailblastr-npm"
   },
   "bugs": {
-    "url": "https://github.com/shekhu10/mailblastr-npm/issues"
+    "url": "https://github.com/shekhu10/mailblastr-sdks/issues"
   },
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",

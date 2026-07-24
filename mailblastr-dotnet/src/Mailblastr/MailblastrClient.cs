@@ -18,7 +18,7 @@ public partial class MailblastrClient : IMailblastr, IDisposable
     public const string DefaultBaseUrl = "https://www.mailblastr.com/api";
 
     /// <summary>SDK version. Keep in sync with the csproj &lt;Version&gt;.</summary>
-    public const string Version = "0.1.0";
+    public const string Version = "1.0.0";
 
     private const string UserAgent = "mailblastr-dotnet/" + Version;
 

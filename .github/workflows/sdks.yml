@@ -27,13 +27,14 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with: { node-version: '20' }
-      # The CLI depends on the npm SDK via `file:../mailblastr-npm`, whose `main`
-      # is dist/. Build it first so the CLI can import it.
+      # The CLI depends on the published `mailblastr` package, but CI must test
+      # against THIS commit's SDK — build it and install it from the local
+      # folder (--no-save keeps package.json's ^1.0.0 range intact).
       - name: Build the npm SDK dependency
         run: npm install && npm run build
         working-directory: mailblastr-npm
-      - name: Install & test CLI
-        run: npm install && npm test
+      - name: Install & test CLI against the local SDK
+        run: npm install --no-save ../mailblastr-npm && npm test
         working-directory: mailblastr-cli
 
   python:
