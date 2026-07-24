@@ -10,7 +10,10 @@
 #              workflow release.yml, environment blank)
 #   RubyGems  secrets.RUBYGEMS_API_KEY     (push scope; account has MFA)
 #   crates.io secrets.CARGO_REGISTRY_TOKEN (publish-new + publish-update)
-#   NuGet     secrets.NUGET_API_KEY        (push new packages + versions)
+#   NuGet     NO secret — Trusted Publishing on nuget.org (repo
+#             shekhu10/mailblastr-sdks, workflow release.yml) + repo VARIABLE
+#             NUGET_USER = your nuget.org username (NuGet/login exchanges OIDC
+#             for a short-lived key)
 #   Maven     secrets.CENTRAL_USERNAME / CENTRAL_PASSWORD (central.sonatype.com
 #             portal token) + GPG_PRIVATE_KEY / GPG_PASSPHRASE (armored key)
 #   Go        NO secret — the `go-tag` job pushes the mailblastr-go/vX.Y.Z
@@ -114,6 +117,9 @@ jobs:
 
   nuget:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write # NuGet Trusted Publishing (OIDC)
     defaults: { run: { working-directory: mailblastr-dotnet } }
     steps:
       - uses: actions/checkout@v4
@@ -121,8 +127,15 @@ jobs:
         with: { dotnet-version: '8.0.x' }
       - run: dotnet test tests/Mailblastr.Tests/Mailblastr.Tests.csproj
       - run: dotnet pack src/Mailblastr/Mailblastr.csproj -c Release -o out
-      - run: dotnet nuget push "out/*.nupkg" --api-key "$NUGET_API_KEY" --source https://api.nuget.org/v3/index.json --skip-duplicate
-        env: { NUGET_API_KEY: '${{ secrets.NUGET_API_KEY }}' }
+      # Exchanges the GitHub OIDC token for a short-lived NuGet API key under
+      # the trusted-publishing policy owned by vars.NUGET_USER (repo variable =
+      # your nuget.org username).
+      - name: NuGet trusted-publishing login
+        id: nuget-login
+        uses: NuGet/login@v1
+        with:
+          user: ${{ vars.NUGET_USER }}
+      - run: dotnet nuget push "out/*.nupkg" --api-key "${{ steps.nuget-login.outputs.NUGET_API_KEY }}" --source https://api.nuget.org/v3/index.json --skip-duplicate
 
   maven-central:
     runs-on: ubuntu-latest
