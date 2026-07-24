@@ -15,8 +15,11 @@
 #             portal token) + GPG_PRIVATE_KEY / GPG_PASSPHRASE (armored key)
 #   Go        NO secret — the `go-tag` job pushes the mailblastr-go/vX.Y.Z
 #             sub-tag the Go module proxy needs (repo must be PUBLIC)
-#   Packagist NO secret — one-time: submit the repo on packagist.org and
-#             enable the GitHub auto-update hook; tags become versions
+#   Packagist secrets.REPO_SPLIT_TOKEN (classic PAT, repo scope) — Packagist
+#             cannot read a monorepo subdirectory, so the packagist-split job
+#             mirrors mailblastr-php/ to the read-only repo
+#             github.com/shekhu10/mailblastr-php (create it once, empty) and
+#             tags it; submit THAT repo on packagist.org (one time)
 name: Release
 
 on:
@@ -143,6 +146,27 @@ jobs:
           CENTRAL_USERNAME: ${{ secrets.CENTRAL_USERNAME }}
           CENTRAL_PASSWORD: ${{ secrets.CENTRAL_PASSWORD }}
           GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
+
+  packagist-split:
+    # Packagist requires composer.json at the REPO ROOT, so mirror the PHP
+    # package to the read-only split repo shekhu10/mailblastr-php and tag it
+    # with the release version. Packagist tracks the split repo.
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+      - name: Split mailblastr-php and push to the mirror
+        run: |
+          git config user.name "mailblastr-release-bot"
+          git config user.email "support@mailblastr.com"
+          SPLIT_SHA=$(git subtree split --prefix=mailblastr-php)
+          REMOTE="https://x-access-token:${REPO_SPLIT_TOKEN}@github.com/shekhu10/mailblastr-php.git"
+          git push "$REMOTE" "${SPLIT_SHA}:refs/heads/main" -f
+          git tag -f "${GITHUB_REF_NAME}" "${SPLIT_SHA}"
+          git push "$REMOTE" "refs/tags/${GITHUB_REF_NAME}" -f
+        env:
+          REPO_SPLIT_TOKEN: ${{ secrets.REPO_SPLIT_TOKEN }}
 
   go-tag:
     # Go modules install straight from git: the proxy needs a
