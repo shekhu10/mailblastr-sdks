@@ -16,7 +16,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
-        with: { node-version: '20' }
+        with: { node-version: '22' }
       - run: npm install
       - run: npm run build
       - run: npm test
@@ -26,7 +26,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
-        with: { node-version: '20' }
+        with: { node-version: '22' }
       # The CLI depends on the published `mailblastr` package, but CI must test
       # against THIS commit's SDK — build it and install it from the local
       # folder (--no-save keeps package.json's ^1.0.0 range intact).
