@@ -26,9 +26,13 @@ public class ApiKey
     [JsonPropertyName("permission")]
     public string Permission { get; set; } = null!;
 
-    /// <summary>Set when the key is scoped to a single sending domain.</summary>
+    /// <summary>Set when the key is scoped to exactly one sending domain (legacy).</summary>
     [JsonPropertyName("domain_id")]
     public string? DomainId { get; set; }
+
+    /// <summary>Domains the key is scoped to; null when unscoped.</summary>
+    [JsonPropertyName("domain_ids")]
+    public List<string>? DomainIds { get; set; }
 
     [JsonPropertyName("created_at")]
     public string CreatedAt { get; set; } = null!;
@@ -48,9 +52,16 @@ public class ApiKeyCreateOptions
     [JsonPropertyName("permission")]
     public string? Permission { get; set; }
 
-    /// <summary>Scope a <c>sending_access</c> key to one domain (ignored otherwise).</summary>
+    /// <summary>Scope a <c>sending_access</c> key to one domain (legacy; prefer <see cref="DomainIds"/>).</summary>
     [JsonPropertyName("domain_id")]
     public string? DomainId { get; set; }
+
+    /// <summary>
+    /// Scope the key to one or more domains (works with both permissions).
+    /// Mutually exclusive with <see cref="DomainId"/> — providing both is a 422.
+    /// </summary>
+    [JsonPropertyName("domain_ids")]
+    public List<string>? DomainIds { get; set; }
 }
 
 /// <summary>Response of ApiKeyCreateAsync. <see cref="Token"/> is the full secret, shown ONCE.</summary>
@@ -67,6 +78,10 @@ public class ApiKeyCreated
 
     [JsonPropertyName("domain_id")]
     public string? DomainId { get; set; }
+
+    /// <summary>Domains the key is scoped to; null when unscoped.</summary>
+    [JsonPropertyName("domain_ids")]
+    public List<string>? DomainIds { get; set; }
 }
 
 // ---- Logs ----

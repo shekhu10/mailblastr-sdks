@@ -1,6 +1,6 @@
 """API keys resource."""
 
-from typing import TypedDict
+from typing import List, TypedDict
 
 from . import http_client
 from .http_client import path_escape as _e
@@ -9,7 +9,8 @@ from .http_client import path_escape as _e
 class CreateParams(TypedDict, total=False):
     name: str  # required
     permission: str  # 'full_access' | 'sending_access'
-    domain_id: str  # scope a sending_access key to one domain
+    domain_id: str  # scope a sending_access key to one domain (legacy; prefer domain_ids)
+    domain_ids: List[str]  # scope the key to one or more domains; mutually exclusive with domain_id (both -> 422)
 
 
 class ApiKeys:

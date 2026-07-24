@@ -16,9 +16,12 @@ type ApiKey struct {
 	// Permission is derived from the key's scopes: "full_access" |
 	// "sending_access".
 	Permission string `json:"permission"`
-	// DomainId is set when the key is scoped to a single sending domain.
-	DomainId  string `json:"domain_id"`
-	CreatedAt string `json:"created_at"`
+	// DomainId is set when the key is scoped to exactly one sending domain
+	// (legacy).
+	DomainId string `json:"domain_id"`
+	// DomainIds lists the domains the key is scoped to; nil when unscoped.
+	DomainIds []string `json:"domain_ids"`
+	CreatedAt string   `json:"created_at"`
 	// LastUsedAt is the last time the key authenticated a request; empty if
 	// never used.
 	LastUsedAt string `json:"last_used_at"`
@@ -29,8 +32,13 @@ type CreateApiKeyRequest struct {
 	Name string `json:"name"`
 	// Permission is "full_access" | "sending_access".
 	Permission string `json:"permission,omitempty"`
-	// DomainId scopes a sending_access key to one domain (ignored otherwise).
+	// DomainId scopes a sending_access key to one domain (legacy; prefer
+	// DomainIds).
 	DomainId string `json:"domain_id,omitempty"`
+	// DomainIds scopes the key to one or more domains (works with both
+	// permissions). Mutually exclusive with DomainId — providing both is a
+	// 422.
+	DomainIds []string `json:"domain_ids,omitempty"`
 }
 
 // CreateApiKeyResponse carries the full secret Token, returned only once.
@@ -39,6 +47,8 @@ type CreateApiKeyResponse struct {
 	Id       string `json:"id"`
 	Token    string `json:"token"`
 	DomainId string `json:"domain_id"`
+	// DomainIds lists the domains the key is scoped to; nil when unscoped.
+	DomainIds []string `json:"domain_ids"`
 }
 
 // ApiKeysService handles the /api-keys endpoints.

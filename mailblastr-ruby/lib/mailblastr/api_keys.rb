@@ -4,7 +4,10 @@ module Mailblastr
   module ApiKeys
     class << self
       # Create an API key — the full token is returned only once, here.
-      # POST /api-keys — params: { name:, permission: "full_access"|"sending_access", domain_id: }
+      # POST /api-keys — params: { name:, permission: "full_access"|"sending_access", domain_id:, domain_ids: }
+      # domain_ids: scopes the key to one or more domains (works with both
+      # permissions); domain_id: is the legacy single-domain form. Providing
+      # both is a 422.
       def create(params)
         Client.request(:post, "/api-keys", body: params)
       end

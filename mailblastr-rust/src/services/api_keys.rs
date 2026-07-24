@@ -27,8 +27,10 @@ pub struct ApiKey {
     pub token: Option<String>,
     /// Derived from the key's scopes.
     pub permission: ApiKeyPermission,
-    /// Set when the key is scoped to a single sending domain.
+    /// Set when the key is scoped to exactly one sending domain (legacy).
     pub domain_id: Option<String>,
+    /// Domains the key is scoped to; `None` when unscoped.
+    pub domain_ids: Option<Vec<String>>,
     pub created_at: String,
     /// Last time the key authenticated a request; `None` if never used.
     pub last_used_at: Option<String>,
@@ -40,9 +42,14 @@ pub struct CreateApiKeyOptions {
     pub name: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub permission: Option<ApiKeyPermission>,
-    /// Scope a `sending_access` key to one domain (ignored otherwise).
+    /// Scope a `sending_access` key to one domain (legacy; prefer
+    /// `domain_ids`).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub domain_id: Option<String>,
+    /// Scope the key to one or more domains (works with both permissions).
+    /// Mutually exclusive with `domain_id` — providing both is a 422.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub domain_ids: Option<Vec<String>>,
 }
 
 impl CreateApiKeyOptions {
@@ -51,6 +58,7 @@ impl CreateApiKeyOptions {
             name: name.into(),
             permission: None,
             domain_id: None,
+            domain_ids: None,
         }
     }
 
@@ -63,16 +71,22 @@ impl CreateApiKeyOptions {
         self.domain_id = Some(domain_id.into());
         self
     }
+
+    pub fn with_domain_ids(mut self, domain_ids: impl IntoIterator<Item = impl Into<String>>) -> Self {
+        self.domain_ids = Some(domain_ids.into_iter().map(Into::into).collect());
+        self
+    }
 }
 
-/// `{ object, id, token, domain_id }` — `token` is the full secret, revealed
-/// ONCE.
+/// `{ object, id, token, domain_id, domain_ids }` — `token` is the full
+/// secret, revealed ONCE.
 #[derive(Debug, Clone, Deserialize)]
 pub struct CreateApiKeyResponse {
     pub object: String,
     pub id: String,
     pub token: String,
     pub domain_id: Option<String>,
+    pub domain_ids: Option<Vec<String>>,
 }
 
 /// `mailblastr.api_keys`.

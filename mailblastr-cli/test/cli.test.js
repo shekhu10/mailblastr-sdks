@@ -634,6 +634,14 @@ test('api-keys create / list / delete', async () => {
   assert.deepEqual([call.resource, call.method], ['apiKeys', 'create']);
   assert.deepEqual(call.args[0], { name: 'CI', permission: 'sending_access' });
 
+  call = lastCall(await runCli(['api-keys', 'create', '--name', 'CI', '--domain-id', 'dom_1']));
+  assert.deepEqual(call.args[0], { name: 'CI', domain_id: 'dom_1' });
+
+  call = lastCall(
+    await runCli(['api-keys', 'create', '--name', 'CI', '--domain-ids', 'dom_1,dom_2', '--domain-ids', 'dom_3']),
+  );
+  assert.deepEqual(call.args[0], { name: 'CI', domain_ids: ['dom_1', 'dom_2', 'dom_3'] });
+
   call = lastCall(await runCli(['api-keys', 'list']));
   assert.deepEqual([call.method, call.args], ['list', []]);
 

@@ -15,7 +15,9 @@ class ApiKeys extends Resource
      * Create an API key. POST /api-keys
      *
      * @param array $payload ['name' => …, 'permission' => 'full_access'|'sending_access',
-     *                       'domain_id' => scope a sending_access key to one domain]
+     *                       'domain_id' => scope a sending_access key to one domain (legacy; prefer domain_ids),
+     *                       'domain_ids' => list of domain ids to scope the key to (works with both
+     *                       permissions); mutually exclusive with domain_id — providing both is a 422]
      */
     public function create(array $payload): array
     {

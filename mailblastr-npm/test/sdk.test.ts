@@ -293,15 +293,26 @@ test('campaigns + apiKeys map to the right routes', async () => {
   await mb.campaigns.send('b1', { scheduled_at: '2030-01-01T00:00:00Z' });
   await mb.campaigns.cancel('b1');
   await mb.apiKeys.create({ name: 'CI', permission: 'sending_access', domain_id: 'd1' });
+  await mb.apiKeys.create({ name: 'CI multi', permission: 'full_access', domain_ids: ['d1', 'd2'] });
   await mb.apiKeys.remove('k1');
   assert.deepEqual(calls.map((c) => `${c.method} ${c.url}`), [
     'POST https://api.test/campaigns',
     'POST https://api.test/campaigns/b1/send',
     'POST https://api.test/campaigns/b1/cancel',
     'POST https://api.test/api-keys',
+    'POST https://api.test/api-keys',
     'DELETE https://api.test/api-keys/k1',
   ]);
   assert.equal(calls[3].body.domain_id, 'd1');
+  assert.deepEqual(calls[4].body.domain_ids, ['d1', 'd2']);
+});
+
+test('apiKeys.create returns domain_ids from the response', async () => {
+  const { fn } = mockFetch(201, { object: 'api_key', id: 'k2', token: 'mb_live_x', domain_id: null, domain_ids: ['d1', 'd2'] });
+  const mb = new MailBlastr('mb_test', { baseUrl: 'https://api.test', fetch: fn });
+  const res = await mb.apiKeys.create({ name: 'CI multi', domain_ids: ['d1', 'd2'] });
+  assert.deepEqual(res.data?.domain_ids, ['d1', 'd2']);
+  assert.equal(res.data?.domain_id, null);
 });
 
 test('emails.list + sent-attachments map to the right routes', async () => {

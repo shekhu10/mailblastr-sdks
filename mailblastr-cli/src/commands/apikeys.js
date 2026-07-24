@@ -1,6 +1,6 @@
 'use strict';
 
-const { clean } = require('../helpers');
+const { clean, collect } = require('../helpers');
 
 function register({ group, leaf, act }) {
   const apiKeys = group('api-keys', 'Manage API keys');
@@ -9,10 +9,16 @@ function register({ group, leaf, act }) {
     leaf(apiKeys, 'create', 'Create an API key (the token is shown once)')
       .requiredOption('--name <name>', 'key name')
       .option('--permission <permission>', "'full_access' | 'sending_access'")
-      .option('--domain-id <id>', 'scope a sending_access key to one domain'),
+      .option('--domain-id <id>', 'scope a sending_access key to one domain (legacy; prefer --domain-ids)')
+      .option('--domain-ids <id>', 'domains to scope the key to (repeatable or comma-separated)', collect),
     ({ client, opts }) =>
       client.apiKeys.create(
-        clean({ name: opts.name, permission: opts.permission, domain_id: opts.domainId }),
+        clean({
+          name: opts.name,
+          permission: opts.permission,
+          domain_id: opts.domainId,
+          domain_ids: opts.domainIds,
+        }),
       ),
   );
 

@@ -573,18 +573,25 @@ export interface ApiKey {
   token: string | null;
   /** Derived from the key's scopes. */
   permission: 'full_access' | 'sending_access';
-  /** Set when the key is scoped to a single sending domain. */
+  /** Set when the key is scoped to exactly one sending domain (legacy). */
   domain_id: string | null;
+  /** Domains the key is scoped to; `null` when unscoped. */
+  domain_ids: string[] | null;
   created_at: string;
   /** Last time the key authenticated a request; `null` if never used. */
   last_used_at: string | null;
 }
-export interface CreateApiKeyResponse { object: 'api_key'; id: string; token: string; domain_id: string | null }
+export interface CreateApiKeyResponse { object: 'api_key'; id: string; token: string; domain_id: string | null; domain_ids: string[] | null }
 export interface CreateApiKeyOptions {
   name: string;
   permission?: 'full_access' | 'sending_access';
-  /** Scope a `sending_access` key to one domain (ignored otherwise). */
+  /** Scope a `sending_access` key to one domain (legacy; prefer `domain_ids`). */
   domain_id?: string;
+  /**
+   * Scope the key to one or more domains (works with both permissions).
+   * Mutually exclusive with `domain_id` — providing both is a 422.
+   */
+  domain_ids?: string[];
 }
 
 export interface ListResponse<T> { object: 'list'; has_more: boolean; data: T[] }
