@@ -63,6 +63,18 @@ type AutomationConnectionInput struct {
 	Type string `json:"type,omitempty"`
 }
 
+// AutomationTriggerConfig is the config for the "mailblastr:schedule"
+// trigger: the automation fires ONCE at At, enrolling every contact of its
+// domain's pool. Required with that trigger; not accepted on any other.
+type AutomationTriggerConfig struct {
+	// At is the ISO 8601 instant the automation fires (future, at most 366
+	// days ahead).
+	At string `json:"at"`
+	// Timezone is the IANA timezone the schedule was picked in (e.g.
+	// "America/New_York").
+	Timezone string `json:"timezone"`
+}
+
 // CreateAutomationRequest is the payload for POST /automations. Domain is
 // REQUIRED (domain-first): only Events.Send calls with the same Domain
 // trigger the automation.
@@ -71,11 +83,15 @@ type CreateAutomationRequest struct {
 	// Domain is REQUIRED — the sending domain this automation belongs to
 	// (e.g. "yourdomain.com" — one of your domains).
 	Domain string `json:"domain"`
-	// Trigger is the event that starts a run: "contact.created", an
+	// Trigger is the event that starts a run: "contact.created", the built-in
+	// scheduled trigger "mailblastr:schedule" (requires TriggerConfig), an
 	// engagement event ("email.opened", "email.clicked", "email.replied",
 	// "email.bounced", "email.delivered"), or any custom event name you send
 	// via Events.Send. Usually supplied as a Steps[0] trigger step instead.
 	Trigger string `json:"trigger,omitempty"`
+	// TriggerConfig is the schedule for the "mailblastr:schedule" trigger
+	// ({at, timezone}). Required with that trigger; not accepted on any other.
+	TriggerConfig *AutomationTriggerConfig `json:"trigger_config,omitempty"`
 	// Status is the initial status: "enabled" | "disabled" (default "disabled").
 	Status string `json:"status,omitempty"`
 	// Steps is an optional inline step graph.
@@ -91,8 +107,11 @@ type UpdateAutomationRequest struct {
 	Status string `json:"status,omitempty"`
 	// Domain re-points the automation at another of your domains (disabled
 	// automations only).
-	Domain      string                      `json:"domain,omitempty"`
-	Connections []AutomationConnectionInput `json:"connections,omitempty"`
+	Domain string `json:"domain,omitempty"`
+	// TriggerConfig updates the "mailblastr:schedule" trigger's schedule
+	// ({at, timezone}). Only valid on automations with that trigger.
+	TriggerConfig *AutomationTriggerConfig    `json:"trigger_config,omitempty"`
+	Connections   []AutomationConnectionInput `json:"connections,omitempty"`
 }
 
 // AddAutomationStepRequest appends a step to an automation.

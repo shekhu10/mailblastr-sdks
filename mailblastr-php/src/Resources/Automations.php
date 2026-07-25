@@ -18,10 +18,15 @@ class Automations extends Resource
      * Create an automation. POST /automations
      *
      * @param array $payload ['name' => …, 'domain' => REQUIRED,
-     *                       'trigger' => 'contact.created' | 'email.opened' |
-     *                                    'email.clicked' | 'email.replied' |
-     *                                    'email.bounced' | 'email.delivered' |
-     *                                    any custom event name,
+     *                       'trigger' => 'contact.created' | 'mailblastr:schedule' |
+     *                                    'email.opened' | 'email.clicked' |
+     *                                    'email.replied' | 'email.bounced' |
+     *                                    'email.delivered' | any custom event name,
+     *                       'trigger_config' => ['at' => ISO 8601 instant,
+     *                                            'timezone' => IANA name]
+     *                                           (required with the
+     *                                           'mailblastr:schedule' trigger;
+     *                                           not accepted on any other),
      *                       'status' => 'enabled'|'disabled' (default 'disabled'),
      *                       'steps' => [['key' => …, 'type' => …, 'config' => …], …],
      *                       'connections' => [['from' => …, 'to' => …, 'type' => …], …]]
@@ -47,7 +52,12 @@ class Automations extends Resource
         return $this->client->request('GET', '/automations' . $this->paginationQuery($params));
     }
 
-    /** Update an automation (name/status/domain/connections). PATCH /automations/:id */
+    /**
+     * Update an automation (name/status/domain/trigger_config/connections).
+     * 'trigger_config' (['at' => …, 'timezone' => …]) updates the
+     * 'mailblastr:schedule' trigger's schedule (only valid on automations with
+     * that trigger). PATCH /automations/:id
+     */
     public function update(string $id, array $payload): array
     {
         return $this->client->request('PATCH', '/automations/' . Client::e($id), $payload);

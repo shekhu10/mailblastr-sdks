@@ -3,6 +3,8 @@ package mailblastr
 import (
 	"context"
 	"net/http"
+	"net/url"
+	"strconv"
 )
 
 // ReceivedAttachment describes an attachment of a received (inbound) email.
@@ -73,12 +75,24 @@ type ReplyReceivedEmailRequest struct {
 	Subject string `json:"subject,omitempty"`
 }
 
+// ListReceivedEmailsRequest lists received emails: cursor pagination plus an
+// optional received_for filter.
+type ListReceivedEmailsRequest struct {
+	Limit  int
+	After  string
+	Before string
+	// ReceivedFor restricts to messages received for this address (matches
+	// the received_for recipients).
+	ReceivedFor string
+}
+
 // ReceivingService handles inbound (received) email — client.Emails.Receiving.
 type ReceivingService struct {
 	client *Client
 }
 
 // List lists received emails. GET /emails/receiving
+// For the received_for filter use ListFiltered.
 func (s *ReceivingService) List(params *ListParams) (*ListResponse[ReceivedEmail], error) {
 	return s.ListWithContext(context.Background(), params)
 }
@@ -86,6 +100,37 @@ func (s *ReceivingService) List(params *ListParams) (*ListResponse[ReceivedEmail
 // ListWithContext lists received emails. GET /emails/receiving
 func (s *ReceivingService) ListWithContext(ctx context.Context, params *ListParams) (*ListResponse[ReceivedEmail], error) {
 	return request[ListResponse[ReceivedEmail]](ctx, s.client, http.MethodGet, listPath("/emails/receiving", params), nil, nil)
+}
+
+// ListFiltered lists received emails with an optional received_for filter.
+// GET /emails/receiving
+func (s *ReceivingService) ListFiltered(params *ListReceivedEmailsRequest) (*ListResponse[ReceivedEmail], error) {
+	return s.ListFilteredWithContext(context.Background(), params)
+}
+
+// ListFilteredWithContext lists received emails with an optional received_for
+// filter. GET /emails/receiving
+func (s *ReceivingService) ListFilteredWithContext(ctx context.Context, params *ListReceivedEmailsRequest) (*ListResponse[ReceivedEmail], error) {
+	q := url.Values{}
+	if params != nil {
+		if params.Limit > 0 {
+			q.Set("limit", strconv.Itoa(params.Limit))
+		}
+		if params.After != "" {
+			q.Set("after", params.After)
+		}
+		if params.Before != "" {
+			q.Set("before", params.Before)
+		}
+		if params.ReceivedFor != "" {
+			q.Set("received_for", params.ReceivedFor)
+		}
+	}
+	path := "/emails/receiving"
+	if enc := q.Encode(); enc != "" {
+		path += "?" + enc
+	}
+	return request[ListResponse[ReceivedEmail]](ctx, s.client, http.MethodGet, path, nil, nil)
 }
 
 // Get retrieves a received email. GET /emails/receiving/:id

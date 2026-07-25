@@ -142,6 +142,13 @@ type CreateCampaignRequest struct {
 	// ScheduledAt is an ISO 8601 (or natural-language) schedule used when
 	// Send is true.
 	ScheduledAt string `json:"scheduled_at,omitempty"`
+	// ScheduleTimezone is the IANA timezone the schedule + daily batching are
+	// evaluated in (e.g. "America/New_York"). Defaults to the account
+	// timezone, then UTC.
+	ScheduleTimezone string `json:"schedule_timezone,omitempty"`
+	// DailyBatchSize is the max recipients fanned out per batch-day
+	// (1-100000). 0 (omitted) sends to everyone at once.
+	DailyBatchSize int `json:"daily_batch_size,omitempty"`
 }
 
 // UpdateCampaignRequest is the payload for PATCH /campaigns/:id.
@@ -163,11 +170,28 @@ type UpdateCampaignRequest struct {
 	Recurrence      string          `json:"recurrence,omitempty"`
 	RecurrenceEvery int             `json:"recurrence_every,omitempty"`
 	AbTest          *CampaignAbTest `json:"ab_test,omitempty"`
+	// Followups replaces the pending engagement follow-ups (max 5); an empty
+	// slice clears them.
+	Followups []CampaignFollowupInput `json:"followups,omitempty"`
+	// ListTo shows a generated mailing-list address as the visible To.
+	// Delivery stays individual.
+	ListTo bool `json:"list_to,omitempty"`
+	// UnsubscribePolicy: "account" (default), "domain", or "ignore"
+	// (bounced/complained addresses are ALWAYS excluded).
+	UnsubscribePolicy string `json:"unsubscribe_policy,omitempty"`
+	// ScheduleTimezone is the IANA timezone the schedule + daily batching are
+	// evaluated in (e.g. "America/New_York").
+	ScheduleTimezone string `json:"schedule_timezone,omitempty"`
+	// DailyBatchSize is the max recipients fanned out per batch-day (1-100000).
+	DailyBatchSize int `json:"daily_batch_size,omitempty"`
 }
 
 // SendCampaignRequest sends a campaign now, or schedules it with ScheduledAt.
 type SendCampaignRequest struct {
 	ScheduledAt string `json:"scheduled_at,omitempty"`
+	// ScheduleTimezone (IANA name) is persisted onto the campaign so daily
+	// batching evaluates batch-days in that zone.
+	ScheduleTimezone string `json:"schedule_timezone,omitempty"`
 }
 
 // CampaignStats is the per-campaign analytics from GET /campaigns/:id/stats.

@@ -22,6 +22,14 @@ public partial interface IMailblastr
     /// <param name="cancellationToken">Token to cancel the request.</param>
     Task<IdResponse> CampaignSendAsync(string campaignId, string? scheduledAt = null, CancellationToken cancellationToken = default);
 
+    /// <summary>
+    /// Send (or schedule) a campaign with <see cref="CampaignSendOptions"/> —
+    /// <c>scheduled_at</c> plus an optional IANA <c>schedule_timezone</c>,
+    /// persisted onto the campaign so daily batching evaluates batch-days in
+    /// that zone. POST /campaigns/:id/send
+    /// </summary>
+    Task<IdResponse> CampaignSendAsync(string campaignId, CampaignSendOptions options, CancellationToken cancellationToken = default);
+
     /// <summary>Cancel a scheduled campaign (returns it to draft). POST /campaigns/:id/cancel</summary>
     Task<Campaign> CampaignCancelAsync(string campaignId, CancellationToken cancellationToken = default);
 

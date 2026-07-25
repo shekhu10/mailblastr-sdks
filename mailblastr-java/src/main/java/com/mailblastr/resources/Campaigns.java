@@ -51,6 +51,19 @@ public final class Campaigns extends Resource {
         return api.request("POST", "/campaigns/" + enc(id) + "/send", body);
     }
 
+    /**
+     * Send (or schedule) with an IANA {@code schedule_timezone}, persisted
+     * onto the campaign so daily batching evaluates batch-days in that zone.
+     * Either argument may be {@code null} to omit it.
+     * {@code POST /campaigns/:id/send}
+     */
+    public MailblastrResponse send(String id, String scheduledAt, String scheduleTimezone) {
+        Map<String, Object> body = new LinkedHashMap<>();
+        if (scheduledAt != null) body.put("scheduled_at", scheduledAt);
+        if (scheduleTimezone != null) body.put("schedule_timezone", scheduleTimezone);
+        return api.request("POST", "/campaigns/" + enc(id) + "/send", body);
+    }
+
     /** Cancel a scheduled campaign (returns it to draft). {@code POST /campaigns/:id/cancel} */
     public MailblastrResponse cancel(String id) {
         return api.request("POST", "/campaigns/" + enc(id) + "/cancel");

@@ -31,13 +31,29 @@ public final class CreateAutomationRequest implements JsonPayload {
         /** REQUIRED. The sending domain this automation belongs to. */
         public Builder domain(String domain) { m.put("domain", domain); return this; }
         /**
-         * The event that starts a run: {@code contact.created}, an engagement
-         * event ({@code email.opened}, {@code email.clicked}, {@code email.replied},
-         * {@code email.bounced}, {@code email.delivered}), or any custom event
-         * name sent via {@code events().send(...)}. Usually supplied as a
-         * steps[0] trigger step instead.
+         * The event that starts a run: {@code contact.created}, the built-in
+         * scheduled trigger {@code mailblastr:schedule} (requires
+         * {@link #triggerConfig}), an engagement event ({@code email.opened},
+         * {@code email.clicked}, {@code email.replied}, {@code email.bounced},
+         * {@code email.delivered}), or any custom event name sent via
+         * {@code events().send(...)}. Usually supplied as a steps[0] trigger
+         * step instead.
          */
         public Builder trigger(String trigger) { m.put("trigger", trigger); return this; }
+        /**
+         * Schedule for the {@code mailblastr:schedule} trigger — required with
+         * that trigger; not accepted on any other.
+         *
+         * @param at ISO 8601 instant the automation fires (future, at most 366 days ahead)
+         * @param timezone IANA timezone the schedule was picked in, e.g. {@code "America/New_York"}
+         */
+        public Builder triggerConfig(String at, String timezone) {
+            Map<String, Object> config = new LinkedHashMap<>();
+            config.put("at", at);
+            config.put("timezone", timezone);
+            m.put("trigger_config", config);
+            return this;
+        }
         /** Initial status: {@code "enabled"} or {@code "disabled"} (default disabled). */
         public Builder status(String status) { m.put("status", status); return this; }
 

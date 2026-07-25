@@ -26,10 +26,24 @@ public partial interface IMailblastr
     Task<EmailCreated> EmailSendAsync(EmailMessage message, string? idempotencyKey = null, CancellationToken cancellationToken = default);
 
     /// <summary>Send up to 100 emails in one request. POST /emails/batch</summary>
+    [Obsolete("Use the BatchEmailMessage overload — batch items reject attachments and scheduled_at (send those individually via EmailSendAsync), which BatchEmailMessage enforces at compile time.")]
     Task<List<EmailCreated>> EmailBatchAsync(IEnumerable<EmailMessage> messages, string? idempotencyKey = null, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Send up to 100 emails in one request. Batch items reject
+    /// <c>attachments</c> and <c>scheduled_at</c> — send those individually via
+    /// <see cref="EmailSendAsync"/>. POST /emails/batch
+    /// </summary>
+    Task<List<EmailCreated>> EmailBatchAsync(IEnumerable<BatchEmailMessage> messages, string? idempotencyKey = null, CancellationToken cancellationToken = default);
 
     /// <summary>List sent emails (trimmed rows — see <see cref="SentEmailListItem"/>). GET /emails</summary>
     Task<ListResponse<SentEmailListItem>> EmailListAsync(PaginationOptions? pagination = null, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// List sent emails with optional server-side <c>campaign_id</c> /
+    /// <c>automation_id</c> / <c>source</c> / <c>domain_id</c> filters. GET /emails
+    /// </summary>
+    Task<ListResponse<SentEmailListItem>> EmailListAsync(EmailListOptions options, CancellationToken cancellationToken = default);
 
     /// <summary>Retrieve a sent email and its events. GET /emails/:id</summary>
     Task<Email> EmailRetrieveAsync(string emailId, CancellationToken cancellationToken = default);
@@ -53,6 +67,12 @@ public partial interface IMailblastr
 
     /// <summary>List received emails. GET /emails/receiving</summary>
     Task<ListResponse<ReceivedEmail>> ReceivedEmailListAsync(PaginationOptions? pagination = null, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// List received emails with an optional <c>received_for</c> filter (only
+    /// messages received for that address). GET /emails/receiving
+    /// </summary>
+    Task<ListResponse<ReceivedEmail>> ReceivedEmailListAsync(ReceivedEmailListOptions options, CancellationToken cancellationToken = default);
 
     /// <summary>Retrieve a received email. GET /emails/receiving/:id</summary>
     Task<ReceivedEmail> ReceivedEmailRetrieveAsync(string receivedEmailId, CancellationToken cancellationToken = default);

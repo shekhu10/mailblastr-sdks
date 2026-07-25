@@ -9,11 +9,152 @@ use serde_json::json;
 
 use crate::client::{page_query, seg, Config};
 use crate::services::email_types::{
-    AttachmentMeta, CreateEmailBaseOptions, CreateEmailResponse, Email,
+    AttachmentMeta, BatchEmailOptions, CreateEmailBaseOptions, CreateEmailResponse, Email,
     ForwardReceivedEmailOptions, ReceivedAttachment, ReceivedEmail, ReplyReceivedEmailOptions,
     SendEmailBatchResponse, SentEmailListItem,
 };
 use crate::types::{ListResponse, ObjectAck, PaginationParams, RemovedResponse, Result};
+
+/// Params for `emails.list_filtered`: cursor pagination plus optional
+/// server-side source filters.
+#[derive(Debug, Clone, Default)]
+pub struct ListEmailsParams {
+    pub limit: Option<u32>,
+    pub after: Option<String>,
+    pub before: Option<String>,
+    /// Only emails sent by this campaign. Takes precedence over
+    /// `automation_id`/`source`.
+    pub campaign_id: Option<String>,
+    /// Only emails sent by this automation.
+    pub automation_id: Option<String>,
+    /// `individual` restricts to one-off API sends (no campaign/automation).
+    pub source: Option<String>,
+    /// Only emails sent from this sending domain (domain id). Composes with
+    /// the source filters.
+    pub domain_id: Option<String>,
+}
+
+impl ListEmailsParams {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn with_limit(mut self, limit: u32) -> Self {
+        self.limit = Some(limit);
+        self
+    }
+
+    pub fn with_after(mut self, after: impl Into<String>) -> Self {
+        self.after = Some(after.into());
+        self
+    }
+
+    pub fn with_before(mut self, before: impl Into<String>) -> Self {
+        self.before = Some(before.into());
+        self
+    }
+
+    pub fn with_campaign_id(mut self, campaign_id: impl Into<String>) -> Self {
+        self.campaign_id = Some(campaign_id.into());
+        self
+    }
+
+    pub fn with_automation_id(mut self, automation_id: impl Into<String>) -> Self {
+        self.automation_id = Some(automation_id.into());
+        self
+    }
+
+    pub fn with_source(mut self, source: impl Into<String>) -> Self {
+        self.source = Some(source.into());
+        self
+    }
+
+    pub fn with_domain_id(mut self, domain_id: impl Into<String>) -> Self {
+        self.domain_id = Some(domain_id.into());
+        self
+    }
+
+    fn to_query(&self) -> Vec<(&'static str, String)> {
+        let mut q = Vec::new();
+        if let Some(limit) = self.limit {
+            q.push(("limit", limit.to_string()));
+        }
+        if let Some(after) = &self.after {
+            q.push(("after", after.clone()));
+        }
+        if let Some(before) = &self.before {
+            q.push(("before", before.clone()));
+        }
+        if let Some(campaign_id) = &self.campaign_id {
+            q.push(("campaign_id", campaign_id.clone()));
+        }
+        if let Some(automation_id) = &self.automation_id {
+            q.push(("automation_id", automation_id.clone()));
+        }
+        if let Some(source) = &self.source {
+            q.push(("source", source.clone()));
+        }
+        if let Some(domain_id) = &self.domain_id {
+            q.push(("domain_id", domain_id.clone()));
+        }
+        q
+    }
+}
+
+/// Params for `emails.receiving.list_filtered`: cursor pagination plus an
+/// optional `received_for` filter.
+#[derive(Debug, Clone, Default)]
+pub struct ListReceivedEmailsParams {
+    pub limit: Option<u32>,
+    pub after: Option<String>,
+    pub before: Option<String>,
+    /// Only messages received for this address (matches the `received_for`
+    /// recipients).
+    pub received_for: Option<String>,
+}
+
+impl ListReceivedEmailsParams {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn with_limit(mut self, limit: u32) -> Self {
+        self.limit = Some(limit);
+        self
+    }
+
+    pub fn with_after(mut self, after: impl Into<String>) -> Self {
+        self.after = Some(after.into());
+        self
+    }
+
+    pub fn with_before(mut self, before: impl Into<String>) -> Self {
+        self.before = Some(before.into());
+        self
+    }
+
+    pub fn with_received_for(mut self, received_for: impl Into<String>) -> Self {
+        self.received_for = Some(received_for.into());
+        self
+    }
+
+    fn to_query(&self) -> Vec<(&'static str, String)> {
+        let mut q = Vec::new();
+        if let Some(limit) = self.limit {
+            q.push(("limit", limit.to_string()));
+        }
+        if let Some(after) = &self.after {
+            q.push(("after", after.clone()));
+        }
+        if let Some(before) = &self.before {
+            q.push(("before", before.clone()));
+        }
+        if let Some(received_for) = &self.received_for {
+            q.push(("received_for", received_for.clone()));
+        }
+        q
+    }
+}
 
 /// Inbound (received) email — accessed as `mailblastr.emails.receiving`.
 #[derive(Clone, Debug)]
@@ -26,7 +167,8 @@ impl ReceivingSvc {
         Self { config }
     }
 
-    /// List received emails. `GET /emails/receiving`
+    /// List received emails. For the `received_for` filter use
+    /// [`list_filtered`](Self::list_filtered). `GET /emails/receiving`
     pub async fn list(
         &self,
         params: Option<PaginationParams>,
@@ -35,6 +177,20 @@ impl ReceivingSvc {
             .config
             .request(Method::GET, "/emails/receiving")
             .query(&page_query(params.as_ref()));
+        self.config.send(req).await
+    }
+
+    /// List received emails with an optional `received_for` filter (only
+    /// messages received for that address). `GET /emails/receiving`
+    pub async fn list_filtered(
+        &self,
+        params: Option<ListReceivedEmailsParams>,
+    ) -> Result<ListResponse<ReceivedEmail>> {
+        let query = params.as_ref().map(|p| p.to_query()).unwrap_or_default();
+        let req = self
+            .config
+            .request(Method::GET, "/emails/receiving")
+            .query(&query);
         self.config.send(req).await
     }
 
@@ -155,6 +311,10 @@ impl EmailsSvc {
 
     /// Send up to 100 emails in one request (alias of `mailblastr.batch.send`).
     /// `POST /emails/batch`
+    #[deprecated(
+        since = "1.2.0",
+        note = "use `mailblastr.batch.send_emails` — batch items reject `attachments` and `scheduled_at`, which `BatchEmailOptions` enforces at compile time"
+    )]
     pub async fn batch(
         &self,
         emails: Vec<CreateEmailBaseOptions>,
@@ -168,7 +328,9 @@ impl EmailsSvc {
             .await
     }
 
-    /// List sent emails — trimmed [`SentEmailListItem`] rows. `GET /emails`
+    /// List sent emails — trimmed [`SentEmailListItem`] rows. For the
+    /// `campaign_id`/`automation_id`/`source`/`domain_id` filters use
+    /// [`list_filtered`](Self::list_filtered). `GET /emails`
     pub async fn list(
         &self,
         params: Option<PaginationParams>,
@@ -177,6 +339,17 @@ impl EmailsSvc {
             .config
             .request(Method::GET, "/emails")
             .query(&page_query(params.as_ref()));
+        self.config.send(req).await
+    }
+
+    /// List sent emails with optional `campaign_id`/`automation_id`/`source`/
+    /// `domain_id` filters. `GET /emails`
+    pub async fn list_filtered(
+        &self,
+        params: Option<ListEmailsParams>,
+    ) -> Result<ListResponse<SentEmailListItem>> {
+        let query = params.as_ref().map(|p| p.to_query()).unwrap_or_default();
+        let req = self.config.request(Method::GET, "/emails").query(&query);
         self.config.send(req).await
     }
 
@@ -246,6 +419,10 @@ impl BatchSvc {
     }
 
     /// Send up to 100 emails in one request. `POST /emails/batch`
+    #[deprecated(
+        since = "1.2.0",
+        note = "use `send_emails` — batch items reject `attachments` and `scheduled_at`, which `BatchEmailOptions` enforces at compile time"
+    )]
     pub async fn send(
         &self,
         emails: Vec<CreateEmailBaseOptions>,
@@ -260,9 +437,46 @@ impl BatchSvc {
     }
 
     /// Like [`send`](Self::send), with an `Idempotency-Key` header.
+    #[deprecated(
+        since = "1.2.0",
+        note = "use `send_emails_with_idempotency_key` — batch items reject `attachments` and `scheduled_at`, which `BatchEmailOptions` enforces at compile time"
+    )]
     pub async fn send_with_idempotency_key(
         &self,
         emails: Vec<CreateEmailBaseOptions>,
+        idempotency_key: &str,
+    ) -> Result<SendEmailBatchResponse> {
+        self.config
+            .send(
+                self.config
+                    .request(Method::POST, "/emails/batch")
+                    .header("Idempotency-Key", idempotency_key)
+                    .json(&emails),
+            )
+            .await
+    }
+
+    /// Send up to 100 emails in one request. Batch items reject `attachments`
+    /// and `scheduled_at` — send those individually via `emails.send`.
+    /// `POST /emails/batch`
+    pub async fn send_emails(
+        &self,
+        emails: Vec<BatchEmailOptions>,
+    ) -> Result<SendEmailBatchResponse> {
+        self.config
+            .send(
+                self.config
+                    .request(Method::POST, "/emails/batch")
+                    .json(&emails),
+            )
+            .await
+    }
+
+    /// Like [`send_emails`](Self::send_emails), with an `Idempotency-Key`
+    /// header so the batch can be retried safely (24h window).
+    pub async fn send_emails_with_idempotency_key(
+        &self,
+        emails: Vec<BatchEmailOptions>,
         idempotency_key: &str,
     ) -> Result<SendEmailBatchResponse> {
         self.config

@@ -20,7 +20,10 @@ class Campaigns extends Resource
      * @param array $payload domain (REQUIRED), from, subject, html/text,
      *                       reply_to, preview_text, name, segment_id, topic_id,
      *                       recurrence, recurrence_every, ab_test, followups,
-     *                       list_to, unsubscribe_policy, send, scheduled_at.
+     *                       list_to, unsubscribe_policy, send, scheduled_at,
+     *                       schedule_timezone (IANA zone the schedule + daily
+     *                       batching are evaluated in), daily_batch_size (max
+     *                       recipients per batch-day, 1-100000).
      */
     public function create(array $payload): array
     {
@@ -43,14 +46,24 @@ class Campaigns extends Resource
         return $this->client->request('GET', '/campaigns' . $this->paginationQuery($params));
     }
 
-    /** Update a draft campaign. PATCH /campaigns/:id */
+    /**
+     * Update a draft campaign. PATCH /campaigns/:id
+     *
+     * @param array $payload The create-side fields plus followups (replace
+     *                       pending follow-ups; [] clears), list_to (bool),
+     *                       unsubscribe_policy ('account'|'domain'|'ignore'),
+     *                       schedule_timezone (IANA zone; null clears), and
+     *                       daily_batch_size (1-100000; null clears).
+     */
     public function update(string $id, array $payload): array
     {
         return $this->client->request('PATCH', '/campaigns/' . Client::e($id), $payload);
     }
 
     /**
-     * Send now, or schedule with ['scheduled_at' => …]. POST /campaigns/:id/send
+     * Send now, or schedule with ['scheduled_at' => …]. An optional
+     * 'schedule_timezone' (IANA name) is persisted onto the campaign so daily
+     * batching evaluates batch-days in that zone. POST /campaigns/:id/send
      */
     public function send(string $id, array $payload = []): array
     {

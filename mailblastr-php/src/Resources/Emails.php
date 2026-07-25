@@ -44,6 +44,9 @@ class Emails extends Resource
      * Send up to 100 emails in one request. POST /emails/batch
      * (alias of `$mailblastr->batch->send()`).
      *
+     * Batch items reject 'attachments' and 'scheduled_at' — send those
+     * individually via `send()`.
+     *
      * @param array $payloads A list of send-email payloads.
      */
     public function batch(array $payloads, array $options = []): array
@@ -55,11 +58,14 @@ class Emails extends Resource
      * List sent emails (trimmed list items — no status/html/text/events).
      * GET /emails
      *
-     * @param array $params Cursor pagination: limit, after, before.
+     * @param array $params Cursor pagination (limit, after, before) plus
+     *                      optional server-side filters: campaign_id,
+     *                      automation_id, source ('individual' restricts to
+     *                      one-off API sends), domain_id.
      */
     public function list(array $params = []): array
     {
-        return $this->client->request('GET', '/emails' . $this->paginationQuery($params));
+        return $this->client->request('GET', '/emails' . $this->paginationQuery($params, ['campaign_id', 'automation_id', 'source', 'domain_id']));
     }
 
     /** Retrieve a sent email and its events. GET /emails/:id */

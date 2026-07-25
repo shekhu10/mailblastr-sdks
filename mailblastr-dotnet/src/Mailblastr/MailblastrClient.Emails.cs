@@ -1,3 +1,5 @@
+using System.Globalization;
+
 namespace Mailblastr;
 
 public partial class MailblastrClient
@@ -10,6 +12,7 @@ public partial class MailblastrClient
         return await RequestAsync<EmailCreated>(HttpMethod.Post, "/emails", message, idempotencyKey, cancellationToken).ConfigureAwait(false);
     }
 
+    [Obsolete("Use the BatchEmailMessage overload — batch items reject attachments and scheduled_at (send those individually via EmailSendAsync), which BatchEmailMessage enforces at compile time.")]
     public async Task<List<EmailCreated>> EmailBatchAsync(IEnumerable<EmailMessage> messages, string? idempotencyKey = null, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(messages);
@@ -18,8 +21,30 @@ public partial class MailblastrClient
         return envelope.Data;
     }
 
+    public async Task<List<EmailCreated>> EmailBatchAsync(IEnumerable<BatchEmailMessage> messages, string? idempotencyKey = null, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(messages);
+        var payload = messages as IList<BatchEmailMessage> ?? messages.ToList();
+        var envelope = await RequestAsync<DataEnvelope<EmailCreated>>(HttpMethod.Post, "/emails/batch", payload, idempotencyKey, cancellationToken).ConfigureAwait(false);
+        return envelope.Data;
+    }
+
     public Task<ListResponse<SentEmailListItem>> EmailListAsync(PaginationOptions? pagination = null, CancellationToken cancellationToken = default)
         => RequestAsync<ListResponse<SentEmailListItem>>(HttpMethod.Get, "/emails" + Paginate(pagination), null, null, cancellationToken);
+
+    public Task<ListResponse<SentEmailListItem>> EmailListAsync(EmailListOptions options, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(options);
+        var query = Query(
+            ("limit", options.Limit?.ToString(CultureInfo.InvariantCulture)),
+            ("after", options.After),
+            ("before", options.Before),
+            ("campaign_id", options.CampaignId),
+            ("automation_id", options.AutomationId),
+            ("source", options.Source),
+            ("domain_id", options.DomainId));
+        return RequestAsync<ListResponse<SentEmailListItem>>(HttpMethod.Get, "/emails" + query, null, null, cancellationToken);
+    }
 
     public Task<Email> EmailRetrieveAsync(string emailId, CancellationToken cancellationToken = default)
         => RequestAsync<Email>(HttpMethod.Get, $"/emails/{E(emailId)}", null, null, cancellationToken);
@@ -44,6 +69,17 @@ public partial class MailblastrClient
 
     public Task<ListResponse<ReceivedEmail>> ReceivedEmailListAsync(PaginationOptions? pagination = null, CancellationToken cancellationToken = default)
         => RequestAsync<ListResponse<ReceivedEmail>>(HttpMethod.Get, "/emails/receiving" + Paginate(pagination), null, null, cancellationToken);
+
+    public Task<ListResponse<ReceivedEmail>> ReceivedEmailListAsync(ReceivedEmailListOptions options, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(options);
+        var query = Query(
+            ("limit", options.Limit?.ToString(CultureInfo.InvariantCulture)),
+            ("after", options.After),
+            ("before", options.Before),
+            ("received_for", options.ReceivedFor));
+        return RequestAsync<ListResponse<ReceivedEmail>>(HttpMethod.Get, "/emails/receiving" + query, null, null, cancellationToken);
+    }
 
     public Task<ReceivedEmail> ReceivedEmailRetrieveAsync(string receivedEmailId, CancellationToken cancellationToken = default)
         => RequestAsync<ReceivedEmail>(HttpMethod.Get, $"/emails/receiving/{E(receivedEmailId)}", null, null, cancellationToken);

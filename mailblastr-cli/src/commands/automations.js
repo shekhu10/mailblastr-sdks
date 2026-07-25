@@ -9,11 +9,25 @@ function register({ group, leaf, act }) {
     leaf(automations, 'create', 'Create an automation')
       .requiredOption('--name <name>', 'automation name')
       .requiredOption('--domain <domain>', 'the sending domain this automation belongs to')
-      .option('--trigger <event>', "trigger event, e.g. 'contact.created' or a custom event name")
+      .option(
+        '--trigger <event>',
+        "trigger event, e.g. 'contact.created', 'mailblastr:schedule' (requires --trigger-at/--trigger-timezone), or a custom event name",
+      )
+      .option('--trigger-at <iso>', "ISO 8601 instant the 'mailblastr:schedule' trigger fires (with --trigger-timezone)")
+      .option('--trigger-timezone <tz>', "IANA timezone the schedule was picked in, e.g. 'America/New_York'")
       .option('--status <status>', "'enabled' | 'disabled' (default: disabled)"),
     ({ client, opts }) =>
       client.automations.create(
-        clean({ name: opts.name, domain: opts.domain, trigger: opts.trigger, status: opts.status }),
+        clean({
+          name: opts.name,
+          domain: opts.domain,
+          trigger: opts.trigger,
+          trigger_config:
+            opts.triggerAt || opts.triggerTimezone
+              ? clean({ at: opts.triggerAt, timezone: opts.triggerTimezone })
+              : undefined,
+          status: opts.status,
+        }),
       ),
   );
 
@@ -28,9 +42,21 @@ function register({ group, leaf, act }) {
   act(
     leaf(automations, 'update <id>', 'Update an automation')
       .option('--name <name>', 'new name')
-      .option('--status <status>', "'enabled' | 'disabled'"),
+      .option('--status <status>', "'enabled' | 'disabled'")
+      .option('--trigger-at <iso>', "update the 'mailblastr:schedule' trigger's ISO 8601 fire time (with --trigger-timezone)")
+      .option('--trigger-timezone <tz>', "IANA timezone the schedule was picked in, e.g. 'America/New_York'"),
     ({ client, opts, args: [id] }) =>
-      client.automations.update(id, clean({ name: opts.name, status: opts.status })),
+      client.automations.update(
+        id,
+        clean({
+          name: opts.name,
+          status: opts.status,
+          trigger_config:
+            opts.triggerAt || opts.triggerTimezone
+              ? clean({ at: opts.triggerAt, timezone: opts.triggerTimezone })
+              : undefined,
+        }),
+      ),
   );
 
   act(

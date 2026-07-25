@@ -29,6 +29,12 @@ public partial class MailblastrClient
         return RequestAsync<IdResponse>(HttpMethod.Post, $"/campaigns/{E(campaignId)}/send", body, null, cancellationToken);
     }
 
+    public Task<IdResponse> CampaignSendAsync(string campaignId, CampaignSendOptions options, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(options);
+        return RequestAsync<IdResponse>(HttpMethod.Post, $"/campaigns/{E(campaignId)}/send", options, null, cancellationToken);
+    }
+
     public Task<Campaign> CampaignCancelAsync(string campaignId, CancellationToken cancellationToken = default)
         => RequestAsync<Campaign>(HttpMethod.Post, $"/campaigns/{E(campaignId)}/cancel", null, null, cancellationToken);
 

@@ -257,6 +257,14 @@ pub struct CreateCampaignOptions {
     /// ISO 8601 (or natural-language) schedule used when `send` is true.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub scheduled_at: Option<String>,
+    /// IANA timezone the schedule + daily batching are evaluated in (e.g.
+    /// `America/New_York`). Defaults to the account timezone, then UTC.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub schedule_timezone: Option<String>,
+    /// Max recipients fanned out per batch-day (1-100000). Omitted ⇒ send to
+    /// everyone at once.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub daily_batch_size: Option<u32>,
 }
 
 impl CreateCampaignOptions {
@@ -347,6 +355,18 @@ impl CreateCampaignOptions {
         self.scheduled_at = Some(scheduled_at.into());
         self
     }
+
+    /// IANA timezone the schedule + daily batching are evaluated in.
+    pub fn with_schedule_timezone(mut self, timezone: impl Into<String>) -> Self {
+        self.schedule_timezone = Some(timezone.into());
+        self
+    }
+
+    /// Max recipients fanned out per batch-day (1-100000).
+    pub fn with_daily_batch_size(mut self, size: u32) -> Self {
+        self.daily_batch_size = Some(size);
+        self
+    }
 }
 
 /// Options for `campaigns.update` (`PATCH /campaigns/:id`).
@@ -382,6 +402,25 @@ pub struct UpdateCampaignOptions {
     pub recurrence_every: Option<u16>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub ab_test: Option<CampaignAbTestOptions>,
+    /// Replace the pending engagement follow-ups (max 5); an empty vec clears
+    /// them.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub followups: Option<Vec<CampaignFollowup>>,
+    /// Show a generated mailing-list address as the visible To (`false`
+    /// clears it). Delivery stays individual.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub list_to: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub unsubscribe_policy: Option<UnsubscribePolicy>,
+    /// IANA timezone the schedule + daily batching are evaluated in;
+    /// `Some(None)` serializes as `null` (clears back to the account
+    /// timezone, then UTC).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub schedule_timezone: Option<Option<String>>,
+    /// Max recipients fanned out per batch-day (1-100000); `Some(None)`
+    /// serializes as `null` (clears — send to everyone at once).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub daily_batch_size: Option<Option<u32>>,
 }
 
 impl UpdateCampaignOptions {
@@ -463,6 +502,81 @@ impl UpdateCampaignOptions {
 
     pub fn with_ab_test(mut self, ab_test: CampaignAbTestOptions) -> Self {
         self.ab_test = Some(ab_test);
+        self
+    }
+
+    /// Append a follow-up to the replacement set ([] via `with_followups` to
+    /// clear).
+    pub fn with_followup(mut self, followup: CampaignFollowup) -> Self {
+        self.followups.get_or_insert_with(Vec::new).push(followup);
+        self
+    }
+
+    /// Replace the pending follow-ups wholesale (an empty vec clears them).
+    pub fn with_followups(mut self, followups: Vec<CampaignFollowup>) -> Self {
+        self.followups = Some(followups);
+        self
+    }
+
+    pub fn with_list_to(mut self, list_to: bool) -> Self {
+        self.list_to = Some(list_to);
+        self
+    }
+
+    pub fn with_unsubscribe_policy(mut self, policy: UnsubscribePolicy) -> Self {
+        self.unsubscribe_policy = Some(policy);
+        self
+    }
+
+    /// IANA timezone the schedule + daily batching are evaluated in.
+    pub fn with_schedule_timezone(mut self, timezone: impl Into<String>) -> Self {
+        self.schedule_timezone = Some(Some(timezone.into()));
+        self
+    }
+
+    /// Clear the schedule timezone (serializes `schedule_timezone: null`).
+    pub fn clear_schedule_timezone(mut self) -> Self {
+        self.schedule_timezone = Some(None);
+        self
+    }
+
+    /// Max recipients fanned out per batch-day (1-100000).
+    pub fn with_daily_batch_size(mut self, size: u32) -> Self {
+        self.daily_batch_size = Some(Some(size));
+        self
+    }
+
+    /// Clear daily batching (serializes `daily_batch_size: null`).
+    pub fn clear_daily_batch_size(mut self) -> Self {
+        self.daily_batch_size = Some(None);
+        self
+    }
+}
+
+/// Options for `campaigns.send` (`POST /campaigns/:id/send`).
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct SendCampaignOptions {
+    /// ISO 8601 (or natural-language) schedule; omitted ⇒ send now.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub scheduled_at: Option<String>,
+    /// IANA timezone persisted onto the campaign so daily batching evaluates
+    /// batch-days in that zone.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub schedule_timezone: Option<String>,
+}
+
+impl SendCampaignOptions {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn with_scheduled_at(mut self, scheduled_at: impl Into<String>) -> Self {
+        self.scheduled_at = Some(scheduled_at.into());
+        self
+    }
+
+    pub fn with_schedule_timezone(mut self, timezone: impl Into<String>) -> Self {
+        self.schedule_timezone = Some(timezone.into());
         self
     }
 }

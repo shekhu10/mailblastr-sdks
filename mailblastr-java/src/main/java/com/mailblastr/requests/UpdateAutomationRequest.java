@@ -27,6 +27,20 @@ public final class UpdateAutomationRequest implements JsonPayload {
         public Builder status(String status) { m.put("status", status); return this; }
         /** Re-point at another of your domains (disabled automations only). */
         public Builder domain(String domain) { m.put("domain", domain); return this; }
+        /**
+         * Update the {@code mailblastr:schedule} trigger's schedule. Only
+         * valid on automations with that trigger.
+         *
+         * @param at ISO 8601 instant the automation fires (future, at most 366 days ahead)
+         * @param timezone IANA timezone the schedule was picked in, e.g. {@code "America/New_York"}
+         */
+        public Builder triggerConfig(String at, String timezone) {
+            Map<String, Object> config = new LinkedHashMap<>();
+            config.put("at", at);
+            config.put("timezone", timezone);
+            m.put("trigger_config", config);
+            return this;
+        }
 
         @SuppressWarnings("unchecked")
         public Builder connection(AutomationConnection connection) {

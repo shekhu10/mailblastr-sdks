@@ -107,6 +107,22 @@ public class Automation
     public string? UpdatedAt { get; set; }
 }
 
+/// <summary>
+/// Config for the <c>mailblastr:schedule</c> trigger: the automation fires ONCE
+/// at <see cref="At"/>, enrolling every contact of its domain's pool. Required
+/// with that trigger; not accepted on any other.
+/// </summary>
+public class AutomationTriggerConfig
+{
+    /// <summary>ISO 8601 instant the automation fires (future, at most 366 days ahead).</summary>
+    [JsonPropertyName("at")]
+    public string At { get; set; } = null!;
+
+    /// <summary>IANA timezone the schedule was picked in (e.g. <c>America/New_York</c>).</summary>
+    [JsonPropertyName("timezone")]
+    public string Timezone { get; set; } = null!;
+}
+
 /// <summary>Payload for creating an automation (POST /automations). <see cref="Domain"/> is REQUIRED.</summary>
 public class AutomationCreateOptions
 {
@@ -122,13 +138,22 @@ public class AutomationCreateOptions
     public string Domain { get; set; } = null!;
 
     /// <summary>
-    /// The event that starts a run: <c>contact.created</c>, an engagement event
-    /// (<c>email.opened</c>, <c>email.clicked</c>, <c>email.replied</c>,
-    /// <c>email.bounced</c>, <c>email.delivered</c>), or any custom event name
-    /// you send via EventSendAsync. Usually supplied as a Steps[0] trigger step instead.
+    /// The event that starts a run: <c>contact.created</c>, the built-in
+    /// scheduled trigger <c>mailblastr:schedule</c> (requires
+    /// <see cref="TriggerConfig"/>), an engagement event (<c>email.opened</c>,
+    /// <c>email.clicked</c>, <c>email.replied</c>, <c>email.bounced</c>,
+    /// <c>email.delivered</c>), or any custom event name you send via
+    /// EventSendAsync. Usually supplied as a Steps[0] trigger step instead.
     /// </summary>
     [JsonPropertyName("trigger")]
     public string? Trigger { get; set; }
+
+    /// <summary>
+    /// Schedule for the <c>mailblastr:schedule</c> trigger (<c>{at, timezone}</c>).
+    /// Required with that trigger; not accepted on any other.
+    /// </summary>
+    [JsonPropertyName("trigger_config")]
+    public AutomationTriggerConfig? TriggerConfig { get; set; }
 
     /// <summary>Initial status: <c>enabled</c> | <c>disabled</c> (default <c>disabled</c>).</summary>
     [JsonPropertyName("status")]
@@ -156,6 +181,13 @@ public class AutomationUpdateOptions
     /// <summary>Re-point the automation at another of your domains (disabled automations only).</summary>
     [JsonPropertyName("domain")]
     public string? Domain { get; set; }
+
+    /// <summary>
+    /// Update the <c>mailblastr:schedule</c> trigger's schedule
+    /// (<c>{at, timezone}</c>). Only valid on automations with that trigger.
+    /// </summary>
+    [JsonPropertyName("trigger_config")]
+    public AutomationTriggerConfig? TriggerConfig { get; set; }
 
     [JsonPropertyName("connections")]
     public List<AutomationConnection>? Connections { get; set; }

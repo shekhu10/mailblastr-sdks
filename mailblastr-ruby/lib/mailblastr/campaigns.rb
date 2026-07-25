@@ -8,6 +8,9 @@ module Mailblastr
       # POST /campaigns
       #   Mailblastr::Campaigns.create({ domain: "yourdomain.com", from: "you@yourdomain.com",
       #                                  subject: "Hello", html: "<p>Hi</p>", segment_id: "seg_1" })
+      # Optional scheduling params: `schedule_timezone` (IANA zone the schedule +
+      # daily batching are evaluated in, e.g. "America/New_York") and
+      # `daily_batch_size` (max recipients per batch-day, 1-100000).
       def create(params)
         Client.require_domain!(params, "Campaigns.create")
         Client.request(:post, "/campaigns", body: params)
@@ -23,12 +26,18 @@ module Mailblastr
         Client.request(:get, "/campaigns", query: Client.pagination(params))
       end
 
-      # PATCH /campaigns/:id
+      # PATCH /campaigns/:id (draft campaigns only). Accepts the create-side
+      # fields plus `followups` (replace pending follow-ups, [] clears),
+      # `list_to` (true/false), `unsubscribe_policy` ("account" | "domain" |
+      # "ignore"), `schedule_timezone` (IANA zone; nil clears), and
+      # `daily_batch_size` (1-100000; nil clears).
       def update(campaign_id, params)
         Client.request(:patch, "/campaigns/#{Client.path_escape(campaign_id)}", body: params)
       end
 
-      # Send now, or schedule with { scheduled_at: "..." }. POST /campaigns/:id/send
+      # Send now, or schedule with { scheduled_at: "..." }. An optional
+      # `schedule_timezone` (IANA name) is persisted onto the campaign so daily
+      # batching evaluates batch-days in that zone. POST /campaigns/:id/send
       def send(campaign_id, params = {})
         Client.request(:post, "/campaigns/#{Client.path_escape(campaign_id)}/send", body: params)
       end

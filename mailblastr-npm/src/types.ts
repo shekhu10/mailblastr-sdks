@@ -68,6 +68,12 @@ export interface SendEmailOptions {
   /** Values for the template's {{ placeholder }} variables. */
   variables?: Record<string, string | number | boolean | null>;
 }
+/**
+ * A single email in a batch send (POST /emails/batch). Identical to
+ * {@link SendEmailOptions} minus `attachments` and `scheduled_at` — the batch
+ * endpoint rejects both per item; send those individually via POST /emails.
+ */
+export type BatchEmailOptions = Omit<SendEmailOptions, 'attachments' | 'scheduled_at'>;
 export interface CreateEmailResponse { id: string }
 export interface EmailEvent { type: string; created_at: string }
 export interface Email {
@@ -114,6 +120,24 @@ export interface SentEmailListItem {
   last_event: string;
   scheduled_at: string | null;
   created_at: string;
+}
+
+/** Params for `mb.emails.list()` — cursor pagination plus source filters. */
+export interface ListEmailsParams extends PaginationParams {
+  /** Only emails sent by this campaign. Takes precedence over `automation_id`/`source`. */
+  campaign_id?: string;
+  /** Only emails sent by this automation. */
+  automation_id?: string;
+  /** `'individual'` restricts to one-off API sends (no campaign/automation). */
+  source?: 'individual';
+  /** Only emails sent from this sending domain (domain id). Composes with the source filters. */
+  domain_id?: string;
+}
+
+/** Params for `mb.emails.receiving.list()` — cursor pagination plus filters. */
+export interface ListReceivedEmailsParams extends PaginationParams {
+  /** Only messages received for this address (matches the `received_for` recipients). */
+  received_for?: string;
 }
 
 // ---- Domains ----
@@ -410,10 +434,20 @@ export interface CreateCampaignOptions {
    * 'ignore' (opt-outs skipped; bounced/complained addresses ALWAYS excluded).
    */
   unsubscribe_policy?: 'account' | 'domain' | 'ignore';
-  /** Send immediately on create (or schedule it when `scheduled_at` is given). */
+  /** Send immediately on create (or schedule it when `send` is true and `scheduled_at` is given). */
   send?: boolean;
   /** ISO 8601 (or natural-language) schedule used when `send` is true. */
   scheduled_at?: string;
+  /**
+   * IANA timezone the schedule + daily batching are evaluated in (e.g.
+   * `'America/New_York'`). Defaults to the account timezone, then UTC.
+   */
+  schedule_timezone?: string | null;
+  /**
+   * Max recipients fanned out per batch-day (1-100000). Omit/null sends to
+   * everyone at once.
+   */
+  daily_batch_size?: number | null;
 }
 export interface UpdateCampaignOptions {
   name?: string;
@@ -439,6 +473,33 @@ export interface UpdateCampaignOptions {
   recurrence_every?: number;
   /** Update the A/B-test configuration. */
   ab_test?: CampaignAbTest;
+  /**
+   * Replace the pending engagement follow-ups (max 5). Same shape as on
+   * create; an empty array clears them.
+   */
+  followups?: Array<{
+    condition: 'opened' | 'clicked' | 'not_opened' | 'not_clicked' | 'replied' | 'not_replied';
+    /** Natural-language duration, e.g. '5 hours' or '4 days' (max 30 days). */
+    delay: string;
+    /** Defaults to `Re: <campaign subject>` (keeps the thread). */
+    subject?: string;
+    html: string;
+  }>;
+  /** Enable (true) or clear (false) the generated mailing-list To address. */
+  list_to?: boolean;
+  /**
+   * How the unsubscribe list applies: 'account' (default — any opt-out blocks),
+   * 'domain' (only this sending domain's + account-wide opt-outs block), or
+   * 'ignore' (opt-outs skipped; bounced/complained addresses ALWAYS excluded).
+   */
+  unsubscribe_policy?: 'account' | 'domain' | 'ignore';
+  /**
+   * IANA timezone the schedule + daily batching are evaluated in (pass null to
+   * clear back to the account timezone, then UTC).
+   */
+  schedule_timezone?: string | null;
+  /** Max recipients fanned out per batch-day (1-100000; pass null to clear). */
+  daily_batch_size?: number | null;
 }
 /** Per-campaign analytics returned by GET /campaigns/:id/stats. */
 export interface CampaignStats {
@@ -789,6 +850,17 @@ export interface UpdateTopicOptions {
 }
 
 // ---- Automations ----
+/**
+ * Config for the `'mailblastr:schedule'` trigger: the automation fires ONCE at
+ * `at`, enrolling every contact of its domain's pool. Required when the
+ * trigger is `'mailblastr:schedule'`; not accepted on any other trigger.
+ */
+export interface AutomationTriggerConfig {
+  /** ISO 8601 instant the automation fires (future, at most 366 days ahead). */
+  at: string;
+  /** IANA timezone the schedule was picked in (e.g. 'America/New_York'). */
+  timezone: string;
+}
 export interface AutomationStep {
   /** Absent on the synthesized trigger step. */
   id?: string;
@@ -834,6 +906,9 @@ export interface CreateAutomationOptions {
   /**
    * The event that starts a run. One of:
    * - `'contact.created'` (built-in audience trigger)
+   * - `'mailblastr:schedule'` (built-in scheduled trigger — fires once at
+   *   `trigger_config.at`, enrolling every contact of the domain's pool;
+   *   requires `trigger_config`)
    * - an engagement event: `'email.opened'`, `'email.clicked'`, `'email.replied'`,
    *   `'email.bounced'`, `'email.delivered'` (the contact is enrolled on that event
    *   for one of your non-automation sends)
@@ -841,6 +916,11 @@ export interface CreateAutomationOptions {
    * Usually supplied as a steps[0] trigger step instead.
    */
   trigger?: string;
+  /**
+   * Schedule for the `'mailblastr:schedule'` trigger ({ at, timezone }).
+   * Required with that trigger; not accepted on any other.
+   */
+  trigger_config?: AutomationTriggerConfig;
   /** Initial status: 'enabled' | 'disabled' (default 'disabled'). */
   status?: 'enabled' | 'disabled' | (string & {});
   /** Optional inline step graph; each step may carry a `key` for connections. */
@@ -853,6 +933,11 @@ export interface UpdateAutomationOptions {
   status?: 'enabled' | 'disabled' | (string & {});
   /** Re-point the automation at another of your domains (disabled automations only). */
   domain?: string;
+  /**
+   * Update the `'mailblastr:schedule'` trigger's schedule ({ at, timezone }).
+   * Only valid on automations with that trigger.
+   */
+  trigger_config?: AutomationTriggerConfig;
   connections?: Array<{ from: string; to: string; type?: string }>;
 }
 export interface AddAutomationStepOptions {

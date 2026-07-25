@@ -1,6 +1,6 @@
 'use strict';
 
-const { collect, clean, withPagination, pagination } = require('../helpers');
+const { collect, clean, toInt, withPagination, pagination } = require('../helpers');
 
 function register({ group, leaf, act }) {
   const campaigns = group('campaigns', "Manage campaigns (bulk sends to a domain's contact pool)");
@@ -16,7 +16,9 @@ function register({ group, leaf, act }) {
       .option('--segment-id <id>', 'target a segment instead of the whole pool')
       .option('--topic-id <id>', 'gate recipients by a topic subscription')
       .option('--reply-to <address>', 'reply-to address (repeatable or comma-separated)', collect)
-      .option('--preview-text <text>', 'inbox preview text'),
+      .option('--preview-text <text>', 'inbox preview text')
+      .option('--schedule-timezone <tz>', "IANA timezone the schedule + daily batching are evaluated in, e.g. 'America/New_York'")
+      .option('--daily-batch-size <n>', 'max recipients fanned out per batch-day (1-100000)'),
     ({ client, opts }) =>
       client.campaigns.create(
         clean({
@@ -30,17 +32,23 @@ function register({ group, leaf, act }) {
           topic_id: opts.topicId,
           reply_to: opts.replyTo,
           preview_text: opts.previewText,
+          schedule_timezone: opts.scheduleTimezone,
+          daily_batch_size: toInt(opts.dailyBatchSize, '--daily-batch-size'),
         }),
       ),
   );
 
   act(
-    leaf(campaigns, 'send <id>', 'Send a campaign now, or schedule it').option(
-      '--scheduled-at <iso>',
-      'ISO 8601 timestamp to schedule the send',
-    ),
-    ({ client, opts, args: [id] }) =>
-      client.campaigns.send(id, opts.scheduledAt ? { scheduled_at: opts.scheduledAt } : undefined),
+    leaf(campaigns, 'send <id>', 'Send a campaign now, or schedule it')
+      .option('--scheduled-at <iso>', 'ISO 8601 timestamp to schedule the send')
+      .option('--schedule-timezone <tz>', 'IANA timezone daily batching evaluates batch-days in'),
+    ({ client, opts, args: [id] }) => {
+      const payload = clean({
+        scheduled_at: opts.scheduledAt,
+        schedule_timezone: opts.scheduleTimezone,
+      });
+      return client.campaigns.send(id, Object.keys(payload).length ? payload : undefined);
+    },
   );
 
   act(leaf(campaigns, 'get <id>', 'Retrieve a campaign'), ({ client, args: [id] }) =>
@@ -60,7 +68,9 @@ function register({ group, leaf, act }) {
       .option('--name <name>', 'internal campaign name')
       .option('--segment-id <id>', 're-target a segment')
       .option('--topic-id <id>', 're-target a topic gate')
-      .option('--preview-text <text>', 'inbox preview text'),
+      .option('--preview-text <text>', 'inbox preview text')
+      .option('--schedule-timezone <tz>', "IANA timezone the schedule + daily batching are evaluated in, e.g. 'America/New_York'")
+      .option('--daily-batch-size <n>', 'max recipients fanned out per batch-day (1-100000)'),
     ({ client, opts, args: [id] }) =>
       client.campaigns.update(
         id,
@@ -73,6 +83,8 @@ function register({ group, leaf, act }) {
           segment_id: opts.segmentId,
           topic_id: opts.topicId,
           preview_text: opts.previewText,
+          schedule_timezone: opts.scheduleTimezone,
+          daily_batch_size: toInt(opts.dailyBatchSize, '--daily-batch-size'),
         }),
       ),
   );

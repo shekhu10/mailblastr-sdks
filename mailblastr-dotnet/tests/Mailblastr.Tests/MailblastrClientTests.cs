@@ -57,8 +57,8 @@ public class MailblastrClientTests
 
         var results = await client.EmailBatchAsync(new[]
         {
-            new EmailMessage { From = "a@b.com", To = "x@y.com", Subject = "1" },
-            new EmailMessage { From = "a@b.com", To = "z@y.com", Subject = "2" },
+            new BatchEmailMessage { From = "a@b.com", To = "x@y.com", Subject = "1" },
+            new BatchEmailMessage { From = "a@b.com", To = "z@y.com", Subject = "2" },
         });
 
         Assert.Equal("https://www.mailblastr.com/api/emails/batch", stub.LastRequest.RequestUri!.AbsoluteUri);

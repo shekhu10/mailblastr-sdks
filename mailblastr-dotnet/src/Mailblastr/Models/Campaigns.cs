@@ -273,6 +273,17 @@ public class CampaignCreateOptions
     /// <summary>ISO 8601 (or natural-language) schedule used when <see cref="Send"/> is true.</summary>
     [JsonPropertyName("scheduled_at")]
     public string? ScheduledAt { get; set; }
+
+    /// <summary>
+    /// IANA timezone the schedule + daily batching are evaluated in (e.g.
+    /// <c>America/New_York</c>). Defaults to the account timezone, then UTC.
+    /// </summary>
+    [JsonPropertyName("schedule_timezone")]
+    public string? ScheduleTimezone { get; set; }
+
+    /// <summary>Max recipients fanned out per batch-day (1-100000). Omitted ⇒ everyone at once.</summary>
+    [JsonPropertyName("daily_batch_size")]
+    public int? DailyBatchSize { get; set; }
 }
 
 /// <summary>
@@ -322,6 +333,51 @@ public class CampaignUpdateOptions
 
     [JsonPropertyName("ab_test")]
     public CampaignAbTest? AbTest { get; set; }
+
+    /// <summary>Replace the pending engagement follow-ups (max 5); an empty list clears them.</summary>
+    [JsonPropertyName("followups")]
+    public List<CampaignFollowup>? Followups { get; set; }
+
+    /// <summary>Enable (<c>true</c>) or clear (<c>false</c>) the generated mailing-list To address.</summary>
+    [JsonPropertyName("list_to")]
+    public bool? ListTo { get; set; }
+
+    /// <summary>
+    /// How the unsubscribe list applies: <c>account</c> (default), <c>domain</c>,
+    /// or <c>ignore</c> (bounced/complained addresses are ALWAYS excluded).
+    /// </summary>
+    [JsonPropertyName("unsubscribe_policy")]
+    public string? UnsubscribePolicy { get; set; }
+
+    /// <summary>
+    /// IANA timezone the schedule + daily batching are evaluated in (e.g.
+    /// <c>America/New_York</c>). Null is omitted from the request (clearing back
+    /// to the account timezone requires an explicit JSON null, which this class
+    /// does not express — see the class remarks).
+    /// </summary>
+    [JsonPropertyName("schedule_timezone")]
+    public string? ScheduleTimezone { get; set; }
+
+    /// <summary>Max recipients fanned out per batch-day (1-100000).</summary>
+    [JsonPropertyName("daily_batch_size")]
+    public int? DailyBatchSize { get; set; }
+}
+
+/// <summary>
+/// Options for sending (or scheduling) a campaign (POST /campaigns/:id/send).
+/// </summary>
+public class CampaignSendOptions
+{
+    /// <summary>ISO 8601 (or natural-language) schedule; null sends immediately.</summary>
+    [JsonPropertyName("scheduled_at")]
+    public string? ScheduledAt { get; set; }
+
+    /// <summary>
+    /// IANA timezone (e.g. <c>America/New_York</c>) persisted onto the campaign
+    /// so daily batching evaluates batch-days in that zone.
+    /// </summary>
+    [JsonPropertyName("schedule_timezone")]
+    public string? ScheduleTimezone { get; set; }
 }
 
 /// <summary>Per-campaign analytics (GET /campaigns/:id/stats).</summary>

@@ -10,7 +10,8 @@ use serde_json::json;
 
 use crate::client::{page_query, seg, Config};
 use crate::services::campaign_types::{
-    Campaign, CampaignAbResult, CampaignStats, CreateCampaignOptions, UpdateCampaignOptions,
+    Campaign, CampaignAbResult, CampaignStats, CreateCampaignOptions, SendCampaignOptions,
+    UpdateCampaignOptions,
 };
 use crate::types::{IdResponse, ListResponse, PaginationParams, RemovedResponse, Result};
 
@@ -66,7 +67,9 @@ impl CampaignsSvc {
             .await
     }
 
-    /// Send now, or schedule with `scheduled_at`. `POST /campaigns/:id/send`
+    /// Send now, or schedule with `scheduled_at`. For the optional
+    /// `schedule_timezone` use [`send_with_options`](Self::send_with_options).
+    /// `POST /campaigns/:id/send`
     pub async fn send(&self, campaign_id: &str, scheduled_at: Option<&str>) -> Result<IdResponse> {
         let path = format!("/campaigns/{}/send", seg(campaign_id));
         let body = match scheduled_at {
@@ -75,6 +78,21 @@ impl CampaignsSvc {
         };
         self.config
             .send(self.config.request(Method::POST, &path).json(&body))
+            .await
+    }
+
+    /// Send now, or schedule with [`SendCampaignOptions`] — `scheduled_at`
+    /// plus an optional `schedule_timezone` (IANA name, persisted onto the
+    /// campaign so daily batching evaluates batch-days in that zone).
+    /// `POST /campaigns/:id/send`
+    pub async fn send_with_options(
+        &self,
+        campaign_id: &str,
+        options: SendCampaignOptions,
+    ) -> Result<IdResponse> {
+        let path = format!("/campaigns/{}/send", seg(campaign_id));
+        self.config
+            .send(self.config.request(Method::POST, &path).json(&options))
             .await
     }
 

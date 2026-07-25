@@ -12,13 +12,22 @@ module Mailblastr
       end
 
       # Send up to 100 emails in one request. POST /emails/batch (alias of Batch.send).
+      # Batch items reject `attachments` and `scheduled_at` — send those
+      # individually via Emails.send.
       def batch(payloads, options = {})
         Client.request(:post, "/emails/batch", body: payloads, options: options)
       end
 
-      # List sent emails (trimmed list items). GET /emails
+      # List sent emails (trimmed list items) — cursor pagination plus optional
+      # server-side `campaign_id`, `automation_id`, `source` ("individual"),
+      # and `domain_id` filters. GET /emails
       def list(params = {})
-        Client.request(:get, "/emails", query: Client.pagination(params))
+        query = Client.pagination(params)
+        %i[campaign_id automation_id source domain_id].each do |k|
+          v = Client.opt(params, k)
+          query[k] = v unless v.nil?
+        end
+        Client.request(:get, "/emails", query: query)
       end
 
       # Retrieve a sent email and its events. GET /emails/:id
@@ -51,9 +60,14 @@ module Mailblastr
     # Inbound (received) email.
     module Receiving
       class << self
-        # List received emails. GET /emails/receiving
+        # List received emails — cursor pagination plus an optional
+        # `received_for` filter (only messages received for that address).
+        # GET /emails/receiving
         def list(params = {})
-          Client.request(:get, "/emails/receiving", query: Client.pagination(params))
+          query = Client.pagination(params)
+          received_for = Client.opt(params, :received_for)
+          query[:received_for] = received_for unless received_for.nil?
+          Client.request(:get, "/emails/receiving", query: query)
         end
 
         # Retrieve a received email. GET /emails/receiving/:id
@@ -103,6 +117,8 @@ module Mailblastr
   end
 
   # Batch send — Mailblastr::Batch.send([...]). POST /emails/batch
+  # Batch items reject `attachments` and `scheduled_at` — send those
+  # individually via Mailblastr::Emails.send.
   module Batch
     class << self
       def send(payloads, options = {})

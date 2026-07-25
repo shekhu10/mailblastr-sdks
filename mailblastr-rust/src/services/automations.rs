@@ -118,6 +118,26 @@ impl ConnectionInput {
     }
 }
 
+/// Config for the `mailblastr:schedule` trigger: the automation fires ONCE
+/// at `at`, enrolling every contact of its domain's pool. Required with that
+/// trigger; not accepted on any other.
+#[derive(Debug, Clone, Serialize)]
+pub struct AutomationTriggerConfig {
+    /// ISO 8601 instant the automation fires (future, at most 366 days ahead).
+    pub at: String,
+    /// IANA timezone the schedule was picked in (e.g. `America/New_York`).
+    pub timezone: String,
+}
+
+impl AutomationTriggerConfig {
+    pub fn new(at: impl Into<String>, timezone: impl Into<String>) -> Self {
+        Self {
+            at: at.into(),
+            timezone: timezone.into(),
+        }
+    }
+}
+
 /// Options for `automations.create` (`POST /automations`).
 #[derive(Debug, Clone, Default, Serialize)]
 pub struct CreateAutomationOptions {
@@ -125,12 +145,18 @@ pub struct CreateAutomationOptions {
     /// REQUIRED. The sending domain this automation belongs to. Only
     /// `events.send` calls with the same `domain` trigger it.
     pub domain: String,
-    /// The event that starts a run: `contact.created`, an engagement event
-    /// (`email.opened` / `email.clicked` / `email.replied` / `email.bounced`
-    /// / `email.delivered`), or any custom event name you send via
-    /// `events.send`. Usually supplied as a `steps[0]` trigger step instead.
+    /// The event that starts a run: `contact.created`, the built-in scheduled
+    /// trigger `mailblastr:schedule` (requires `trigger_config`), an
+    /// engagement event (`email.opened` / `email.clicked` / `email.replied`
+    /// / `email.bounced` / `email.delivered`), or any custom event name you
+    /// send via `events.send`. Usually supplied as a `steps[0]` trigger step
+    /// instead.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub trigger: Option<String>,
+    /// Schedule for the `mailblastr:schedule` trigger (`{at, timezone}`).
+    /// Required with that trigger; not accepted on any other.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub trigger_config: Option<AutomationTriggerConfig>,
     /// Initial status: `enabled` | `disabled` (default `disabled`).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub status: Option<String>,
@@ -153,6 +179,12 @@ impl CreateAutomationOptions {
 
     pub fn with_trigger(mut self, trigger: impl Into<String>) -> Self {
         self.trigger = Some(trigger.into());
+        self
+    }
+
+    /// Schedule for the `mailblastr:schedule` trigger (`{at, timezone}`).
+    pub fn with_trigger_config(mut self, trigger_config: AutomationTriggerConfig) -> Self {
+        self.trigger_config = Some(trigger_config);
         self
     }
 
@@ -185,6 +217,10 @@ pub struct UpdateAutomationOptions {
     /// Re-point at another of your domains (disabled automations only).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub domain: Option<String>,
+    /// Update the `mailblastr:schedule` trigger's schedule (`{at, timezone}`).
+    /// Only valid on automations with that trigger.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub trigger_config: Option<AutomationTriggerConfig>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub connections: Option<Vec<ConnectionInput>>,
 }
@@ -206,6 +242,12 @@ impl UpdateAutomationOptions {
 
     pub fn with_domain(mut self, domain: impl Into<String>) -> Self {
         self.domain = Some(domain.into());
+        self
+    }
+
+    /// Update the `mailblastr:schedule` trigger's schedule (`{at, timezone}`).
+    pub fn with_trigger_config(mut self, trigger_config: AutomationTriggerConfig) -> Self {
+        self.trigger_config = Some(trigger_config);
         self
     }
 

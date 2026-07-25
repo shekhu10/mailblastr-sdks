@@ -2,7 +2,8 @@ import { createHmac, timingSafeEqual } from 'node:crypto';
 import { HttpClient, type ClientConfig, DEFAULT_BASE_URL, VERSION, USER_AGENT } from './client';
 import type {
   Result, RequestOptions, PaginationParams, ObjectRef,
-  SendEmailOptions, CreateEmailResponse, Email, SentEmailListItem,
+  SendEmailOptions, BatchEmailOptions, CreateEmailResponse, Email, SentEmailListItem,
+  ListEmailsParams, ListReceivedEmailsParams,
   AttachmentMeta, ReceivedAttachment, ReceivedEmail, ForwardReceivedEmailOptions,
   CreateDomainOptions, UpdateDomainOptions, Domain, MxCheckResponse,
   DomainClaim, ClaimDomainOptions,
@@ -54,9 +55,15 @@ function paginate(params?: PaginationParams): string {
 /** Inbound (received) email — accessed as `mb.emails.receiving`. */
 class ReceivingEmails {
   constructor(private readonly http: HttpClient) {}
-  /** List received emails. GET /emails/receiving */
-  list(params?: PaginationParams): Promise<Result<ListResponse<ReceivedEmail>>> {
-    return this.http.request('GET', `/emails/receiving${paginate(params)}`);
+  /** List received emails. GET /emails/receiving — optional `received_for` filter. */
+  list(params?: ListReceivedEmailsParams): Promise<Result<ListResponse<ReceivedEmail>>> {
+    const q = new URLSearchParams();
+    if (params?.limit != null) q.set('limit', String(params.limit));
+    if (params?.after != null) q.set('after', params.after);
+    if (params?.before != null) q.set('before', params.before);
+    if (params?.received_for != null) q.set('received_for', params.received_for);
+    const qs = q.toString();
+    return this.http.request('GET', `/emails/receiving${qs ? `?${qs}` : ''}`);
   }
   /** Retrieve a received email. GET /emails/receiving/:id */
   get(id: string): Promise<Result<ReceivedEmail>> {
@@ -110,13 +117,30 @@ class Emails {
   send(payload: SendEmailOptions, options?: RequestOptions): Promise<Result<CreateEmailResponse>> {
     return this.http.request('POST', '/emails', payload, options);
   }
-  /** Send up to 100 emails in one request. POST /emails/batch (alias of `mb.batch.send`). */
-  batch(payloads: SendEmailOptions[], options?: RequestOptions): Promise<Result<{ data: CreateEmailResponse[] }>> {
+  /**
+   * Send up to 100 emails in one request. POST /emails/batch (alias of
+   * `mb.batch.send`). Batch items reject `attachments` and `scheduled_at` —
+   * send those individually via `emails.send`.
+   */
+  batch(payloads: BatchEmailOptions[], options?: RequestOptions): Promise<Result<{ data: CreateEmailResponse[] }>> {
     return this.http.request('POST', '/emails/batch', payloads, options);
   }
-  /** List sent emails. GET /emails — returns trimmed {@link SentEmailListItem}s (no status/html/text/events). */
-  list(params?: PaginationParams): Promise<Result<ListResponse<SentEmailListItem>>> {
-    return this.http.request('GET', `/emails${paginate(params)}`);
+  /**
+   * List sent emails. GET /emails — returns trimmed {@link SentEmailListItem}s
+   * (no status/html/text/events). Optional filters: `campaign_id`,
+   * `automation_id`, `source: 'individual'`, and `domain_id`.
+   */
+  list(params?: ListEmailsParams): Promise<Result<ListResponse<SentEmailListItem>>> {
+    const q = new URLSearchParams();
+    if (params?.limit != null) q.set('limit', String(params.limit));
+    if (params?.after != null) q.set('after', params.after);
+    if (params?.before != null) q.set('before', params.before);
+    if (params?.campaign_id != null) q.set('campaign_id', params.campaign_id);
+    if (params?.automation_id != null) q.set('automation_id', params.automation_id);
+    if (params?.source != null) q.set('source', params.source);
+    if (params?.domain_id != null) q.set('domain_id', params.domain_id);
+    const qs = q.toString();
+    return this.http.request('GET', `/emails${qs ? `?${qs}` : ''}`);
   }
   /** Retrieve a sent email and its events. GET /emails/:id */
   get(id: string): Promise<Result<Email>> {
@@ -143,8 +167,12 @@ class Emails {
 /** Batch send — `mb.batch.send([...])`. The `batch` resource. */
 class Batch {
   constructor(private readonly http: HttpClient) {}
-  /** Send up to 100 emails in one request. POST /emails/batch */
-  send(payloads: SendEmailOptions[], options?: RequestOptions): Promise<Result<{ data: CreateEmailResponse[] }>> {
+  /**
+   * Send up to 100 emails in one request. POST /emails/batch. Batch items
+   * reject `attachments` and `scheduled_at` — send those individually via
+   * `emails.send`.
+   */
+  send(payloads: BatchEmailOptions[], options?: RequestOptions): Promise<Result<{ data: CreateEmailResponse[] }>> {
     return this.http.request('POST', '/emails/batch', payloads, options);
   }
 }
@@ -403,8 +431,12 @@ class Campaigns {
   update(id: string, payload: UpdateCampaignOptions): Promise<Result<{ id: string }>> {
     return this.http.request('PATCH', p`/campaigns/${id}`, payload);
   }
-  /** Send now, or schedule with { scheduled_at }. */
-  send(id: string, payload?: { scheduled_at?: string }): Promise<Result<{ id: string }>> {
+  /**
+   * Send now, or schedule with { scheduled_at }. `schedule_timezone` (IANA
+   * name) is persisted onto the campaign so daily batching evaluates
+   * batch-days in that zone.
+   */
+  send(id: string, payload?: { scheduled_at?: string; schedule_timezone?: string }): Promise<Result<{ id: string }>> {
     return this.http.request('POST', p`/campaigns/${id}/send`, payload ?? {});
   }
   /** Cancel a scheduled campaign (returns it to draft). POST /campaigns/:id/cancel */

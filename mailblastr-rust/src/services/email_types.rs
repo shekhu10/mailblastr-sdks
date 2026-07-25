@@ -251,6 +251,131 @@ impl CreateEmailBaseOptions {
     }
 }
 
+/// A single email in a batch send (`POST /emails/batch`). Identical to
+/// [`CreateEmailBaseOptions`] minus `attachments` and `scheduled_at` — the
+/// batch endpoint rejects both per item; send those individually via
+/// `emails.send`.
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct BatchEmailOptions {
+    pub from: String,
+    pub to: Vec<String>,
+    pub subject: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cc: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub bcc: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reply_to: Option<Vec<String>>,
+    /// HTML body. Markdown-style `[text](url)` links and bare URLs in the
+    /// body text are converted to tracked hyperlinks automatically at send
+    /// time.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub html: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub text: Option<String>,
+    /// Inbox preview text (preheader). Max 150 characters.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub preview_text: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub headers: Option<HashMap<String, String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tags: Option<Vec<Tag>>,
+    /// Drop recipients unsubscribed from this topic (topic gating).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub topic_id: Option<String>,
+    /// Send using a saved template; its subject/html/text fill any omitted field.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub template_id: Option<String>,
+    /// Nested template reference (`template` OR `html`/`text`, not both).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub template: Option<TemplateRef>,
+    /// Values for the template's `{{ placeholder }}` variables.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub variables: Option<Map<String, Value>>,
+}
+
+impl BatchEmailOptions {
+    pub fn new(
+        from: impl Into<String>,
+        to: impl IntoIterator<Item = impl Into<String>>,
+        subject: impl Into<String>,
+    ) -> Self {
+        Self {
+            from: from.into(),
+            to: to.into_iter().map(Into::into).collect(),
+            subject: subject.into(),
+            ..Default::default()
+        }
+    }
+
+    pub fn with_cc(mut self, cc: impl IntoIterator<Item = impl Into<String>>) -> Self {
+        self.cc = Some(cc.into_iter().map(Into::into).collect());
+        self
+    }
+
+    pub fn with_bcc(mut self, bcc: impl IntoIterator<Item = impl Into<String>>) -> Self {
+        self.bcc = Some(bcc.into_iter().map(Into::into).collect());
+        self
+    }
+
+    pub fn with_reply_to(mut self, reply_to: impl IntoIterator<Item = impl Into<String>>) -> Self {
+        self.reply_to = Some(reply_to.into_iter().map(Into::into).collect());
+        self
+    }
+
+    pub fn with_html(mut self, html: impl Into<String>) -> Self {
+        self.html = Some(html.into());
+        self
+    }
+
+    pub fn with_text(mut self, text: impl Into<String>) -> Self {
+        self.text = Some(text.into());
+        self
+    }
+
+    pub fn with_preview_text(mut self, preview_text: impl Into<String>) -> Self {
+        self.preview_text = Some(preview_text.into());
+        self
+    }
+
+    pub fn with_header(mut self, name: impl Into<String>, value: impl Into<String>) -> Self {
+        self.headers
+            .get_or_insert_with(HashMap::new)
+            .insert(name.into(), value.into());
+        self
+    }
+
+    pub fn with_tag(mut self, name: impl Into<String>, value: impl Into<String>) -> Self {
+        self.tags.get_or_insert_with(Vec::new).push(Tag {
+            name: name.into(),
+            value: value.into(),
+        });
+        self
+    }
+
+    pub fn with_topic_id(mut self, topic_id: impl Into<String>) -> Self {
+        self.topic_id = Some(topic_id.into());
+        self
+    }
+
+    pub fn with_template_id(mut self, template_id: impl Into<String>) -> Self {
+        self.template_id = Some(template_id.into());
+        self
+    }
+
+    pub fn with_template(mut self, template: TemplateRef) -> Self {
+        self.template = Some(template);
+        self
+    }
+
+    pub fn with_variable(mut self, key: impl Into<String>, value: impl Into<Value>) -> Self {
+        self.variables
+            .get_or_insert_with(Map::new)
+            .insert(key.into(), value.into());
+        self
+    }
+}
+
 /// Reply to a received email's sender, threaded into the same conversation.
 #[derive(Debug, Clone, Default, Serialize)]
 pub struct ReplyReceivedEmailOptions {

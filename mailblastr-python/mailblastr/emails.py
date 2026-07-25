@@ -3,7 +3,7 @@
 from typing import Any, Dict, List, TypedDict, Union
 
 from . import http_client
-from .http_client import paginate, path_escape as _e
+from .http_client import build_query, paginate, path_escape as _e
 
 
 class Attachment(TypedDict, total=False):
@@ -46,6 +46,23 @@ SendParams = TypedDict(
 
 UpdateParams = TypedDict("UpdateParams", {"scheduled_at": str})
 
+
+class ListParams(TypedDict, total=False):
+    limit: int
+    after: str
+    before: str
+    campaign_id: str  # only emails sent by this campaign
+    automation_id: str  # only emails sent by this automation
+    source: str  # 'individual' restricts to one-off API sends
+    domain_id: str  # only emails sent from this sending domain (domain id)
+
+
+class ReceivingListParams(TypedDict, total=False):
+    limit: int
+    after: str
+    before: str
+    received_for: str  # only messages received for this address
+
 ForwardParams = TypedDict(
     "ForwardParams",
     {
@@ -73,6 +90,7 @@ class Emails:
 
     SendParams = SendParams
     UpdateParams = UpdateParams
+    ListParams = ListParams
     Attachment = Attachment
     Tag = Tag
 
@@ -97,11 +115,22 @@ class Emails:
 
         ForwardParams = ForwardParams
         ReplyParams = ReplyParams
+        ListParams = ReceivingListParams
 
         @classmethod
         def list(cls, params=None):
-            """List received emails. GET /emails/receiving"""
-            return http_client.request("GET", f"/emails/receiving{paginate(params)}")
+            """List received emails, optionally filtered by ``received_for``
+            (only messages received for that address). GET /emails/receiving"""
+            params = params or {}
+            qs = build_query(
+                {
+                    "limit": params.get("limit"),
+                    "after": params.get("after"),
+                    "before": params.get("before"),
+                    "received_for": params.get("received_for"),
+                }
+            )
+            return http_client.request("GET", f"/emails/receiving{qs}")
 
         @classmethod
         def get(cls, email_id):
@@ -155,14 +184,30 @@ class Emails:
     @classmethod
     def batch(cls, params, options=None):
         """Send up to 100 emails in one request. POST /emails/batch
-        (alias of ``mailblastr.Batch.send``)."""
+        (alias of ``mailblastr.Batch.send``).
+
+        Batch items reject ``attachments`` and ``scheduled_at`` — send those
+        individually via :meth:`send`."""
         return http_client.request("POST", "/emails/batch", params, options)
 
     @classmethod
     def list(cls, params=None):
         """List sent emails (trimmed list items — no status/html/text/events).
-        GET /emails"""
-        return http_client.request("GET", f"/emails{paginate(params)}")
+        Optional filters: ``campaign_id``, ``automation_id``,
+        ``source='individual'``, and ``domain_id``. GET /emails"""
+        params = params or {}
+        qs = build_query(
+            {
+                "limit": params.get("limit"),
+                "after": params.get("after"),
+                "before": params.get("before"),
+                "campaign_id": params.get("campaign_id"),
+                "automation_id": params.get("automation_id"),
+                "source": params.get("source"),
+                "domain_id": params.get("domain_id"),
+            }
+        )
+        return http_client.request("GET", f"/emails{qs}")
 
     @classmethod
     def get(cls, email_id):

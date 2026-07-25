@@ -11,7 +11,10 @@ from .http_client import paginate, path_escape as _e
 class CreateParams(TypedDict, total=False):
     name: str  # required
     domain: str  # REQUIRED: the sending domain this automation belongs to
-    trigger: str  # e.g. 'contact.created', 'email.opened', or a custom event name
+    trigger: str  # e.g. 'contact.created', 'mailblastr:schedule', 'email.opened', or a custom event name
+    # {'at': ISO 8601 instant, 'timezone': IANA name} — required with the
+    # 'mailblastr:schedule' trigger; not accepted on any other.
+    trigger_config: Dict[str, str]
     status: str  # 'enabled' | 'disabled' (default 'disabled')
     steps: List[Dict[str, Any]]  # optional inline step graph
     connections: List[Dict[str, str]]  # optional typed edges between step keys
@@ -21,6 +24,8 @@ class UpdateParams(TypedDict, total=False):
     name: str
     status: str  # 'enabled' | 'disabled'
     domain: str  # re-point at another domain (disabled automations only)
+    # {'at', 'timezone'} — update the 'mailblastr:schedule' trigger's schedule.
+    trigger_config: Dict[str, str]
     connections: List[Dict[str, str]]
 
 

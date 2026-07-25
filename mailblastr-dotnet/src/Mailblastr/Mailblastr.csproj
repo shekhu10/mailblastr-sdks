@@ -8,7 +8,7 @@
     <RootNamespace>Mailblastr</RootNamespace>
 
     <PackageId>Mailblastr</PackageId>
-    <Version>1.1.0</Version>
+    <Version>1.2.0</Version>
     <Authors>MailBlastr</Authors>
     <Company>MailBlastr</Company>
     <Description>Official MailBlastr .NET SDK — send transactional and marketing email from your own verified domain. Emails, batch sends, inbound email, domains, contacts, segments, topics, campaigns, templates, automations, webhooks and more.</Description>

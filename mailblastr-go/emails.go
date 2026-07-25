@@ -3,6 +3,8 @@ package mailblastr
 import (
 	"context"
 	"net/http"
+	"net/url"
+	"strconv"
 )
 
 // Attachment is a file attached to an outgoing email. Provide Content
@@ -52,6 +54,36 @@ type SendEmailRequest struct {
 	Tags        []Tag             `json:"tags,omitempty"`
 	// ScheduledAt is an ISO 8601 timestamp to schedule the send.
 	ScheduledAt string `json:"scheduled_at,omitempty"`
+	// TopicId drops recipients unsubscribed from this topic (topic gating).
+	TopicId string `json:"topic_id,omitempty"`
+	// TemplateId sends using a saved template; its subject/html/text fill any
+	// omitted field.
+	TemplateId string `json:"template_id,omitempty"`
+	// Template is a nested template reference. Provide Template OR Html/Text.
+	Template *TemplateRef `json:"template,omitempty"`
+	// Variables fills the template's {{ placeholder }} variables.
+	Variables map[string]any `json:"variables,omitempty"`
+}
+
+// BatchEmailRequest is a single email in a batch send (POST /emails/batch).
+// Identical to SendEmailRequest minus Attachments and ScheduledAt — the batch
+// endpoint rejects both per item; send those individually via Emails.Send.
+type BatchEmailRequest struct {
+	From    string   `json:"from"`
+	To      []string `json:"to"`
+	Subject string   `json:"subject"`
+	Bcc     []string `json:"bcc,omitempty"`
+	Cc      []string `json:"cc,omitempty"`
+	ReplyTo []string `json:"reply_to,omitempty"`
+	// Html body. Markdown-style [text](url) links and bare URLs are converted
+	// to tracked hyperlinks automatically at send time.
+	Html string `json:"html,omitempty"`
+	Text string `json:"text,omitempty"`
+	// PreviewText is the inbox preview (preheader) shown next to the subject.
+	// Max 150 characters.
+	PreviewText string            `json:"preview_text,omitempty"`
+	Headers     map[string]string `json:"headers,omitempty"`
+	Tags        []Tag             `json:"tags,omitempty"`
 	// TopicId drops recipients unsubscribed from this topic (topic gating).
 	TopicId string `json:"topic_id,omitempty"`
 	// TemplateId sends using a saved template; its subject/html/text fill any
@@ -134,6 +166,25 @@ type AttachmentMeta struct {
 	ExpiresAt          string `json:"expires_at"`
 }
 
+// ListEmailsRequest lists sent emails: cursor pagination plus optional
+// server-side source filters.
+type ListEmailsRequest struct {
+	Limit  int
+	After  string
+	Before string
+	// CampaignId restricts to emails sent by this campaign. Takes precedence
+	// over AutomationId/Source.
+	CampaignId string
+	// AutomationId restricts to emails sent by this automation.
+	AutomationId string
+	// Source: "individual" restricts to one-off API sends (no
+	// campaign/automation).
+	Source string
+	// DomainId restricts to emails sent from this sending domain (domain id).
+	// Composes with the source filters.
+	DomainId string
+}
+
 // UpdateEmailRequest reschedules a scheduled email.
 type UpdateEmailRequest struct {
 	// ScheduledAt is the new ISO 8601 send time.
@@ -166,16 +217,25 @@ func (s *EmailsService) SendWithOptions(ctx context.Context, params *SendEmailRe
 
 // Batch sends up to 100 emails in one request (alias of client.Batch.Send).
 // POST /emails/batch
+//
+// Deprecated: use client.Batch.SendEmails — batch items reject Attachments
+// and ScheduledAt (send those individually via Emails.Send), which
+// BatchEmailRequest enforces at compile time.
 func (s *EmailsService) Batch(params []*SendEmailRequest) (*BatchSendResponse, error) {
 	return s.BatchWithContext(context.Background(), params)
 }
 
 // BatchWithContext sends up to 100 emails in one request. POST /emails/batch
+//
+// Deprecated: use client.Batch.SendEmailsWithContext — batch items reject
+// Attachments and ScheduledAt, which BatchEmailRequest enforces at compile
+// time.
 func (s *EmailsService) BatchWithContext(ctx context.Context, params []*SendEmailRequest) (*BatchSendResponse, error) {
 	return request[BatchSendResponse](ctx, s.client, http.MethodPost, "/emails/batch", params, nil)
 }
 
 // List lists sent emails (trimmed SentEmailListItem rows). GET /emails
+// For the campaign_id/automation_id/source/domain_id filters use ListFiltered.
 func (s *EmailsService) List(params *ListParams) (*ListResponse[SentEmailListItem], error) {
 	return s.ListWithContext(context.Background(), params)
 }
@@ -183,6 +243,45 @@ func (s *EmailsService) List(params *ListParams) (*ListResponse[SentEmailListIte
 // ListWithContext lists sent emails. GET /emails
 func (s *EmailsService) ListWithContext(ctx context.Context, params *ListParams) (*ListResponse[SentEmailListItem], error) {
 	return request[ListResponse[SentEmailListItem]](ctx, s.client, http.MethodGet, listPath("/emails", params), nil, nil)
+}
+
+// ListFiltered lists sent emails with optional campaign_id/automation_id/
+// source/domain_id filters. GET /emails
+func (s *EmailsService) ListFiltered(params *ListEmailsRequest) (*ListResponse[SentEmailListItem], error) {
+	return s.ListFilteredWithContext(context.Background(), params)
+}
+
+// ListFilteredWithContext lists sent emails with optional filters. GET /emails
+func (s *EmailsService) ListFilteredWithContext(ctx context.Context, params *ListEmailsRequest) (*ListResponse[SentEmailListItem], error) {
+	q := url.Values{}
+	if params != nil {
+		if params.Limit > 0 {
+			q.Set("limit", strconv.Itoa(params.Limit))
+		}
+		if params.After != "" {
+			q.Set("after", params.After)
+		}
+		if params.Before != "" {
+			q.Set("before", params.Before)
+		}
+		if params.CampaignId != "" {
+			q.Set("campaign_id", params.CampaignId)
+		}
+		if params.AutomationId != "" {
+			q.Set("automation_id", params.AutomationId)
+		}
+		if params.Source != "" {
+			q.Set("source", params.Source)
+		}
+		if params.DomainId != "" {
+			q.Set("domain_id", params.DomainId)
+		}
+	}
+	path := "/emails"
+	if enc := q.Encode(); enc != "" {
+		path += "?" + enc
+	}
+	return request[ListResponse[SentEmailListItem]](ctx, s.client, http.MethodGet, path, nil, nil)
 }
 
 // Get retrieves a sent email and its events. GET /emails/:id
@@ -242,17 +341,46 @@ type BatchService struct {
 }
 
 // Send sends up to 100 emails in one request. POST /emails/batch
+//
+// Deprecated: use SendEmails — batch items reject Attachments and ScheduledAt
+// (send those individually via Emails.Send), which BatchEmailRequest enforces
+// at compile time.
 func (s *BatchService) Send(params []*SendEmailRequest) (*BatchSendResponse, error) {
 	return s.SendWithContext(context.Background(), params)
 }
 
 // SendWithContext sends up to 100 emails in one request. POST /emails/batch
+//
+// Deprecated: use SendEmailsWithContext — batch items reject Attachments and
+// ScheduledAt, which BatchEmailRequest enforces at compile time.
 func (s *BatchService) SendWithContext(ctx context.Context, params []*SendEmailRequest) (*BatchSendResponse, error) {
 	return request[BatchSendResponse](ctx, s.client, http.MethodPost, "/emails/batch", params, nil)
 }
 
 // SendWithOptions sends a batch with per-request options (e.g. an
 // Idempotency-Key). POST /emails/batch
+//
+// Deprecated: use SendEmailsWithOptions — batch items reject Attachments and
+// ScheduledAt, which BatchEmailRequest enforces at compile time.
 func (s *BatchService) SendWithOptions(ctx context.Context, params []*SendEmailRequest, opts *RequestOptions) (*BatchSendResponse, error) {
+	return request[BatchSendResponse](ctx, s.client, http.MethodPost, "/emails/batch", params, opts)
+}
+
+// SendEmails sends up to 100 emails in one request. Batch items reject
+// Attachments and ScheduledAt — send those individually via Emails.Send.
+// POST /emails/batch
+func (s *BatchService) SendEmails(params []*BatchEmailRequest) (*BatchSendResponse, error) {
+	return s.SendEmailsWithContext(context.Background(), params)
+}
+
+// SendEmailsWithContext sends up to 100 emails in one request.
+// POST /emails/batch
+func (s *BatchService) SendEmailsWithContext(ctx context.Context, params []*BatchEmailRequest) (*BatchSendResponse, error) {
+	return request[BatchSendResponse](ctx, s.client, http.MethodPost, "/emails/batch", params, nil)
+}
+
+// SendEmailsWithOptions sends a batch with per-request options (e.g. an
+// Idempotency-Key). POST /emails/batch
+func (s *BatchService) SendEmailsWithOptions(ctx context.Context, params []*BatchEmailRequest, opts *RequestOptions) (*BatchSendResponse, error) {
 	return request[BatchSendResponse](ctx, s.client, http.MethodPost, "/emails/batch", params, opts)
 }

@@ -12,7 +12,7 @@ from .exceptions import MailblastrError
 DEFAULT_BASE_URL = "https://www.mailblastr.com/api"
 
 # Keep in sync with pyproject.toml "version".
-VERSION = "1.1.0"
+VERSION = "1.2.0"
 USER_AGENT = f"mailblastr-python/{VERSION}"
 
 # Defaults for the timeout + retry policy. Override per client via the

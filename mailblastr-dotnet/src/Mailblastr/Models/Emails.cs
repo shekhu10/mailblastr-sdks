@@ -112,6 +112,98 @@ public class EmailMessage
     public Dictionary<string, object?>? Variables { get; set; }
 }
 
+/// <summary>
+/// A single email in a batch send (POST /emails/batch). Identical to
+/// <see cref="EmailMessage"/> minus <c>Attachments</c> and <c>ScheduledAt</c> —
+/// the batch endpoint rejects both per item; send those individually via
+/// <c>EmailSendAsync</c>.
+/// </summary>
+public class BatchEmailMessage
+{
+    [JsonPropertyName("from")]
+    public string From { get; set; } = null!;
+
+    [JsonPropertyName("to")]
+    public EmailAddressList To { get; set; } = new();
+
+    [JsonPropertyName("subject")]
+    public string Subject { get; set; } = null!;
+
+    [JsonPropertyName("cc")]
+    public EmailAddressList? Cc { get; set; }
+
+    [JsonPropertyName("bcc")]
+    public EmailAddressList? Bcc { get; set; }
+
+    [JsonPropertyName("reply_to")]
+    public EmailAddressList? ReplyTo { get; set; }
+
+    /// <summary>
+    /// HTML body. Markdown-style <c>[text](url)</c> links and bare URLs in the
+    /// body text are converted to tracked hyperlinks automatically at send time.
+    /// </summary>
+    [JsonPropertyName("html")]
+    public string? HtmlBody { get; set; }
+
+    [JsonPropertyName("text")]
+    public string? TextBody { get; set; }
+
+    /// <summary>Inbox preview text (preheader). Max 150 characters.</summary>
+    [JsonPropertyName("preview_text")]
+    public string? PreviewText { get; set; }
+
+    [JsonPropertyName("headers")]
+    public Dictionary<string, string>? Headers { get; set; }
+
+    [JsonPropertyName("tags")]
+    public List<EmailTag>? Tags { get; set; }
+
+    /// <summary>Drop recipients unsubscribed from this topic (topic gating).</summary>
+    [JsonPropertyName("topic_id")]
+    public string? TopicId { get; set; }
+
+    /// <summary>Send using a saved template; its subject/html/text fill any omitted field.</summary>
+    [JsonPropertyName("template_id")]
+    public string? TemplateId { get; set; }
+
+    /// <summary>Nested template reference. Provide <c>Template</c> OR <c>HtmlBody</c>/<c>TextBody</c>, not both.</summary>
+    [JsonPropertyName("template")]
+    public TemplateReference? Template { get; set; }
+
+    /// <summary>Values for the template's <c>{{ placeholder }}</c> variables.</summary>
+    [JsonPropertyName("variables")]
+    public Dictionary<string, object?>? Variables { get; set; }
+}
+
+/// <summary>
+/// Options for listing sent emails (GET /emails): cursor pagination plus
+/// optional server-side <c>campaign_id</c> / <c>automation_id</c> /
+/// <c>source</c> / <c>domain_id</c> filters.
+/// </summary>
+public class EmailListOptions
+{
+    /// <summary>Page size (most endpoints cap at 100).</summary>
+    public int? Limit { get; set; }
+
+    /// <summary>Cursor: id of the last item on the previous page.</summary>
+    public string? After { get; set; }
+
+    /// <summary>Cursor: id of the first item on the next page.</summary>
+    public string? Before { get; set; }
+
+    /// <summary>Only emails sent by this campaign (takes precedence over the other source filters).</summary>
+    public string? CampaignId { get; set; }
+
+    /// <summary>Only emails sent by this automation.</summary>
+    public string? AutomationId { get; set; }
+
+    /// <summary><c>individual</c> restricts to one-off API sends (no campaign/automation).</summary>
+    public string? Source { get; set; }
+
+    /// <summary>Only emails sent from this sending domain (domain id); composes with the source filters.</summary>
+    public string? DomainId { get; set; }
+}
+
 /// <summary>Response of a send: <c>{ id }</c>.</summary>
 public class EmailCreated
 {

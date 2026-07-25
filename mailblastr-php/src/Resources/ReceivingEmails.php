@@ -14,11 +14,13 @@ class ReceivingEmails extends Resource
     /**
      * List received emails. GET /emails/receiving
      *
-     * @param array $params Cursor pagination: limit, after, before.
+     * @param array $params Cursor pagination (limit, after, before) plus an
+     *                      optional received_for filter (only messages
+     *                      received for that address).
      */
     public function list(array $params = []): array
     {
-        return $this->client->request('GET', '/emails/receiving' . $this->paginationQuery($params));
+        return $this->client->request('GET', '/emails/receiving' . $this->paginationQuery($params, ['received_for']));
     }
 
     /** Retrieve a received email. GET /emails/receiving/:id */

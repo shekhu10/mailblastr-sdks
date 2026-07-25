@@ -97,8 +97,22 @@ function register({ group, leaf, act }) {
     client.emails.get(id),
   );
 
-  act(withPagination(leaf(emails, 'list', 'List sent emails')), ({ client, opts }) =>
-    client.emails.list(pagination(opts)),
+  act(
+    withPagination(leaf(emails, 'list', 'List sent emails'))
+      .option('--campaign-id <id>', 'only emails sent by this campaign')
+      .option('--automation-id <id>', 'only emails sent by this automation')
+      .option('--source <source>', "'individual' restricts to one-off API sends")
+      .option('--domain-id <id>', 'only emails sent from this sending domain'),
+    ({ client, opts }) =>
+      client.emails.list(
+        clean({
+          ...pagination(opts),
+          campaign_id: opts.campaignId,
+          automation_id: opts.automationId,
+          source: opts.source,
+          domain_id: opts.domainId,
+        }),
+      ),
   );
 
   act(
@@ -127,8 +141,15 @@ function register({ group, leaf, act }) {
 
   const receiving = emails.command('receiving').description('Manage inbound (received) email');
 
-  act(withPagination(leaf(receiving, 'list', 'List received emails')), ({ client, opts }) =>
-    client.emails.receiving.list(pagination(opts)),
+  act(
+    withPagination(leaf(receiving, 'list', 'List received emails')).option(
+      '--received-for <address>',
+      'only messages received for this address',
+    ),
+    ({ client, opts }) =>
+      client.emails.receiving.list(
+        clean({ ...pagination(opts), received_for: opts.receivedFor }),
+      ),
   );
 
   act(leaf(receiving, 'get <id>', 'Retrieve a received email'), ({ client, args: [id] }) =>

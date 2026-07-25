@@ -28,6 +28,8 @@ CreateParams = TypedDict(
         "unsubscribe_policy": str,  # 'account' | 'domain' | 'ignore'
         "send": bool,  # send immediately on create
         "scheduled_at": str,
+        "schedule_timezone": str,  # IANA zone the schedule + daily batching run in
+        "daily_batch_size": int,  # max recipients per batch-day (1-100000)
     },
     total=False,
 )
@@ -48,6 +50,11 @@ UpdateParams = TypedDict(
         "recurrence": str,
         "recurrence_every": int,
         "ab_test": Dict[str, Any],
+        "followups": List[Dict[str, Any]],  # replace pending follow-ups (max 5; [] clears)
+        "list_to": bool,  # enable (True) or clear (False) the mailing-list To address
+        "unsubscribe_policy": str,  # 'account' | 'domain' | 'ignore'
+        "schedule_timezone": Union[str, None],  # IANA zone (None clears to account tz)
+        "daily_batch_size": Union[int, None],  # 1-100000 (None clears)
     },
     total=False,
 )
@@ -81,7 +88,9 @@ class Campaigns:
 
     @classmethod
     def send(cls, campaign_id, params=None):
-        """Send now, or schedule with ``{"scheduled_at": ...}``.
+        """Send now, or schedule with ``{"scheduled_at": ...}``. An optional
+        ``"schedule_timezone"`` (IANA name) is persisted onto the campaign so
+        daily batching evaluates batch-days in that zone.
         POST /campaigns/:id/send"""
         return http_client.request(
             "POST", f"/campaigns/{_e(campaign_id)}/send", params if params is not None else {}

@@ -8,6 +8,10 @@ module Mailblastr
       # POST /automations
       #   Mailblastr::Automations.create({ name: "Welcome series", domain: "yourdomain.com",
       #                                    trigger: "contact.created" })
+      # The built-in "mailblastr:schedule" trigger fires once at
+      # `trigger_config` ({ at: ISO 8601 instant, timezone: IANA name }),
+      # enrolling every contact of the domain's pool — `trigger_config` is
+      # required with that trigger and not accepted on any other.
       def create(params)
         Client.require_domain!(params, "Automations.create")
         Client.request(:post, "/automations", body: params)
@@ -24,6 +28,8 @@ module Mailblastr
       end
 
       # PATCH /automations/:id — params: { name:, status: "enabled"|"disabled", ... }
+      # `trigger_config` ({ at:, timezone: }) updates the "mailblastr:schedule"
+      # trigger's schedule (only valid on automations with that trigger).
       def update(automation_id, params)
         Client.request(:patch, "/automations/#{Client.path_escape(automation_id)}", body: params)
       end

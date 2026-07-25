@@ -3,7 +3,10 @@ package com.mailblastr.resources;
 import com.mailblastr.ListParams;
 import com.mailblastr.MailblastrResponse;
 import com.mailblastr.http.ApiClient;
+import com.mailblastr.http.Query;
 import com.mailblastr.requests.ForwardEmailRequest;
+import com.mailblastr.requests.ListEmailsParams;
+import com.mailblastr.requests.ListReceivedEmailsParams;
 import com.mailblastr.requests.ReplyEmailRequest;
 import com.mailblastr.requests.SendEmailRequest;
 
@@ -33,20 +36,49 @@ public final class Emails extends Resource {
         return api.request("POST", "/emails", request, idempotencyKey);
     }
 
-    /** Send up to 100 emails in one request. {@code POST /emails/batch} (alias of {@code batch().send}). */
+    /**
+     * Send up to 100 emails in one request. {@code POST /emails/batch} (alias of {@code batch().send}).
+     *
+     * @deprecated use {@code batch().sendEmails(...)} — batch items reject
+     *     {@code attachments} and {@code scheduled_at} (send those individually
+     *     via {@link #send}), which {@code BatchEmailRequest} enforces at
+     *     compile time.
+     */
+    @Deprecated
     public MailblastrResponse batch(List<SendEmailRequest> requests) {
         return api.request("POST", "/emails/batch", requests);
     }
 
+    /** @deprecated use {@code batch().sendEmails(requests, idempotencyKey)} — see {@link #batch(List)}. */
+    @Deprecated
     public MailblastrResponse batch(List<SendEmailRequest> requests, String idempotencyKey) {
         return api.request("POST", "/emails/batch", requests, idempotencyKey);
     }
 
     /** List sent emails (trimmed items — no status/html/text/events). {@code GET /emails} */
-    public MailblastrResponse list() { return list(null); }
+    public MailblastrResponse list() { return list((ListParams) null); }
 
     public MailblastrResponse list(ListParams params) {
         return api.request("GET", "/emails" + paginate(params));
+    }
+
+    /**
+     * List sent emails with optional server-side {@code campaign_id} /
+     * {@code automation_id} / {@code source} / {@code domain_id} filters.
+     * {@code GET /emails}
+     */
+    public MailblastrResponse list(ListEmailsParams params) {
+        Query q = new Query();
+        if (params != null) {
+            q.add("limit", params.getLimit())
+             .add("after", params.getAfter())
+             .add("before", params.getBefore())
+             .add("campaign_id", params.getCampaignId())
+             .add("automation_id", params.getAutomationId())
+             .add("source", params.getSource())
+             .add("domain_id", params.getDomainId());
+        }
+        return api.request("GET", "/emails" + q);
     }
 
     /** Retrieve a sent email and its events. {@code GET /emails/:id} */
@@ -80,10 +112,25 @@ public final class Emails extends Resource {
         Receiving(ApiClient api) { super(api); }
 
         /** List received emails. {@code GET /emails/receiving} */
-        public MailblastrResponse list() { return list(null); }
+        public MailblastrResponse list() { return list((ListParams) null); }
 
         public MailblastrResponse list(ListParams params) {
             return api.request("GET", "/emails/receiving" + paginate(params));
+        }
+
+        /**
+         * List received emails with an optional {@code received_for} filter
+         * (only messages received for that address). {@code GET /emails/receiving}
+         */
+        public MailblastrResponse list(ListReceivedEmailsParams params) {
+            Query q = new Query();
+            if (params != null) {
+                q.add("limit", params.getLimit())
+                 .add("after", params.getAfter())
+                 .add("before", params.getBefore())
+                 .add("received_for", params.getReceivedFor());
+            }
+            return api.request("GET", "/emails/receiving" + q);
         }
 
         /** Retrieve a received email. {@code GET /emails/receiving/:id} */

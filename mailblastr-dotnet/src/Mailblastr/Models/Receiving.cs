@@ -133,6 +133,25 @@ public class ReceivedEmailForwardOptions
 }
 
 /// <summary>
+/// Options for listing received emails (GET /emails/receiving): cursor
+/// pagination plus an optional <c>received_for</c> filter.
+/// </summary>
+public class ReceivedEmailListOptions
+{
+    /// <summary>Page size (most endpoints cap at 100).</summary>
+    public int? Limit { get; set; }
+
+    /// <summary>Cursor: id of the last item on the previous page.</summary>
+    public string? After { get; set; }
+
+    /// <summary>Cursor: id of the first item on the next page.</summary>
+    public string? Before { get; set; }
+
+    /// <summary>Only messages received for this address (matches the <c>received_for</c> recipients).</summary>
+    public string? ReceivedFor { get; set; }
+}
+
+/// <summary>
 /// Payload for replying to a received email's sender, threaded into the same
 /// conversation (POST /emails/receiving/:id/reply). Subject defaults to <c>Re: …</c>.
 /// </summary>

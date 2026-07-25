@@ -66,6 +66,13 @@ public final class CreateCampaignRequest implements JsonPayload {
         public Builder send(boolean send) { m.put("send", send); return this; }
         /** ISO 8601 (or natural-language) schedule used when {@code send} is true. */
         public Builder scheduledAt(String scheduledAt) { m.put("scheduled_at", scheduledAt); return this; }
+        /**
+         * IANA timezone the schedule + daily batching are evaluated in (e.g.
+         * {@code "America/New_York"}). Defaults to the account timezone, then UTC.
+         */
+        public Builder scheduleTimezone(String scheduleTimezone) { m.put("schedule_timezone", scheduleTimezone); return this; }
+        /** Max recipients fanned out per batch-day (1-100000). Omitted ⇒ everyone at once. */
+        public Builder dailyBatchSize(int dailyBatchSize) { m.put("daily_batch_size", dailyBatchSize); return this; }
 
         public CreateCampaignRequest build() { return new CreateCampaignRequest(new LinkedHashMap<>(m)); }
     }
