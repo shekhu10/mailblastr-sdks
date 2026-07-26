@@ -57,13 +57,6 @@ impl Attachment {
     }
 }
 
-/// A name/value tag attached to a sent email (echoed back on retrieve).
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Tag {
-    pub name: String,
-    pub value: String,
-}
-
 /// Nested template reference: select a template by `id` OR `alias` and carry
 /// its variable values. Provide `template` OR `html`/`text`, not both.
 #[derive(Debug, Clone, Default, Serialize)]
@@ -138,8 +131,6 @@ pub struct CreateEmailBaseOptions {
     pub headers: Option<HashMap<String, String>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub attachments: Option<Vec<Attachment>>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub tags: Option<Vec<Tag>>,
     /// ISO 8601 timestamp to schedule the send.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub scheduled_at: Option<String>,
@@ -215,14 +206,6 @@ impl CreateEmailBaseOptions {
         self
     }
 
-    pub fn with_tag(mut self, name: impl Into<String>, value: impl Into<String>) -> Self {
-        self.tags.get_or_insert_with(Vec::new).push(Tag {
-            name: name.into(),
-            value: value.into(),
-        });
-        self
-    }
-
     pub fn with_scheduled_at(mut self, scheduled_at: impl Into<String>) -> Self {
         self.scheduled_at = Some(scheduled_at.into());
         self
@@ -278,8 +261,6 @@ pub struct BatchEmailOptions {
     pub preview_text: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub headers: Option<HashMap<String, String>>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub tags: Option<Vec<Tag>>,
     /// Drop recipients unsubscribed from this topic (topic gating).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub topic_id: Option<String>,
@@ -342,14 +323,6 @@ impl BatchEmailOptions {
         self.headers
             .get_or_insert_with(HashMap::new)
             .insert(name.into(), value.into());
-        self
-    }
-
-    pub fn with_tag(mut self, name: impl Into<String>, value: impl Into<String>) -> Self {
-        self.tags.get_or_insert_with(Vec::new).push(Tag {
-            name: name.into(),
-            value: value.into(),
-        });
         self
     }
 
@@ -475,8 +448,6 @@ pub struct Email {
     pub subject: Option<String>,
     pub html: Option<String>,
     pub text: Option<String>,
-    /// Tags echoed back on retrieve (empty when none were set).
-    pub tags: Option<Vec<Tag>>,
     pub status: String,
     pub last_event: Option<String>,
     /// Plain-language failure reason; present only when the send failed.
@@ -487,7 +458,7 @@ pub struct Email {
 }
 
 /// Trimmed row returned by `emails.list()` — no `status`/`html`/`text`/
-/// `events`/`tags`; use `emails.get(id)` for the full [`Email`].
+/// `events`; use `emails.get(id)` for the full [`Email`].
 #[derive(Debug, Clone, Deserialize)]
 pub struct SentEmailListItem {
     pub object: String,

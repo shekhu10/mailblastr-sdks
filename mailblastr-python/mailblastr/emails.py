@@ -14,11 +14,6 @@ class Attachment(TypedDict, total=False):
     content_id: str  # Content-ID for inline/related parts (cid: references)
 
 
-class Tag(TypedDict):
-    name: str
-    value: str
-
-
 # `from` is a Python keyword, so the params types use the functional syntax.
 SendParams = TypedDict(
     "SendParams",
@@ -34,7 +29,6 @@ SendParams = TypedDict(
         "preview_text": str,  # inbox preheader, max 150 chars
         "headers": Dict[str, str],
         "attachments": List[Attachment],
-        "tags": List[Tag],
         "scheduled_at": str,  # ISO 8601 timestamp to schedule the send
         "topic_id": str,  # drop recipients unsubscribed from this topic
         "template_id": str,  # send using a saved template
@@ -92,7 +86,6 @@ class Emails:
     UpdateParams = UpdateParams
     ListParams = ListParams
     Attachment = Attachment
-    Tag = Tag
 
     class Attachments:
         """Attachments of SENT emails — ``mailblastr.Emails.Attachments``."""

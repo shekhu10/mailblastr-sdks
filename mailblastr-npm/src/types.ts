@@ -28,8 +28,6 @@ export interface Attachment {
   /** Content-ID for inline/related parts (renders as `cid:` references). */
   content_id?: string;
 }
-export interface Tag { name: string; value: string }
-
 export interface SendEmailOptions {
   from: string;
   to: string | string[];
@@ -53,7 +51,6 @@ export interface SendEmailOptions {
   preview_text?: string;
   headers?: Record<string, string>;
   attachments?: Attachment[];
-  tags?: Tag[];
   /** ISO 8601 timestamp to schedule the send. */
   scheduled_at?: string;
   /** Drop recipients unsubscribed from this topic (topic gating). */
@@ -89,8 +86,6 @@ export interface Email {
   subject: string | null;
   html?: string | null;
   text?: string | null;
-  /** Tags echoed back on retrieve (empty array when none were set). */
-  tags?: Tag[];
   status: string;
   last_event?: string;
   /** Plain-language failure reason; present (non-null) only when the send failed. */
@@ -103,7 +98,7 @@ export interface Email {
 /**
  * Lightweight reference returned by `mb.emails.list()` (GET /emails). The list
  * endpoint trims the full {@link Email}: there is NO `status`, `html`, `text`, or
- * `events`/`tags`, and unset `cc`/`bcc`/`reply_to` come back as `null` (not `[]`).
+ * `events`, and unset `cc`/`bcc`/`reply_to` come back as `null` (not `[]`).
  * Use `mb.emails.get(id)` to retrieve the full email with its event timeline.
  */
 export interface SentEmailListItem {

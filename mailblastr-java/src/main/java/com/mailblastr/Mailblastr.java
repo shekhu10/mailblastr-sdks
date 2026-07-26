@@ -44,7 +44,7 @@ import java.time.Duration;
  */
 public class Mailblastr {
     public static final String DEFAULT_BASE_URL = "https://www.mailblastr.com/api";
-    public static final String VERSION = "1.2.0";
+    public static final String VERSION = "1.3.0";
     public static final String USER_AGENT = "mailblastr-java/" + VERSION;
 
     private final Emails emails;

@@ -49,14 +49,6 @@ public final class BatchEmailRequest implements JsonPayload {
             return this;
         }
 
-        @SuppressWarnings("unchecked")
-        public Builder tag(String name, String value) {
-            ((List<Object>) m.computeIfAbsent("tags", k -> new ArrayList<>())).add(Tag.of(name, value));
-            return this;
-        }
-
-        public Builder tags(List<Tag> tags) { m.put("tags", new ArrayList<>(tags)); return this; }
-
         /** Drop recipients unsubscribed from this topic (topic gating). */
         public Builder topicId(String topicId) { m.put("topic_id", topicId); return this; }
         /** Send using a saved template; its subject/html/text fill any omitted field. */

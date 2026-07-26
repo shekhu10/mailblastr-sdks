@@ -31,7 +31,7 @@ class Emails extends Resource
      * @param array $payload from, to, subject, html/text, cc, bcc, reply_to,
      *                       preview_text, headers, attachments (each with
      *                       'filename' + 'content' base64 OR 'path' URL),
-     *                       tags, scheduled_at, topic_id, template_id,
+     *                       scheduled_at, topic_id, template_id,
      *                       template, variables.
      * @param array $options 'idempotencyKey' to safely retry.
      */

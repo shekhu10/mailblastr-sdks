@@ -20,12 +20,6 @@ type Attachment struct {
 	ContentId string `json:"content_id,omitempty"`
 }
 
-// Tag is a name/value pair attached to a sent email.
-type Tag struct {
-	Name  string `json:"name"`
-	Value string `json:"value"`
-}
-
 // TemplateRef is a nested template reference on SendEmailRequest. Provide Id
 // OR Alias to select the template.
 type TemplateRef struct {
@@ -51,7 +45,6 @@ type SendEmailRequest struct {
 	PreviewText string            `json:"preview_text,omitempty"`
 	Headers     map[string]string `json:"headers,omitempty"`
 	Attachments []Attachment      `json:"attachments,omitempty"`
-	Tags        []Tag             `json:"tags,omitempty"`
 	// ScheduledAt is an ISO 8601 timestamp to schedule the send.
 	ScheduledAt string `json:"scheduled_at,omitempty"`
 	// TopicId drops recipients unsubscribed from this topic (topic gating).
@@ -83,7 +76,6 @@ type BatchEmailRequest struct {
 	// Max 150 characters.
 	PreviewText string            `json:"preview_text,omitempty"`
 	Headers     map[string]string `json:"headers,omitempty"`
-	Tags        []Tag             `json:"tags,omitempty"`
 	// TopicId drops recipients unsubscribed from this topic (topic gating).
 	TopicId string `json:"topic_id,omitempty"`
 	// TemplateId sends using a saved template; its subject/html/text fill any
@@ -125,7 +117,6 @@ type Email struct {
 	Subject   string   `json:"subject"`
 	Html      string   `json:"html,omitempty"`
 	Text      string   `json:"text,omitempty"`
-	Tags      []Tag    `json:"tags,omitempty"`
 	Status    string   `json:"status"`
 	LastEvent string   `json:"last_event,omitempty"`
 	// Error is a plain-language failure reason; set only when the send failed.
@@ -136,7 +127,7 @@ type Email struct {
 }
 
 // SentEmailListItem is the trimmed shape returned by Emails.List (GET
-// /emails): no Status/Html/Text/Events/Tags. Use Emails.Get for the full
+// /emails): no Status/Html/Text/Events. Use Emails.Get for the full
 // email with its event timeline.
 type SentEmailListItem struct {
 	Object      string   `json:"object"`

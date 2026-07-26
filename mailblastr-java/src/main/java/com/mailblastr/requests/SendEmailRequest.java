@@ -67,14 +67,6 @@ public final class SendEmailRequest implements JsonPayload {
             return this;
         }
 
-        @SuppressWarnings("unchecked")
-        public Builder tag(String name, String value) {
-            ((List<Object>) m.computeIfAbsent("tags", k -> new ArrayList<>())).add(Tag.of(name, value));
-            return this;
-        }
-
-        public Builder tags(List<Tag> tags) { m.put("tags", new ArrayList<>(tags)); return this; }
-
         /** ISO 8601 timestamp to schedule the send. */
         public Builder scheduledAt(String scheduledAt) { m.put("scheduled_at", scheduledAt); return this; }
         /** Drop recipients unsubscribed from this topic (topic gating). */

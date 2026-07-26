@@ -42,15 +42,13 @@ public final class EmailsTest {
         mb.emails().send(req, "order-123");
         Check.eq("idempotency header", "order-123", t.lastHeaders.get("Idempotency-Key"));
 
-        // --- attachments + tags + escaping ---
+        // --- attachments + escaping ---
         mb.emails().send(SendEmailRequest.builder()
                 .from("a@b.com").to("c@d.com").subject("q\"uote\nline")
                 .attachment(Attachment.builder().filename("inv.pdf").path("https://x/y.pdf").build())
-                .tag("env", "prod")
                 .build());
         Check.contains("attachment serialized", t.lastBody,
                 "\"attachments\":[{\"filename\":\"inv.pdf\",\"path\":\"https://x/y.pdf\"}]");
-        Check.contains("tag serialized", t.lastBody, "\"tags\":[{\"name\":\"env\",\"value\":\"prod\"}]");
         Check.contains("string escaping", t.lastBody, "\"subject\":\"q\\\"uote\\nline\"");
 
         // --- batch (both surfaces) ---

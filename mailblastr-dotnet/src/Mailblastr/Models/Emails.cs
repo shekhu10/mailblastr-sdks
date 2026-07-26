@@ -24,16 +24,6 @@ public class EmailAttachment
     public string? ContentId { get; set; }
 }
 
-/// <summary>A name/value tag attached to a sent email.</summary>
-public class EmailTag
-{
-    [JsonPropertyName("name")]
-    public string Name { get; set; } = null!;
-
-    [JsonPropertyName("value")]
-    public string Value { get; set; } = null!;
-}
-
 /// <summary>Nested template reference on send. Provide <c>Id</c> OR <c>Alias</c>.</summary>
 public class TemplateReference
 {
@@ -87,9 +77,6 @@ public class EmailMessage
 
     [JsonPropertyName("attachments")]
     public List<EmailAttachment>? Attachments { get; set; }
-
-    [JsonPropertyName("tags")]
-    public List<EmailTag>? Tags { get; set; }
 
     /// <summary>ISO 8601 timestamp to schedule the send.</summary>
     [JsonPropertyName("scheduled_at")]
@@ -154,9 +141,6 @@ public class BatchEmailMessage
 
     [JsonPropertyName("headers")]
     public Dictionary<string, string>? Headers { get; set; }
-
-    [JsonPropertyName("tags")]
-    public List<EmailTag>? Tags { get; set; }
 
     /// <summary>Drop recipients unsubscribed from this topic (topic gating).</summary>
     [JsonPropertyName("topic_id")]
@@ -258,10 +242,6 @@ public class Email
     [JsonPropertyName("text")]
     public string? TextBody { get; set; }
 
-    /// <summary>Tags echoed back on retrieve (empty array when none were set).</summary>
-    [JsonPropertyName("tags")]
-    public List<EmailTag>? Tags { get; set; }
-
     [JsonPropertyName("status")]
     public string? Status { get; set; }
 
@@ -284,7 +264,7 @@ public class Email
 
 /// <summary>
 /// Lightweight row returned by EmailListAsync (GET /emails). The list endpoint
-/// trims the full <see cref="Email"/>: no status/html/text/events/tags, and
+/// trims the full <see cref="Email"/>: no status/html/text/events, and
 /// unset cc/bcc/reply_to come back as null (not []). Use EmailRetrieveAsync
 /// for the full email with its event timeline.
 /// </summary>
