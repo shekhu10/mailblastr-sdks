@@ -157,7 +157,7 @@ mailblastr.ContactProperties.create({"key": "plan", "type": "string"})
 
 # Campaigns & Segments (domain-first)
 mailblastr.Campaigns.create({"domain": "yourdomain.com", "from": sender, "subject": subject, "html": html})
-mailblastr.Campaigns.send(campaign_id, {"scheduled_at": "tomorrow 9am"})
+mailblastr.Campaigns.send(campaign_id, {"scheduled_at": "tomorrow at 9am"})
 mailblastr.Campaigns.stats(campaign_id)
 mailblastr.Campaigns.ab(campaign_id)
 mailblastr.Segments.create({"domain": "yourdomain.com", "name": "VIP", "filter": {"status": "subscribed"}})
