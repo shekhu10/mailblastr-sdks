@@ -644,7 +644,9 @@ export interface CreateApiKeyOptions {
   /** Scope a `sending_access` key to one domain (legacy; prefer `domain_ids`). */
   domain_id?: string;
   /**
-   * Scope the key to one or more domains (works with both permissions).
+   * Scope the key to one or more domains. Only valid with `sending_access` —
+   * full-access keys always work across all your domains (the API rejects the
+   * combination with a validation_error).
    * Mutually exclusive with `domain_id` — providing both is a 422.
    */
   domain_ids?: string[];

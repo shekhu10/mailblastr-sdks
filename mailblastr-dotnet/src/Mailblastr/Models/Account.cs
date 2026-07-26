@@ -57,7 +57,9 @@ public class ApiKeyCreateOptions
     public string? DomainId { get; set; }
 
     /// <summary>
-    /// Scope the key to one or more domains (works with both permissions).
+    /// Scope the key to one or more domains. Only valid with <c>sending_access</c> —
+    /// full-access keys always work across all your domains (the API rejects the
+    /// combination with a validation_error).
     /// Mutually exclusive with <see cref="DomainId"/> — providing both is a 422.
     /// </summary>
     [JsonPropertyName("domain_ids")]

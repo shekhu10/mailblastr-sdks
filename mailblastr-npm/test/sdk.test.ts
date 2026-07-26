@@ -293,7 +293,8 @@ test('campaigns + apiKeys map to the right routes', async () => {
   await mb.campaigns.send('b1', { scheduled_at: '2030-01-01T00:00:00Z' });
   await mb.campaigns.cancel('b1');
   await mb.apiKeys.create({ name: 'CI', permission: 'sending_access', domain_id: 'd1' });
-  await mb.apiKeys.create({ name: 'CI multi', permission: 'full_access', domain_ids: ['d1', 'd2'] });
+  // Multi-domain scoping is sending_access-only (full_access + domain_ids is a 422 server-side).
+  await mb.apiKeys.create({ name: 'CI multi', permission: 'sending_access', domain_ids: ['d1', 'd2'] });
   await mb.apiKeys.remove('k1');
   assert.deepEqual(calls.map((c) => `${c.method} ${c.url}`), [
     'POST https://api.test/campaigns',

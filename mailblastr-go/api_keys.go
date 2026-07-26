@@ -35,8 +35,9 @@ type CreateApiKeyRequest struct {
 	// DomainId scopes a sending_access key to one domain (legacy; prefer
 	// DomainIds).
 	DomainId string `json:"domain_id,omitempty"`
-	// DomainIds scopes the key to one or more domains (works with both
-	// permissions). Mutually exclusive with DomainId — providing both is a
+	// DomainIds scopes the key to one or more domains. Only valid with
+	// sending_access — full-access keys always work across all your domains
+	// (the API rejects the combination with a validation_error). Mutually exclusive with DomainId — providing both is a
 	// 422.
 	DomainIds []string `json:"domain_ids,omitempty"`
 }

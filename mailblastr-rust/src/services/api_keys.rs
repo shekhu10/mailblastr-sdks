@@ -46,7 +46,9 @@ pub struct CreateApiKeyOptions {
     /// `domain_ids`).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub domain_id: Option<String>,
-    /// Scope the key to one or more domains (works with both permissions).
+    /// Scope the key to one or more domains. Only valid with `sending_access` —
+/// full-access keys always work across all your domains (the API rejects the
+/// combination with a validation_error).
     /// Mutually exclusive with `domain_id` — providing both is a 422.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub domain_ids: Option<Vec<String>>,

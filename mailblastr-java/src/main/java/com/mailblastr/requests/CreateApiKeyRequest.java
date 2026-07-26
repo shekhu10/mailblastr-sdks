@@ -28,7 +28,9 @@ public final class CreateApiKeyRequest implements JsonPayload {
         /** Scope a {@code sending_access} key to one domain (legacy; prefer {@link #domainIds}). */
         public Builder domainId(String domainId) { m.put("domain_id", domainId); return this; }
         /**
-         * Scope the key to one or more domains (works with both permissions).
+         * Scope the key to one or more domains. Only valid with {@code sending_access} —
+     * full-access keys always work across all your domains (the API rejects the
+     * combination with a validation_error).
          * Mutually exclusive with {@link #domainId} — providing both is a 422.
          */
         public Builder domainIds(List<String> domainIds) { m.put("domain_ids", new ArrayList<>(domainIds)); return this; }
