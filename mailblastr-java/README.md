@@ -13,14 +13,14 @@ Official Java SDK for the [MailBlastr](https://www.mailblastr.com) email API —
 <dependency>
   <groupId>com.mailblastr</groupId>
   <artifactId>mailblastr</artifactId>
-  <version>1.2.0</version>
+  <version>1.3.0</version>
 </dependency>
 ```
 
 ### Gradle
 
 ```groovy
-implementation 'com.mailblastr:mailblastr:1.2.0'
+implementation 'com.mailblastr:mailblastr:1.3.0'
 ```
 
 ## Usage
