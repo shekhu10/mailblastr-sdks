@@ -91,7 +91,12 @@ function makeToolkit(program, ctx) {
         const client = getClient(ctx, opts);
         const result = await handler({ client, opts, args });
         if (result && result.error) return fail(ctx, result.error);
-        return print(ctx, result ? result.data : null, opts);
+        print(ctx, result ? result.data : null, opts);
+        // Some endpoints answer 200 while reporting a failed operation in the
+        // body (e.g. POST /webhooks/:id/test → { ok: false }). A handler flags
+        // that with `failed` so the body is still printed but the shell sees 1.
+        if (result && result.failed) ctx.exitCode = 1;
+        return undefined;
       } catch (err) {
         if (err instanceof CliError) {
           return fail(ctx, { statusCode: null, name: 'cli_error', message: err.message });

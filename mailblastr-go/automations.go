@@ -3,6 +3,9 @@ package mailblastr
 import (
 	"context"
 	"net/http"
+	"net/url"
+	"strconv"
+	"strings"
 )
 
 // AutomationStep is one step of an automation's graph.
@@ -33,13 +36,22 @@ type Automation struct {
 	// Events.Send calls with the same Domain trigger it.
 	Domain string `json:"domain"`
 	// Status is "enabled" | "disabled".
-	Status      string                 `json:"status"`
+	Status string `json:"status"`
+	// TriggerConfig is set only for the "mailblastr:schedule" trigger.
+	TriggerConfig *AutomationTriggerConfig `json:"trigger_config,omitempty"`
+	// TriggerKey names the synthetic trigger step in Connections; defaults to
+	// "trigger".
+	TriggerKey string `json:"trigger_key,omitempty"`
+	// Steps is omitted entirely on list responses. Its first element is always
+	// the synthetic trigger step (Type "trigger", no Id, no Position).
 	Steps       []AutomationStep       `json:"steps,omitempty"`
 	Connections []AutomationConnection `json:"connections,omitempty"`
 	// Enrollments holds enrollment counts — included only on retrieve.
 	Enrollments *AutomationEnrollments `json:"enrollments,omitempty"`
-	CreatedAt   string                 `json:"created_at"`
-	UpdatedAt   string                 `json:"updated_at"`
+	// Ai summarizes what Automations.CreateWithAi added; set only on that call.
+	Ai        *AutomationAiResult `json:"ai,omitempty"`
+	CreatedAt string              `json:"created_at"`
+	UpdatedAt string              `json:"updated_at"`
 }
 
 // AutomationEnrollments are the counts on GET /automations/:id.
@@ -89,6 +101,8 @@ type CreateAutomationRequest struct {
 	// "email.bounced", "email.delivered"), or any custom event name you send
 	// via Events.Send. Usually supplied as a Steps[0] trigger step instead.
 	Trigger string `json:"trigger,omitempty"`
+	// TriggerKey names the trigger in Connections; defaults to "trigger".
+	TriggerKey string `json:"trigger_key,omitempty"`
 	// TriggerConfig is the schedule for the "mailblastr:schedule" trigger
 	// ({at, timezone}). Required with that trigger; not accepted on any other.
 	TriggerConfig *AutomationTriggerConfig `json:"trigger_config,omitempty"`
@@ -101,24 +115,118 @@ type CreateAutomationRequest struct {
 }
 
 // UpdateAutomationRequest is the payload for PATCH /automations/:id.
+//
+// Changing Domain, Trigger, TriggerConfig or Connections requires the
+// automation to be disabled first — otherwise the API answers 422.
 type UpdateAutomationRequest struct {
+	// Name is at most MaxAutomationNameLength characters.
 	Name string `json:"name,omitempty"`
 	// Status is "enabled" | "disabled".
 	Status string `json:"status,omitempty"`
 	// Domain re-points the automation at another of your domains (disabled
 	// automations only).
 	Domain string `json:"domain,omitempty"`
+	// Trigger changes the event that starts a run (disabled automations only).
+	Trigger string `json:"trigger,omitempty"`
+	// TriggerKey renames the trigger node referenced by Connections.
+	TriggerKey string `json:"trigger_key,omitempty"`
 	// TriggerConfig updates the "mailblastr:schedule" trigger's schedule
 	// ({at, timezone}). Only valid on automations with that trigger.
 	TriggerConfig *AutomationTriggerConfig    `json:"trigger_config,omitempty"`
 	Connections   []AutomationConnectionInput `json:"connections,omitempty"`
 }
 
-// AddAutomationStepRequest appends a step to an automation.
+// AddAutomationStepRequest appends a step to an automation. The automation
+// must be disabled, and Type "trigger" is rejected — the trigger lives on the
+// automation, not in its step list.
 type AddAutomationStepRequest struct {
-	Type   string         `json:"type"`
+	// Type is one of AutomationStepTypes (the documented aliases
+	// "send_email" and "wait_for_event" are accepted too).
+	Type string `json:"type"`
+	// Config may also be spread across the top level of the request body;
+	// this field is the explicit form.
+	Config map[string]any `json:"config,omitempty"`
+	// Key names the step for Connections; defaults to the new step's id.
+	Key string `json:"key,omitempty"`
+}
+
+// UpdateAutomationStepRequest edits an existing step. Every field is optional;
+// the automation must be disabled.
+type UpdateAutomationStepRequest struct {
+	Type   string         `json:"type,omitempty"`
 	Config map[string]any `json:"config,omitempty"`
 	Key    string         `json:"key,omitempty"`
+}
+
+// Automation limits and vocabulary enforced by the API.
+const (
+	// MaxAutomationNameLength caps an automation's name.
+	MaxAutomationNameLength = 255
+	// MaxAutomationAiPromptLength caps CreateWithAi's prompt.
+	MaxAutomationAiPromptLength = 2000
+	// ScheduleTrigger is the built-in one-shot schedule trigger. It is the
+	// only trigger allowed to use ReservedEventPrefix, and it requires
+	// TriggerConfig.
+	ScheduleTrigger = "mailblastr:schedule"
+	// DefaultAutomationTrigger is used when no trigger is supplied.
+	DefaultAutomationTrigger = "contact.created"
+)
+
+// AutomationStepTypes are the internal step types the API accepts. On read,
+// "send" and "wait" are reported as "send_email" and "wait_for_event".
+var AutomationStepTypes = []string{
+	"delay", "send", "wait", "condition", "split",
+	"add_to_segment", "contact_update", "contact_delete",
+}
+
+// AutomationConnectionTypes are the edge types accepted by
+// AutomationConnectionInput.Type ("default" is an alias for "next").
+var AutomationConnectionTypes = []string{
+	"next", "default", "condition_met", "condition_not_met",
+	"event_received", "timeout",
+}
+
+// ListAutomationRunsRequest lists an automation's runs with an optional status
+// filter.
+type ListAutomationRunsRequest struct {
+	Limit  int
+	After  string
+	Before string
+	// Status filters to runs in any of these states (e.g. "running",
+	// "completed", "failed", "skipped"). Sent as a comma-separated list.
+	Status []string
+}
+
+// AutomationAiAttach appends AI-generated steps to an existing graph instead
+// of building a new one.
+type AutomationAiAttach struct {
+	// From is the trigger key or an existing step key to attach after.
+	From string `json:"from"`
+	// Type is one of AutomationConnectionTypes minus "next" (default
+	// "default").
+	Type string `json:"type,omitempty"`
+	// Before, when set, must be an existing step key.
+	Before string `json:"before,omitempty"`
+}
+
+// AutomationAiRequest drives "Create with AI". Without Attach the automation
+// must have zero steps (workflow mode); with it the generated steps are
+// appended (append mode).
+type AutomationAiRequest struct {
+	// Prompt is required, at most MaxAutomationAiPromptLength characters.
+	Prompt string `json:"prompt"`
+	// TemplateIds and Events give the model context; only the first 10 of
+	// each are used.
+	TemplateIds []string            `json:"template_ids,omitempty"`
+	Events      []string            `json:"events,omitempty"`
+	Attach      *AutomationAiAttach `json:"attach,omitempty"`
+}
+
+// AutomationAiResult summarizes an AI generation.
+type AutomationAiResult struct {
+	AddedSteps int `json:"added_steps"`
+	// Mode is "workflow" | "append".
+	Mode string `json:"mode"`
 }
 
 // DeleteAutomationStepResponse is returned by Automations.DeleteStep.
@@ -214,6 +322,18 @@ func (s *AutomationsService) AddStepWithContext(ctx context.Context, id string, 
 	return request[AutomationStep](ctx, s.client, http.MethodPost, "/automations/"+esc(id)+"/steps", params, nil)
 }
 
+// UpdateStep edits an existing step; returns the updated step.
+// PATCH /automations/:id/steps/:stepId
+func (s *AutomationsService) UpdateStep(id, stepId string, params *UpdateAutomationStepRequest) (*AutomationStep, error) {
+	return s.UpdateStepWithContext(context.Background(), id, stepId, params)
+}
+
+// UpdateStepWithContext edits an existing step.
+// PATCH /automations/:id/steps/:stepId
+func (s *AutomationsService) UpdateStepWithContext(ctx context.Context, id, stepId string, params *UpdateAutomationStepRequest) (*AutomationStep, error) {
+	return request[AutomationStep](ctx, s.client, http.MethodPatch, "/automations/"+esc(id)+"/steps/"+esc(stepId), params, nil)
+}
+
 // DeleteStep deletes a step from an automation.
 // DELETE /automations/:id/steps/:stepId
 func (s *AutomationsService) DeleteStep(id, stepId string) (*DeleteAutomationStepResponse, error) {
@@ -235,6 +355,37 @@ func (s *AutomationsService) RunsWithContext(ctx context.Context, id string, par
 	return request[ListResponse[AutomationRun]](ctx, s.client, http.MethodGet, listPath("/automations/"+esc(id)+"/runs", params), nil, nil)
 }
 
+// RunsFiltered lists an automation's runs with an optional status filter.
+// GET /automations/:id/runs
+func (s *AutomationsService) RunsFiltered(id string, params *ListAutomationRunsRequest) (*ListResponse[AutomationRun], error) {
+	return s.RunsFilteredWithContext(context.Background(), id, params)
+}
+
+// RunsFilteredWithContext lists an automation's runs with a status filter.
+// GET /automations/:id/runs
+func (s *AutomationsService) RunsFilteredWithContext(ctx context.Context, id string, params *ListAutomationRunsRequest) (*ListResponse[AutomationRun], error) {
+	q := url.Values{}
+	if params != nil {
+		if params.Limit > 0 {
+			q.Set("limit", strconv.Itoa(params.Limit))
+		}
+		if params.After != "" {
+			q.Set("after", params.After)
+		}
+		if params.Before != "" {
+			q.Set("before", params.Before)
+		}
+		if len(params.Status) > 0 {
+			q.Set("status", strings.Join(params.Status, ","))
+		}
+	}
+	path := "/automations/" + esc(id) + "/runs"
+	if enc := q.Encode(); enc != "" {
+		path += "?" + enc
+	}
+	return request[ListResponse[AutomationRun]](ctx, s.client, http.MethodGet, path, nil, nil)
+}
+
 // GetRun retrieves a single automation run. GET /automations/:id/runs/:runId
 func (s *AutomationsService) GetRun(id, runId string) (*AutomationRun, error) {
 	return s.GetRunWithContext(context.Background(), id, runId)
@@ -254,6 +405,23 @@ func (s *AutomationsService) Stop(id string) (*Automation, error) {
 // StopWithContext stops an automation. POST /automations/:id/stop
 func (s *AutomationsService) StopWithContext(ctx context.Context, id string) (*Automation, error) {
 	return request[Automation](ctx, s.client, http.MethodPost, "/automations/"+esc(id)+"/stop", nil, nil)
+}
+
+// CreateWithAi generates automation steps from a natural-language prompt and
+// merges them into the automation, which must be stopped (disabled). The
+// result's Ai field reports how many steps were added.
+//
+// Rate limited to 20 requests per 60 s per account (rate_limit_exceeded, 429),
+// and it spends AI credits (ai_credits_exceeded, 429, when exhausted).
+// POST /automations/:id/ai
+func (s *AutomationsService) CreateWithAi(id string, params *AutomationAiRequest) (*Automation, error) {
+	return s.CreateWithAiWithContext(context.Background(), id, params)
+}
+
+// CreateWithAiWithContext generates automation steps from a prompt.
+// POST /automations/:id/ai
+func (s *AutomationsService) CreateWithAiWithContext(ctx context.Context, id string, params *AutomationAiRequest) (*Automation, error) {
+	return request[Automation](ctx, s.client, http.MethodPost, "/automations/"+esc(id)+"/ai", params, nil)
 }
 
 // Remove deletes an automation. DELETE /automations/:id

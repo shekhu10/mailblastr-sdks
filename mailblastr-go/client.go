@@ -31,7 +31,7 @@ import (
 
 const (
 	// Version is the SDK version, sent in the User-Agent header.
-	Version = "1.3.0"
+	Version = "2.0.0"
 	// DefaultBaseURL is the production MailBlastr API host.
 	DefaultBaseURL = "https://www.mailblastr.com/api"
 
@@ -47,12 +47,143 @@ const (
 	maxBackoff = 30 * time.Second
 )
 
-// MailblastrError is the error type returned for any non-2xx API response.
-// It is parsed from the API's error shape: { statusCode, name, message }.
+// Limit kinds reported by PlanLimitDetail.Kind. Treat the field as an open
+// string — new kinds may appear without an SDK release.
+const (
+	LimitKindEmailsDaily       = "emails_daily"
+	LimitKindEmailsMonthly     = "emails_monthly"
+	LimitKindDomains           = "domains"
+	LimitKindAutomationRuns    = "automation_runs"
+	LimitKindAiCredits         = "ai_credits"
+	LimitKindContacts          = "contacts"
+	LimitKindCampaignPreflight = "campaign_preflight"
+)
+
+// PlanRef identifies a plan by id and display name.
+type PlanRef struct {
+	Id   string `json:"id"`
+	Name string `json:"name"`
+}
+
+// PlanUpgrade is the cheapest plan that would clear the limit, with its
+// allowances. Nil (JSON null) when only Enterprise fits.
+type PlanUpgrade struct {
+	Id   string `json:"id"`
+	Name string `json:"name"`
+	// Amount is the price in the currency's minor unit (e.g. cents).
+	Amount         int    `json:"amount"`
+	Currency       string `json:"currency"`
+	MonthlyEmails  int    `json:"monthly_emails"`
+	DailyEmails    int    `json:"daily_emails"`
+	Domains        int    `json:"domains"`
+	Contacts       int    `json:"contacts"`
+	AiCredits      int    `json:"ai_credits"`
+	AutomationRuns int    `json:"automation_runs"`
+}
+
+// LimitCredits describes topping up with prepaid send credits instead of
+// upgrading. Present only for the email-quota kinds.
+type LimitCredits struct {
+	Balance     int  `json:"balance"`
+	Needed      int  `json:"needed"`
+	Purchasable bool `json:"purchasable"`
+	// Unit is how many emails one credit pack buys.
+	Unit int `json:"unit"`
+	// AmountPerUnitCents is the price of one pack, in cents.
+	AmountPerUnitCents int `json:"amount_per_unit_cents"`
+}
+
+// PlanLimitDetail is the additive "limit" object the API attaches to plan and
+// quota rejections — plan_limit_reached, daily_quota_exceeded,
+// monthly_quota_exceeded, contact_limit_reached, ai_credits_exceeded and
+// automation_quota_exceeded. It says WHICH allowance was hit, how much of it
+// was used, and what would clear it.
+type PlanLimitDetail struct {
+	// Kind is which allowance ran out; see the LimitKind* constants.
+	Kind  string `json:"kind"`
+	Used  int    `json:"used"`
+	Limit int    `json:"limit"`
+	// Requested is how much the rejected call asked for.
+	Requested int `json:"requested,omitempty"`
+	Remaining int `json:"remaining,omitempty"`
+	// Period is the rolling window the limit is measured over: "24h" or "30d".
+	// Empty for kinds that are not windowed (e.g. domains).
+	Period string  `json:"period,omitempty"`
+	Plan   PlanRef `json:"plan"`
+	// NextPlan is the cheapest plan that would fit, or nil when only
+	// Enterprise does.
+	NextPlan *PlanUpgrade `json:"next_plan,omitempty"`
+	// Credits is the top-up option, present only for email-quota kinds.
+	Credits *LimitCredits `json:"credits,omitempty"`
+}
+
+// Reputation scopes reported by ReputationDetail.Scope.
+const (
+	ReputationScopeTenant   = "tenant"
+	ReputationScopeDomain   = "domain"
+	ReputationScopePlatform = "platform"
+)
+
+// ReputationDetail is the additive "reputation" object on reputation-gate
+// errors (reputation_paused, reputation_limit_exceeded, and the platform-wide
+// sending_service_unavailable). Every field beyond Retryable and Scope is
+// optional and may be zero.
+type ReputationDetail struct {
+	// Retryable reports whether waiting and retrying can succeed (a warm-up
+	// capacity ceiling) rather than the send being blocked outright.
+	Retryable bool `json:"retryable"`
+	// Scope is what was gated: "tenant", "domain" or "platform".
+	Scope string `json:"scope"`
+	// Status is the internal reputation state, when reported.
+	Status string `json:"status,omitempty"`
+	// ScopeKey identifies the gated entity (e.g. the domain).
+	ScopeKey    string `json:"scope_key,omitempty"`
+	HourlyLimit int    `json:"hourly_limit,omitempty"`
+	DailyLimit  int    `json:"daily_limit,omitempty"`
+	HourlyUsed  int    `json:"hourly_used,omitempty"`
+	DailyUsed   int    `json:"daily_used,omitempty"`
+	// RetryAt is an ISO 8601 timestamp for when sending may resume.
+	RetryAt      string `json:"retry_at,omitempty"`
+	SupportEmail string `json:"support_email,omitempty"`
+}
+
+// MailblastrError is the error type returned for any non-2xx API response. It
+// is parsed from the API's error envelope { statusCode, name, message }.
+//
+// Branch on Name together with StatusCode, never on Message: message text is
+// scrubbed of provider identifiers server-side and is not a stable contract,
+// and some handlers return a status that differs from the name's usual one.
+//
+// Some errors are a SUPERSET of the envelope, and those extras are parsed too:
+//
+//   - Limit — plan/quota rejections say which allowance was hit.
+//   - Reputation — reputation gates say what was paused or throttled.
+//   - Sent / SentCount — a POST /emails/batch that failed part way through
+//     (only when an Idempotency-Key was supplied) names the emails that DID
+//     go out, so they are not sent twice on retry.
+//
+// All three are absent on an ordinary error: Limit and Reputation are nil,
+// Sent is empty and SentCount is 0.
 type MailblastrError struct {
 	StatusCode int    `json:"statusCode"`
 	Name       string `json:"name"`
 	Message    string `json:"message"`
+
+	// Limit is set on plan/quota errors, else nil.
+	Limit *PlanLimitDetail `json:"limit,omitempty"`
+	// Reputation is set on reputation-gate errors, else nil.
+	Reputation *ReputationDetail `json:"reputation,omitempty"`
+	// Sent lists the emails already delivered before a batch failed part way
+	// through. Empty on every other error.
+	Sent []IdResponse `json:"sent,omitempty"`
+	// SentCount is how many emails went out before a mid-batch failure. It
+	// falls back to len(Sent) when the server omits the count.
+	SentCount int `json:"sent_count,omitempty"`
+
+	// Body is the whole parsed error body, so fields this SDK version does
+	// not model yet are still reachable. Nil when the response was not a JSON
+	// object.
+	Body map[string]any `json:"-"`
 }
 
 func (e *MailblastrError) Error() string {
@@ -120,10 +251,29 @@ func listPath(base string, p *ListParams) string {
 	return base
 }
 
+// IdempotencyKeyMaxLen is the longest Idempotency-Key the API accepts. The
+// value is trimmed server-side, then must be 1-255 characters (the storage
+// column is VARCHAR(255)) — 255, not 256. A key outside that range is rejected
+// with invalid_idempotency_key (HTTP 400).
+//
+// The header is honoured by POST /emails and POST /emails/batch ONLY; every
+// other endpoint ignores it, so a retry there creates a second resource.
+//
+// This package does not check the length itself — the server is the authority.
+// The constant is exported so the rule is discoverable.
+const IdempotencyKeyMaxLen = 255
+
 // RequestOptions carries per-request options for create calls.
 type RequestOptions struct {
-	// IdempotencyKey is sent as the Idempotency-Key header, letting you safely
-	// retry a create (24h window).
+	// IdempotencyKey is sent VERBATIM as the Idempotency-Key header, letting
+	// you safely retry a send. It must be 1-255 characters after the server
+	// trims it (IdempotencyKeyMaxLen); the server, not this package, rejects
+	// anything else with a 400 invalid_idempotency_key.
+	//
+	// Only POST /emails and POST /emails/batch honour the header — i.e.
+	// Emails.SendWithOptions, Batch.SendEmailsWithOptions and
+	// Batch.SendWithOptions. Every other endpoint ignores it, so a retry there
+	// creates a second resource.
 	IdempotencyKey string
 }
 
@@ -152,7 +302,10 @@ type Client struct {
 	// own instance (not http.DefaultClient) so tuning it never affects other
 	// callers.
 	HTTPClient *http.Client
-	// UserAgent is sent with every request.
+	// UserAgent is sent with every request. The API rejects a request whose
+	// User-Agent is missing or blank with 403 validation_error, before
+	// authentication, so setting this to "" falls back to the default rather
+	// than producing a client that 403s on every call.
 	UserAgent string
 
 	// Timeout bounds every HTTP request (JSON and raw/binary paths alike),
@@ -232,7 +385,14 @@ func (c *Client) newRequest(ctx context.Context, method, path string, body any, 
 		return nil, nil, err
 	}
 	req.Header.Set("Authorization", "Bearer "+c.apiKey)
-	req.Header.Set("User-Agent", c.UserAgent)
+	// A non-empty User-Agent is MANDATORY: the gate runs before authentication
+	// and answers a blank one with 403 validation_error. net/http omits the
+	// header entirely when its value is "", so fall back to the default.
+	userAgent := strings.TrimSpace(c.UserAgent)
+	if userAgent == "" {
+		userAgent = defaultUserAgent
+	}
+	req.Header.Set("User-Agent", userAgent)
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}
@@ -255,17 +415,65 @@ func parseAPIError(status int, body []byte) *MailblastrError {
 		Name:       "application_error",
 		Message:    fmt.Sprintf("request failed with status %d", status),
 	}
-	var parsed MailblastrError
-	if json.Unmarshal(body, &parsed) == nil {
-		if parsed.StatusCode != 0 {
-			apiErr.StatusCode = parsed.StatusCode
+	// Decode field by field: an additive field in a shape this SDK version
+	// does not expect must never cost the caller the envelope itself.
+	var fields map[string]json.RawMessage
+	if json.Unmarshal(body, &fields) != nil {
+		return apiErr
+	}
+	// Envelope only — decoding it into MailblastrError would make a malformed
+	// additive field poison the three fields every caller relies on.
+	var envelope struct {
+		StatusCode int    `json:"statusCode"`
+		Name       string `json:"name"`
+		Message    string `json:"message"`
+	}
+	if json.Unmarshal(body, &envelope) == nil {
+		if envelope.StatusCode != 0 {
+			apiErr.StatusCode = envelope.StatusCode
 		}
-		if parsed.Name != "" {
-			apiErr.Name = parsed.Name
+		if envelope.Name != "" {
+			apiErr.Name = envelope.Name
 		}
-		if parsed.Message != "" {
-			apiErr.Message = parsed.Message
+		if envelope.Message != "" {
+			apiErr.Message = envelope.Message
 		}
+	}
+
+	// Additive fields, present only on plan/quota, reputation and
+	// partial-batch errors; they stay nil/empty otherwise.
+	if raw, ok := fields["limit"]; ok {
+		var limit PlanLimitDetail
+		if json.Unmarshal(raw, &limit) == nil {
+			apiErr.Limit = &limit
+		}
+	}
+	if raw, ok := fields["reputation"]; ok {
+		var reputation ReputationDetail
+		if json.Unmarshal(raw, &reputation) == nil {
+			apiErr.Reputation = &reputation
+		}
+	}
+	if raw, ok := fields["sent"]; ok {
+		var sent []IdResponse
+		if json.Unmarshal(raw, &sent) == nil {
+			apiErr.Sent = sent
+		}
+	}
+	if raw, ok := fields["sent_count"]; ok {
+		var count int
+		if json.Unmarshal(raw, &count) == nil {
+			apiErr.SentCount = count
+		}
+	}
+	if apiErr.SentCount == 0 {
+		apiErr.SentCount = len(apiErr.Sent)
+	}
+
+	// Keep the raw body so extras this version does not model are reachable.
+	var raw map[string]any
+	if json.Unmarshal(body, &raw) == nil {
+		apiErr.Body = raw
 	}
 	return apiErr
 }

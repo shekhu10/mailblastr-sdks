@@ -13,14 +13,14 @@ Official Java SDK for the [MailBlastr](https://www.mailblastr.com) email API —
 <dependency>
   <groupId>com.mailblastr</groupId>
   <artifactId>mailblastr</artifactId>
-  <version>1.3.0</version>
+  <version>2.0.0</version>
 </dependency>
 ```
 
 ### Gradle
 
 ```groovy
-implementation 'com.mailblastr:mailblastr:1.3.0'
+implementation 'com.mailblastr:mailblastr:2.0.0'
 ```
 
 ## Usage
@@ -62,8 +62,33 @@ dotted-path helper getters — `getString("id")`, `getBoolean("has_more")`,
 lists), `asMap()`, and `raw()` for the exact body text. Binary downloads
 (received-email attachments, raw MIME) return `byte[]` instead.
 
-Any non-2xx response throws `MailblastrException` carrying the API error body:
-`getStatusCode()`, `getName()`, `getMessage()`.
+Any non-2xx response throws `MailblastrException` carrying the API error
+envelope: `getStatusCode()`, `getName()`, `getMessage()`.
+
+Branch on `getName()` plus `getStatusCode()` — never on message text, which is
+scrubbed server-side and is not a stable contract. A name does not imply a
+status either: `validation_error` is 422 most of the time, but 403 for a
+missing `User-Agent` and 409 for a duplicate contact-property key.
+
+Some errors add fields on top of the envelope, reachable through `getBody()`,
+the dotted-path `get(...)`, or the `getLimit()` shortcut:
+
+```java
+try {
+    mailblastr.emails().send(request);
+} catch (MailblastrException e) {
+    if (e.getLimit() != null) {                       // plan / quota rejection
+        System.out.println("used " + e.get("limit.used") + " of " + e.get("limit.limit"));
+        System.out.println("upgrade to " + e.get("limit.next_plan.name"));
+    }
+    // A partial batch failure made with an Idempotency-Key also carries
+    // `sent` and `sent_count`; reputation errors carry `reputation`.
+}
+```
+
+The SDK always sends a non-empty `User-Agent`. If you build an `ApiClient`
+yourself, keep it non-empty — the API rejects requests without one with a 403
+`validation_error` before authentication even runs.
 
 ### Attachments
 
@@ -106,10 +131,16 @@ One accessor per resource, each following a consistent
 `segments()`, `topics()`, `templates()`, `automations()`, `webhooks()`,
 `logs()`, `events()`, `apiKeys()`, `polls()`.
 
+Read-only resources expose only the verbs they support — `apiKeys()` is
+list-only, and `polls()` is list/get.
+
 ```java
 // Emails
 mailblastr.emails().send(request);
 mailblastr.emails().list(ListParams.builder().limit(20).after(cursor).build());
+mailblastr.emails().list(ListEmailsParams.builder()   // server-side filters
+        .status("bounced").search("acme.com").domainId(domainId).build());
+mailblastr.emails().sources();   // per-campaign / automation send metrics
 mailblastr.emails().get(id);
 mailblastr.emails().listAttachments(id);
 mailblastr.emails().getAttachment(id, attachmentId);
@@ -118,6 +149,7 @@ mailblastr.emails().cancel(id);
 
 // Inbound email
 mailblastr.emails().receiving().list();
+mailblastr.emails().receiving().addresses(); // per-address inbound stats
 mailblastr.emails().receiving().get(id);
 byte[] file = mailblastr.emails().receiving().getAttachment(id, attachmentId);
 byte[] mime = mailblastr.emails().receiving().getRaw(id);
@@ -126,8 +158,9 @@ mailblastr.emails().receiving().forward(id,
 mailblastr.emails().receiving().reply(id,
         ReplyEmailRequest.builder().from("you@yourdomain.com").html("<p>Thanks!</p>").build());
 
-// Batch send (alias of mailblastr.emails().batch(...))
-mailblastr.batch().send(List.of(request1, request2)); // up to 100 emails
+// Batch send — up to 100 emails. Items reject `attachments` and
+// `scheduled_at`; send those individually via emails().send(...).
+mailblastr.batch().sendEmails(List.of(batchRequest1, batchRequest2));
 
 // Domains (incl. claiming a domain verified elsewhere + one-click DNS applies)
 mailblastr.domains().create(CreateDomainRequest.builder().name("example.com").build());
@@ -136,6 +169,8 @@ mailblastr.domains().claim(ClaimDomainRequest.builder().name("example.com").buil
 mailblastr.domains().verifyClaim(id);
 mailblastr.domains().detectDns(id);
 mailblastr.domains().applyCloudflareDns(id, cloudflareToken);
+mailblastr.domains().mxCheck("example.com");   // inbound MX pre-flight
+String csv = mailblastr.domains().recordsCsv(id); // DNS records as text/csv
 ```
 
 ### Contacts are DOMAIN-FIRST
@@ -167,6 +202,17 @@ mailblastr.contacts().batch(BatchContactsRequest.builder()
         .build());
 mailblastr.contacts().importCsv(ImportContactsRequest.builder()
         .audienceId(audienceId).csv("email,company\na@b.com,Acme").build());
+
+// Inline CSV is capped at 5 MB / 10,000 rows. For bigger files, mint a
+// presigned URL, PUT the file to it yourself, then import by storage key:
+MailblastrResponse upload = mailblastr.contacts()
+        .createImportUpload(audienceId, "contacts.csv", fileSizeBytes);
+// ... PUT the bytes to upload.getString("upload_url") — do not log that URL ...
+mailblastr.contacts().importCsv(ImportContactsRequest.builder()
+        .audienceId(audienceId)
+        .storageKey(upload.getString("storage_key"))
+        .build());
+
 mailblastr.contacts().addToSegment(contactId, segmentId);
 mailblastr.contacts().listSegments(contactId);
 mailblastr.contacts().updateTopics(contactId, UpdateContactTopicsRequest.builder()
@@ -191,8 +237,10 @@ mailblastr.campaigns().create(CreateCampaignRequest.builder()
         .segmentId(segmentId)
         .build());
 mailblastr.campaigns().send(id);                        // now
-mailblastr.campaigns().send(id, "2026-08-05T11:00:00Z"); // scheduled
+mailblastr.campaigns().send(id, "2026-08-05T11:00:00Z"); // scheduled (max 30 days out)
 mailblastr.campaigns().stats(id);
+mailblastr.campaigns().engagement(id); // who opened / clicked / replied
+mailblastr.campaigns().ab(id);         // A/B winner evaluation
 
 mailblastr.segments().create(CreateSegmentRequest.builder()
         .domain("example.com")
@@ -253,22 +301,43 @@ mailblastr.events().send(SendEventRequest.builder()
 
 // Inspect execution
 mailblastr.automations().runs(automationId, ListParams.builder().limit(25).build());
+mailblastr.automations().runs(automationId, ListAutomationRunsParams.builder()
+        .status("failed", "running").limit(50).build());
 mailblastr.automations().getRun(automationId, runId);
 mailblastr.automations().stop(automationId);
+
+// Editing steps requires a stopped automation
+mailblastr.automations().updateStep(automationId, stepId, AutomationStep.builder()
+        .type("delay").config("duration", "3 days").build());
 ```
+
+`events().send(...)` does **not** honour `Idempotency-Key` — a retry ingests a
+second event and can enroll the contact twice. Dedupe before you call.
 
 ### Webhooks
 
 ```java
 MailblastrResponse hook = mailblastr.webhooks().create(CreateWebhookRequest.builder()
-        .endpoint("https://yourapp.com/hooks/mailblastr")
-        .events("email.delivered", "email.bounced", "contact.unsubscribed")
+        .endpoint("https://yourapp.com/hooks/mailblastr") // must be https://
+        .events("email.delivered", "email.bounced", "email.unsubscribed")
         .build());
 String secret = hook.getString("signing_secret"); // shown ONCE — store it
 
 mailblastr.webhooks().rotate(id); // new secret, also shown once
-mailblastr.webhooks().test(id);
+
+// A failed test delivery is still HTTP 200 — check `ok`, not the status.
+MailblastrResponse probe = mailblastr.webhooks().test(id);
+if (!Boolean.TRUE.equals(probe.getBoolean("ok"))) {
+    System.err.println("endpoint unreachable: " + probe.getString("error"));
+}
 ```
+
+Event names are `email.sent`, `email.delivered`, `email.delivery_delayed`,
+`email.bounced`, `email.complained`, `email.opened`, `email.clicked`,
+`email.failed`, `email.scheduled`, `email.suppressed`, `email.received`,
+`email.replied`, `email.unsubscribed`, `contact.created`, `contact.updated`,
+`contact.deleted`, `domain.created`, `domain.updated` and `domain.deleted`.
+Anything else is a 422 — note there is no `contact.unsubscribed`.
 
 Verify deliveries locally (no HTTP call) — pass the EXACT raw request body and
 the `svix-*` headers:
@@ -293,30 +362,81 @@ timestamp tolerance in seconds (default 300; pass 0 to disable the check).
 mailblastr.logs().list(ListLogsParams.builder().limit(100).method("POST").status(429).build());
 mailblastr.logs().get(logId);
 
-mailblastr.apiKeys().create(CreateApiKeyRequest.builder()
-        .name("CI").permission("sending_access").build());
-mailblastr.apiKeys().list();
+mailblastr.apiKeys().list();   // display prefixes, permission, domain scoping
 
 mailblastr.polls().list();
 mailblastr.polls().get(emailId);
 ```
 
+**API keys are created, re-scoped and revoked in the dashboard**, at
+[mailblastr.com/app/api-keys](https://www.mailblastr.com/app/api-keys). Those
+routes accept a signed-in dashboard session only, so `apiKeys()` deliberately
+offers nothing but `list()`. That is the point: a key that leaks cannot mint
+itself a replacement, widen its own permission, or revoke the keys around it —
+containing the blast radius to whatever the leaked key could already do.
+`token` on a listed key is only the 8-character display prefix; the full secret
+is shown once, in the dashboard, at creation.
+
 ### Pagination
 
-`list()` methods accept optional cursor pagination:
+`list()` methods accept optional cursor pagination — `limit` is an integer
+1–100 and `after`/`before` are item ids (supplying both is a 422):
 
 ```java
 mailblastr.campaigns().list(ListParams.builder().limit(25).after("cursor_abc").build());
 ```
 
+Responses are `{ "object": "list", "has_more": bool, "data": [...] }`. There is
+no `total` and no `next_cursor` — page forward with the last `data[].id` as
+`after`, and stop when `has_more` is false. An unknown cursor returns an empty
+page rather than an error.
+
+**The unpaged default is not uniform.** Called with no pagination params,
+`domains()`, `apiKeys()`, `topics()`, `campaigns()`, `contacts()`,
+`contactProperties()`, `segments()` and the contact/segment sub-lists return
+the **whole collection**, while `templates()`, `webhooks()`, `audiences()`,
+`automations()`, `automations().runs(...)` and `events()` cap at **20**. Pass an
+explicit `limit` whenever you care which you get.
+
+### Rate limits
+
+Every `/emails/**` route — including the reads and the whole `receiving`
+subtree — shares one limit of **30 requests per 60 seconds per client IP**.
+Over the cap you get a 429 `rate_limit_exceeded`. Those responses carry
+`RateLimit-Limit` / `RateLimit-Remaining` / `RateLimit-Reset` and a
+`Retry-After`, which the default transport already honours: it retries 429 and
+503 up to twice, waiting out `Retry-After` (capped at 30s) or falling back to
+exponential backoff. Tune or disable it per client:
+
+```java
+Mailblastr mailblastr = new Mailblastr(
+        "mb_xxxxxxxxx", "https://www.mailblastr.com/api", Duration.ofSeconds(30), 0);
+```
+
+No other resource is rate-limited at the mount level; `automations().ai(...)`
+allows 20 requests/60s per account.
+
 ### Idempotency
 
-Pass an idempotency key to safely retry a create (24h window):
+`POST /emails` and `POST /emails/batch` are the **only** endpoints that read
+`Idempotency-Key`. Pass one to make a retry replay the first response instead
+of sending twice:
 
 ```java
 mailblastr.emails().send(request, "order-123");
-mailblastr.events().send(eventRequest, "signup-42");
+mailblastr.batch().sendEmails(requests, "digest-2026-08-08");
 ```
+
+- The key must be **1–255 characters**, measured after the server trims it —
+  255, not 256 (`Mailblastr.IDEMPOTENCY_KEY_MAX_LENGTH`). The SDK sends the key
+  verbatim and lets the **server** be the authority: anything else is a
+  `400 invalid_idempotency_key`.
+- It is bound to the request body: reusing it with a different payload is a
+  `409 invalid_idempotent_request`, and reusing it while the first call is
+  still in flight is `409 concurrent_idempotent_requests`.
+- Every other endpoint ignores the header, so a retry there creates a second
+  resource. `events().send(request, key)` and `events().create(request, key)`
+  are deprecated for exactly that reason — dedupe those on your side.
 
 ## Building from source
 

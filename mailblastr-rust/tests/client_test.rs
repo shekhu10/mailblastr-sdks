@@ -6,7 +6,10 @@ use std::io::{Read, Write};
 use std::net::TcpListener;
 use std::thread::{self, JoinHandle};
 
-use mailblastr::{CreateEmailBaseOptions, Error, ListSegmentsParams, Mailblastr, PaginationParams};
+use mailblastr::{
+    ApiKeyPermission, BatchEmailOptions, CampaignListItem, CreateEmailBaseOptions, Error,
+    ListEmailsParams, ListSegmentsParams, Mailblastr, PaginationParams,
+};
 
 /// Find the first occurrence of `needle` in `haystack`.
 fn find_subsequence(haystack: &[u8], needle: &[u8]) -> Option<usize> {
@@ -158,7 +161,7 @@ async fn does_not_retry_a_422() {
     let email = CreateEmailBaseOptions::new("Acme <hi@x.com>", ["b@y.com"], "Hi").with_html("<p>x</p>");
     let err = mb.emails.send(email).await.expect_err("422 should fail");
     match err {
-        Error::Api { status_code, .. } => assert_eq!(status_code, 422),
+        Error::Api(api) => assert_eq!(api.status_code, 422),
         other => panic!("expected Error::Api(422), got {other:?}"),
     }
 }
@@ -200,17 +203,115 @@ async fn maps_non_2xx_to_api_error() {
 
     let err = mb.domains.get("dom_1").await.expect_err("should fail");
     match err {
-        Error::Api {
-            status_code,
-            name,
-            message,
-        } => {
-            assert_eq!(status_code, 422);
-            assert_eq!(name, "validation_error");
-            assert_eq!(message, "domain is required");
+        Error::Api(api) => {
+            assert_eq!(api.status_code, 422);
+            assert_eq!(api.name, "validation_error");
+            assert_eq!(api.message, "domain is required");
         }
         other => panic!("expected Error::Api, got {other:?}"),
     }
+    handle.join().unwrap();
+}
+
+/// A quota rejection must reach the caller with the `limit` object intact —
+/// end to end, through the real client — or they cannot tell WHICH quota
+/// stopped them.
+#[tokio::test]
+async fn surfaces_the_plan_limit_object_end_to_end() {
+    let base_url = spawn_stub_seq(vec![(
+        429,
+        r#"{"statusCode":429,"name":"daily_quota_exceeded","message":"Daily send limit reached.","limit":{"kind":"emails_daily","used":100,"limit":100,"requested":3,"remaining":0,"period":"24h","plan":{"id":"free","name":"Free"},"next_plan":{"id":"pro","name":"Pro","amount":1400,"currency":"USD","monthly_emails":50000,"daily_emails":2000,"domains":10,"contacts":10000,"ai_credits":100,"automation_runs":10000},"credits":{"balance":0,"needed":1,"purchasable":true,"unit":1000,"amount_per_unit_cents":100}}}"#,
+        None,
+    )]);
+    // No retry budget: the 429 is the assertion subject, not a transient.
+    let mb = Mailblastr::builder("mb_test_key")
+        .base_url(base_url)
+        .max_retries(0)
+        .build();
+    let email =
+        CreateEmailBaseOptions::new("Acme <hi@x.com>", ["b@y.com"], "Hi").with_html("<p>x</p>");
+
+    let err = mb.emails.send(email).await.expect_err("quota should fail");
+    let api = err.api().expect("an API error");
+    assert_eq!(api.status_code, 429);
+    assert_eq!(api.name, "daily_quota_exceeded");
+    let limit = api.limit.as_ref().expect("the limit object");
+    assert_eq!(limit.kind, "emails_daily");
+    assert_eq!((limit.used, limit.limit), (100, 100));
+    assert_eq!(limit.period.as_deref(), Some("24h"));
+    assert_eq!(limit.next_plan.as_ref().map(|p| p.id.as_str()), Some("pro"));
+    assert!(api.reputation.is_none());
+    assert!(api.sent.is_empty());
+}
+
+/// A batch that failed part way through names the emails that DID go out, so
+/// a retry can skip them.
+#[tokio::test]
+async fn surfaces_partial_batch_sent_end_to_end() {
+    let base_url = spawn_stub_seq(vec![(
+        429,
+        r#"{"statusCode":429,"name":"daily_quota_exceeded","message":"Daily send limit reached.","limit":{"kind":"emails_daily","used":100,"limit":100,"plan":{"id":"free","name":"Free"}},"sent":[{"id":"em_1"},{"id":"em_2"}],"sent_count":2}"#,
+        None,
+    )]);
+    let mb = Mailblastr::builder("mb_test_key")
+        .base_url(base_url)
+        .max_retries(0)
+        .build();
+    let email = BatchEmailOptions::new("Acme <hi@x.com>", ["b@y.com"], "Hi").with_html("<p>x</p>");
+
+    let err = mb
+        .batch
+        .send_emails_with_idempotency_key(vec![email], "batch-1")
+        .await
+        .expect_err("quota should stop the batch");
+    let api = err.api().expect("an API error");
+    assert_eq!(api.sent_count, 2);
+    let ids: Vec<&str> = api.sent.iter().map(|e| e.id.as_str()).collect();
+    assert_eq!(ids, vec!["em_1", "em_2"]);
+    assert_eq!(
+        api.limit.as_ref().map(|l| l.kind.as_str()),
+        Some("emails_daily")
+    );
+}
+
+/// `POST /webhooks/:id/test` answers 200 even when the delivery FAILED, so the
+/// call succeeds and the real outcome is `ok`.
+#[tokio::test]
+async fn webhook_test_failure_is_a_200_with_ok_false() {
+    let (base_url, handle) = spawn_stub(
+        200,
+        r#"{"object":"webhook_test","id":"42","ok":false,"error":"lookup_failed"}"#,
+    );
+    let mb = Mailblastr::with_base_url("mb_test_key", base_url);
+
+    let result = mb
+        .webhooks
+        .test("42")
+        .await
+        .expect("a failed delivery is still HTTP 200, not an Err");
+    assert!(!result.ok, "ok must report the real delivery outcome");
+    assert_eq!(result.error.as_deref(), Some("lookup_failed"));
+    assert_eq!(result.status, None);
+
+    let request = handle.join().unwrap();
+    assert!(
+        request.starts_with("POST /webhooks/42/test HTTP/1.1"),
+        "got: {request}"
+    );
+}
+
+#[tokio::test]
+async fn webhook_test_success_reports_the_endpoint_status() {
+    let (base_url, handle) = spawn_stub(
+        200,
+        r#"{"object":"webhook_test","id":"42","ok":true,"status":200}"#,
+    );
+    let mb = Mailblastr::with_base_url("mb_test_key", base_url);
+
+    let result = mb.webhooks.test("42").await.expect("test should succeed");
+    assert!(result.ok);
+    assert_eq!(result.status, Some(200));
+    assert!(result.error.is_none());
     handle.join().unwrap();
 }
 
@@ -273,6 +374,31 @@ async fn idempotency_key_header_is_sent() {
         .contains("idempotency-key: order-123"));
 }
 
+/// The documented bound is 1-255 characters, measured AFTER the server trims
+/// the value (`api_idempotency.key` is `VARCHAR(255)`) — 255, not 256. The
+/// constant is exported so the rule is discoverable; the key itself is sent
+/// verbatim and the SERVER answers an out-of-range one with
+/// `400 invalid_idempotency_key`, so this crate never pre-checks it.
+#[tokio::test]
+async fn over_long_idempotency_key_is_left_to_the_server() {
+    assert_eq!(mailblastr::IDEMPOTENCY_KEY_MAX_LEN, 255);
+
+    let (base_url, handle) = spawn_stub(200, r#"{"id":"em_9"}"#);
+    let mb = Mailblastr::with_base_url("mb_test_key", base_url);
+
+    let too_long = "k".repeat(mailblastr::IDEMPOTENCY_KEY_MAX_LEN + 1);
+    let email = CreateEmailBaseOptions::new("a@b.com", ["c@d.com"], "S");
+    mb.emails
+        .send_with_idempotency_key(email, &too_long)
+        .await
+        .expect("the SDK must not reject the key locally");
+
+    let request = handle.join().unwrap();
+    assert!(request
+        .to_lowercase()
+        .contains(&format!("idempotency-key: {too_long}")));
+}
+
 #[tokio::test]
 async fn received_attachment_downloads_return_raw_bytes() {
     let (base_url, handle) = spawn_stub(200, "%PDF-1.7 raw bytes, not json");
@@ -289,6 +415,278 @@ async fn received_attachment_downloads_return_raw_bytes() {
     let request = handle.join().unwrap();
     assert!(
         request.starts_with("GET /emails/receiving/re_1/attachments/att_1 HTTP/1.1"),
+        "got: {request}"
+    );
+}
+
+#[tokio::test]
+async fn email_list_filters_include_status_and_search() {
+    let (base_url, handle) = spawn_stub(200, r#"{"object":"list","has_more":false,"data":[]}"#);
+    let mb = Mailblastr::with_base_url("mb_test_key", base_url);
+
+    mb.emails
+        .list_filtered(Some(
+            ListEmailsParams::new()
+                .with_limit(10)
+                .with_status("bounced")
+                .with_search("acme"),
+        ))
+        .await
+        .expect("list should succeed");
+
+    let request = handle.join().unwrap();
+    assert!(
+        request.starts_with("GET /emails?limit=10&status=bounced&search=acme HTTP/1.1"),
+        "got: {request}"
+    );
+}
+
+#[tokio::test]
+async fn sent_email_rows_expose_domain_and_origin_ids() {
+    let (base_url, handle) = spawn_stub(
+        200,
+        r#"{"object":"list","has_more":false,"data":[{"id":"em_1","object":"email",
+            "message_id":null,"to":["a@x.com"],"from":"Me <me@x.com>","domain_id":"dom_1",
+            "created_at":"2026-08-08T10:00:00.000Z","subject":"Hi","bcc":null,"cc":null,
+            "reply_to":null,"last_event":"delivered","scheduled_at":null,
+            "campaign_id":"cmp_1","automation_id":null}]}"#,
+    );
+    let mb = Mailblastr::with_base_url("mb_test_key", base_url);
+
+    let page = mb.emails.list(None).await.expect("list should succeed");
+    let row = &page.data[0];
+    assert_eq!(row.domain_id.as_deref(), Some("dom_1"));
+    assert_eq!(row.campaign_id.as_deref(), Some("cmp_1"));
+    assert!(row.automation_id.is_none());
+    // List rows use null, not [], for unset recipient lists.
+    assert!(row.cc.is_none());
+    handle.join().unwrap();
+}
+
+#[tokio::test]
+async fn received_email_decodes_raw_pointer_without_expires_at() {
+    // The receiving route omits optional keys entirely, and `raw` carries only
+    // `download_url` — requiring `expires_at` would fail every decode.
+    let (base_url, handle) = spawn_stub(
+        200,
+        r#"{"object":"received_email","id":"re_1","from":"s@other.com","to":["hi@x.com"],
+            "domain_id":"dom_1","subject":"Hello","category":null,"reply_to_email_id":null,
+            "raw_available":true,"raw":{"download_url":"https://x/raw"},
+            "created_at":"2026-08-08T10:00:00.000Z"}"#,
+    );
+    let mb = Mailblastr::with_base_url("mb_test_key", base_url);
+
+    let received = mb
+        .emails
+        .receiving
+        .get("re_1")
+        .await
+        .expect("receiving.get should decode");
+    assert_eq!(received.domain_id.as_deref(), Some("dom_1"));
+    let raw = received.raw.expect("raw pointer present");
+    assert_eq!(raw.download_url, "https://x/raw");
+    assert!(raw.expires_at.is_none());
+    handle.join().unwrap();
+}
+
+#[tokio::test]
+async fn deleted_contact_response_reads_the_id_field() {
+    // The route returns `{object,id,deleted}` — an `id` typo here made every
+    // contacts.remove() call fail to decode.
+    let (base_url, handle) = spawn_stub(200, r#"{"object":"contact","id":"con_1","deleted":true}"#);
+    let mb = Mailblastr::with_base_url("mb_test_key", base_url);
+
+    let removed = mb
+        .contacts
+        .remove(mailblastr::ContactLookup::new("con_1"))
+        .await
+        .expect("remove should decode");
+    assert_eq!(removed.id, "con_1");
+    assert!(removed.deleted);
+    handle.join().unwrap();
+}
+
+#[tokio::test]
+async fn contact_segments_are_reduced_refs() {
+    // `GET /contacts/:id/segments` returns {id,name,created_at} only — not the
+    // full segment object.
+    let (base_url, handle) = spawn_stub(
+        200,
+        r#"{"object":"list","has_more":false,"data":[{"id":"seg_1","name":"VIP","created_at":null}]}"#,
+    );
+    let mb = Mailblastr::with_base_url("mb_test_key", base_url);
+
+    let page = mb
+        .contacts
+        .list_segments("con_1", None)
+        .await
+        .expect("list_segments should decode");
+    assert_eq!(page.data[0].name, "VIP");
+    handle.join().unwrap();
+}
+
+#[tokio::test]
+async fn segment_contacts_are_the_reduced_shape() {
+    // The resolver returns rows with no `object` and no `properties`.
+    let (base_url, handle) = spawn_stub(
+        200,
+        r#"{"object":"list","has_more":false,"data":[{"id":"con_1","email":"a@x.com",
+            "first_name":null,"last_name":null,"created_at":null,"unsubscribed":false}]}"#,
+    );
+    let mb = Mailblastr::with_base_url("mb_test_key", base_url);
+
+    let page = mb
+        .segments
+        .contacts("seg_1", Some(PaginationParams::new().with_limit(50)))
+        .await
+        .expect("segment contacts should decode");
+    assert_eq!(page.data[0].email, "a@x.com");
+
+    let request = handle.join().unwrap();
+    assert!(
+        request.starts_with("GET /segments/seg_1/contacts?limit=50 HTTP/1.1"),
+        "got: {request}"
+    );
+}
+
+#[tokio::test]
+async fn template_list_rows_omit_the_object_key() {
+    let (base_url, handle) = spawn_stub(
+        200,
+        r#"{"object":"list","has_more":false,"data":[{"id":"tmpl_1","name":"Welcome",
+            "subject":null,"html":null,"status":"draft","published_at":null,
+            "created_at":"2026-08-08T00:00:00.000Z","updated_at":"2026-08-08T00:00:00.000Z",
+            "alias":null,"has_unpublished_versions":false}]}"#,
+    );
+    let mb = Mailblastr::with_base_url("mb_test_key", base_url);
+
+    let page = mb.templates.list(None).await.expect("list should decode");
+    assert_eq!(page.data[0].id, "tmpl_1");
+    assert_eq!(page.data[0].status.as_deref(), Some("draft"));
+    handle.join().unwrap();
+}
+
+/// `GET /campaigns` sends a narrower row than `GET /campaigns/:id`: no
+/// bodies, no `from`/`topic_id`/`reply_to`/`preview_text`, no schedule detail,
+/// follow-ups, recurrence or statistics. Typing the list as `Campaign` would
+/// promise all of those; it decodes as [`CampaignListItem`] instead.
+#[tokio::test]
+async fn campaign_list_rows_are_the_trimmed_shape() {
+    let (base_url, handle) = spawn_stub(
+        200,
+        r#"{"object":"list","has_more":false,"data":[{"object":"campaign","id":"cmp_1",
+            "name":"Launch","subject":"Hi","audience_id":"aud_1","segment_id":null,
+            "status":"sent","ab_test":{"enabled":false},
+            "created_at":"2026-08-08T00:00:00.000Z","scheduled_at":null,
+            "sent_at":"2026-08-08T01:00:00.000Z","failure_reason":null}]}"#,
+    );
+    let mb = Mailblastr::with_base_url("mb_test_key", base_url);
+
+    let page = mb.campaigns.list(None).await.expect("list should decode");
+    let row: &CampaignListItem = &page.data[0];
+    assert_eq!(row.id, "cmp_1");
+    assert_eq!(row.subject.as_deref(), Some("Hi"));
+    assert_eq!(row.audience_id, "aud_1");
+    assert_eq!(row.status, "sent");
+    assert!(row.segment_id.is_none());
+    assert!(!row.ab_test.as_ref().expect("ab_test marker").enabled);
+    handle.join().unwrap();
+}
+
+#[tokio::test]
+async fn template_variables_carry_only_the_declaration() {
+    let (base_url, handle) = spawn_stub(
+        200,
+        r#"{"object":"template","id":"tmpl_1","current_version_id":null,"alias":null,
+            "name":"Welcome","created_at":"2026-08-08T00:00:00.000Z",
+            "updated_at":"2026-08-08T00:00:00.000Z","status":"draft","published_at":null,
+            "from":null,"subject":null,"reply_to":null,"html":null,"text":null,
+            "variables":[{"key":"first_name","type":"string","fallback_value":null}],
+            "has_unpublished_versions":false}"#,
+    );
+    let mb = Mailblastr::with_base_url("mb_test_key", base_url);
+
+    let template = mb.templates.get("tmpl_1").await.expect("get should decode");
+    let variables = template.variables.expect("variables present");
+    assert_eq!(variables[0].key, "first_name");
+    handle.join().unwrap();
+}
+
+/// `api_keys` is read-only: key create / re-scope / revoke are dashboard-only,
+/// so `list` is the whole surface. Absence of the write methods is a
+/// compile-time guarantee, asserted by the `compile_fail` doctest on
+/// `ApiKeysSvc` (`cargo test --doc`) — it cannot be checked at runtime here.
+#[tokio::test]
+async fn api_key_list_reads_prefixes_and_scoping() {
+    let (base_url, handle) = spawn_stub(
+        200,
+        r#"{"object":"list","has_more":false,"data":[
+            {"id":"42","name":"CI","token":"mb_ab12","permission":"sending_access",
+             "domain_id":null,"domain_ids":["dom_1"],
+             "created_at":"2026-08-08T00:00:00.000Z","last_used_at":null}]}"#,
+    );
+    let mb = Mailblastr::with_base_url("mb_test_key", base_url);
+
+    let keys = mb.api_keys.list(None).await.expect("list should decode");
+    let key = &keys.data[0];
+    assert_eq!(key.permission, ApiKeyPermission::SendingAccess);
+    assert_eq!(key.token.as_deref(), Some("mb_ab12"));
+    assert_eq!(
+        key.domain_ids.as_deref(),
+        Some(["dom_1".to_string()].as_slice())
+    );
+
+    let request = handle.join().unwrap();
+    assert!(
+        request.starts_with("GET /api-keys HTTP/1.1"),
+        "got: {request}"
+    );
+}
+
+#[tokio::test]
+async fn mx_check_passes_the_domain_name_as_a_query_param() {
+    let (base_url, handle) = spawn_stub(
+        200,
+        r#"{"has_mx":true,"ours":false,"records":[{"exchange":"mx.example.com","priority":10}]}"#,
+    );
+    let mb = Mailblastr::with_base_url("mb_test_key", base_url);
+
+    let result = mb
+        .domains
+        .mx_check("example.com")
+        .await
+        .expect("mx_check should decode");
+    assert!(result.has_mx);
+    assert_eq!(result.records[0].exchange, "mx.example.com");
+
+    let request = handle.join().unwrap();
+    assert!(
+        request.starts_with("GET /domains/mx-check?name=example.com HTTP/1.1"),
+        "got: {request}"
+    );
+}
+
+#[tokio::test]
+async fn every_request_carries_a_user_agent() {
+    // A blank User-Agent is a hard 403 on every documented endpoint, so the
+    // header must ride on plain GETs too — not just the JSON POST paths.
+    let (base_url, handle) = spawn_stub(200, r#"{"object":"list","has_more":false,"data":[]}"#);
+    let mb = Mailblastr::with_base_url("mb_test_key", base_url);
+
+    mb.emails.sources().await.expect("sources should succeed");
+
+    let request = handle.join().unwrap();
+    let lower = request.to_lowercase();
+    assert!(
+        request.starts_with("GET /emails/sources HTTP/1.1"),
+        "got: {request}"
+    );
+    assert!(
+        lower.contains("user-agent: mailblastr-rust/"),
+        "got: {request}"
+    );
+    assert!(
+        lower.contains("authorization: bearer mb_test_key"),
         "got: {request}"
     );
 }

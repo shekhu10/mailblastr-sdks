@@ -128,9 +128,11 @@ public final class WebhooksTest {
                 "{\"event\":\"signup.completed\",\"domain\":\"yourdomain.com\","
                         + "\"email\":\"user@example.com\",\"payload\":{\"plan\":\"pro\"}}",
                 t.lastBody);
+        // The plain send must NOT set Idempotency-Key: /events/send ignores the
+        // header, so advertising it would imply a dedupe the API never does.
         mb.events().send(SendEventRequest.builder()
-                .name("signup.completed").domain("yourdomain.com").contactId("c_1").build(), "idem-9");
-        Check.eq("event idempotency header", "idem-9", t.lastHeaders.get("Idempotency-Key"));
+                .name("signup.completed").domain("yourdomain.com").contactId("c_1").build());
+        Check.isNull("event send sends no Idempotency-Key", t.lastHeaders.get("Idempotency-Key"));
     }
 
     public static void main(String[] args) throws Exception {

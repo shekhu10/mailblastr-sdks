@@ -1,6 +1,6 @@
 'use strict';
 
-const { parseJson, clean, withPagination, pagination } = require('../helpers');
+const { collect, parseJson, clean, withPagination, pagination } = require('../helpers');
 
 function register({ group, leaf, act }) {
   const automations = group('automations', 'Manage automations (scoped to a sending domain)');
@@ -61,7 +61,10 @@ function register({ group, leaf, act }) {
 
   act(
     leaf(automations, 'add-step <id>', 'Append a step to an automation')
-      .requiredOption('--type <type>', "step type, e.g. 'send_email' or 'wait'")
+      .requiredOption(
+        '--type <type>',
+        "step type: 'send_email' | 'wait_for_event' | 'delay' | 'condition' | 'split' | 'add_to_segment' | 'contact_update' | 'contact_delete'",
+      )
       .option('--config <json>', "step config as JSON, e.g. '{\"template_id\":\"tmpl_x\"}'")
       .option('--key <key>', 'step key (for connections)'),
     ({ client, opts, args: [id] }) =>
@@ -72,13 +75,31 @@ function register({ group, leaf, act }) {
   );
 
   act(
+    leaf(automations, 'update-step <id> <stepId>', 'Update a step of an automation')
+      .option('--type <type>', 'new step type')
+      .option('--config <json>', 'new step config as JSON (replaces the stored config)')
+      .option('--key <key>', 'new step key (for connections)'),
+    ({ client, opts, args: [id, stepId] }) =>
+      client.automations.updateStep(
+        id,
+        stepId,
+        clean({ type: opts.type, config: parseJson(opts.config, '--config'), key: opts.key }),
+      ),
+  );
+
+  act(
     leaf(automations, 'delete-step <id> <stepId>', 'Delete a step from an automation'),
     ({ client, args: [id, stepId] }) => client.automations.deleteStep(id, stepId),
   );
 
   act(
-    withPagination(leaf(automations, 'runs <id>', "List an automation's runs")),
-    ({ client, opts, args: [id] }) => client.automations.runs(id, pagination(opts)),
+    withPagination(leaf(automations, 'runs <id>', "List an automation's runs, newest first")).option(
+      '--status <status>',
+      "keep only runs in these statuses: 'running' | 'completed' | 'failed' | 'skipped' (repeatable or comma-separated); filtering happens before paging",
+      collect,
+    ),
+    ({ client, opts, args: [id] }) =>
+      client.automations.runs(id, clean({ ...pagination(opts), status: opts.status })),
   );
 
   act(
@@ -89,6 +110,30 @@ function register({ group, leaf, act }) {
   act(
     leaf(automations, 'stop <id>', 'Stop an automation (in-progress runs finish)'),
     ({ client, args: [id] }) => client.automations.stop(id),
+  );
+
+  act(
+    leaf(automations, 'ai <id>', 'Author (or extend) the step graph from a natural-language prompt')
+      .requiredOption('--prompt <text>', 'what the automation should do (max 2000 characters)')
+      .option('--template-id <id>', 'a template the plan may send (repeatable or comma-separated; first 10 used)', collect)
+      .option('--event <name>', 'an event name the plan may wait on (repeatable or comma-separated; first 10 used)', collect)
+      .option('--attach-from <key>', 'extend an existing graph from this trigger key or step key instead of authoring a whole workflow')
+      .option('--attach-type <type>', "connection type: 'default' (default) | 'condition_met' | 'condition_not_met' | 'event_received' | 'timeout'")
+      .option('--attach-before <key>', 'insert before this existing step key'),
+    ({ client, opts, args: [id] }) =>
+      client.automations.ai(
+        id,
+        clean({
+          prompt: opts.prompt,
+          template_ids: opts.templateId,
+          events: opts.event,
+          // Presence of `attach` is what switches the API from workflow mode to
+          // append mode, so only build it when the user named a source step.
+          attach: opts.attachFrom
+            ? clean({ from: opts.attachFrom, type: opts.attachType, before: opts.attachBefore })
+            : undefined,
+        }),
+      ),
   );
 
   act(leaf(automations, 'delete <id>', 'Delete an automation'), ({ client, args: [id] }) =>

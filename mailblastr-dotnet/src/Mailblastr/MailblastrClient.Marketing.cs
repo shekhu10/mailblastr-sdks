@@ -13,8 +13,8 @@ public partial class MailblastrClient
     public Task<Campaign> CampaignRetrieveAsync(string campaignId, CancellationToken cancellationToken = default)
         => RequestAsync<Campaign>(HttpMethod.Get, $"/campaigns/{E(campaignId)}", null, null, cancellationToken);
 
-    public Task<ListResponse<Campaign>> CampaignListAsync(PaginationOptions? pagination = null, CancellationToken cancellationToken = default)
-        => RequestAsync<ListResponse<Campaign>>(HttpMethod.Get, "/campaigns" + Paginate(pagination), null, null, cancellationToken);
+    public Task<ListResponse<CampaignListItem>> CampaignListAsync(PaginationOptions? pagination = null, CancellationToken cancellationToken = default)
+        => RequestAsync<ListResponse<CampaignListItem>>(HttpMethod.Get, "/campaigns" + Paginate(pagination), null, null, cancellationToken);
 
     public Task<IdResponse> CampaignUpdateAsync(string campaignId, CampaignUpdateOptions options, CancellationToken cancellationToken = default)
     {
@@ -40,6 +40,9 @@ public partial class MailblastrClient
 
     public Task<CampaignStats> CampaignRetrieveStatsAsync(string campaignId, CancellationToken cancellationToken = default)
         => RequestAsync<CampaignStats>(HttpMethod.Get, $"/campaigns/{E(campaignId)}/stats", null, null, cancellationToken);
+
+    public Task<CampaignEngagement> CampaignRetrieveEngagementAsync(string campaignId, CancellationToken cancellationToken = default)
+        => RequestAsync<CampaignEngagement>(HttpMethod.Get, $"/campaigns/{E(campaignId)}/engagement", null, null, cancellationToken);
 
     public Task<CampaignAbResult> CampaignRetrieveAbResultAsync(string campaignId, CancellationToken cancellationToken = default)
         => RequestAsync<CampaignAbResult>(HttpMethod.Get, $"/campaigns/{E(campaignId)}/ab", null, null, cancellationToken);
@@ -69,8 +72,8 @@ public partial class MailblastrClient
         return RequestAsync<ListResponse<Segment>>(HttpMethod.Get, "/segments" + query, null, null, cancellationToken);
     }
 
-    public Task<ListResponse<Contact>> SegmentListContactsAsync(string segmentId, CancellationToken cancellationToken = default)
-        => RequestAsync<ListResponse<Contact>>(HttpMethod.Get, $"/segments/{E(segmentId)}/contacts", null, null, cancellationToken);
+    public Task<ListResponse<SegmentContact>> SegmentListContactsAsync(string segmentId, PaginationOptions? pagination = null, CancellationToken cancellationToken = default)
+        => RequestAsync<ListResponse<SegmentContact>>(HttpMethod.Get, $"/segments/{E(segmentId)}/contacts" + Paginate(pagination), null, null, cancellationToken);
 
     public Task<Segment> SegmentUpdateAsync(string segmentId, SegmentUpdateOptions options, CancellationToken cancellationToken = default)
     {
@@ -123,8 +126,8 @@ public partial class MailblastrClient
     public Task<Template> TemplateRetrieveAsync(string templateId, CancellationToken cancellationToken = default)
         => RequestAsync<Template>(HttpMethod.Get, $"/templates/{E(templateId)}", null, null, cancellationToken);
 
-    public Task<ListResponse<Template>> TemplateListAsync(PaginationOptions? pagination = null, CancellationToken cancellationToken = default)
-        => RequestAsync<ListResponse<Template>>(HttpMethod.Get, "/templates" + Paginate(pagination), null, null, cancellationToken);
+    public Task<ListResponse<TemplateListItem>> TemplateListAsync(PaginationOptions? pagination = null, CancellationToken cancellationToken = default)
+        => RequestAsync<ListResponse<TemplateListItem>>(HttpMethod.Get, "/templates" + Paginate(pagination), null, null, cancellationToken);
 
     public Task<ObjectRef> TemplateUpdateAsync(string templateId, TemplateUpdateOptions options, CancellationToken cancellationToken = default)
     {

@@ -88,13 +88,33 @@ public partial class MailblastrClient
         return RequestAsync<ImportContactsResponse>(HttpMethod.Post, $"/audiences/{E(audienceId)}/contacts/batch" + Query(("on_conflict", onConflict)), body, null, cancellationToken);
     }
 
-    public Task<ImportContactsResponse> ContactImportAsync(string audienceId, string csv, string? onConflict = null, bool? createProperties = null, CancellationToken cancellationToken = default)
+    public Task<ImportContactsResponse> ContactImportAsync(string audienceId, string csv, string? onConflict = null, bool? createProperties = null, string? segmentId = null, string? fileName = null, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(csv);
         var query = Query(
             ("on_conflict", onConflict),
-            ("create_properties", createProperties == false ? "false" : null));
+            ("create_properties", createProperties == false ? "false" : null),
+            ("segment_id", segmentId));
         var body = new Dictionary<string, string> { ["csv"] = csv };
+        if (fileName is not null) body["file_name"] = fileName;
+        return RequestAsync<ImportContactsResponse>(HttpMethod.Post, $"/audiences/{E(audienceId)}/contacts/import" + query, body, null, cancellationToken);
+    }
+
+    public Task<ContactImportUpload> ContactImportCreateUploadAsync(string audienceId, string fileName, long sizeBytes, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(fileName);
+        var body = new Dictionary<string, object> { ["filename"] = fileName, ["size"] = sizeBytes };
+        return RequestAsync<ContactImportUpload>(HttpMethod.Post, $"/audiences/{E(audienceId)}/contacts/import/upload", body, null, cancellationToken);
+    }
+
+    public Task<ImportContactsResponse> ContactImportStorageKeyAsync(string audienceId, string storageKey, string? onConflict = null, bool? createProperties = null, string? segmentId = null, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(storageKey);
+        var query = Query(
+            ("on_conflict", onConflict),
+            ("create_properties", createProperties == false ? "false" : null),
+            ("segment_id", segmentId));
+        var body = new Dictionary<string, string> { ["storage_key"] = storageKey };
         return RequestAsync<ImportContactsResponse>(HttpMethod.Post, $"/audiences/{E(audienceId)}/contacts/import" + query, body, null, cancellationToken);
     }
 
@@ -130,8 +150,8 @@ public partial class MailblastrClient
     public Task<SegmentMembershipRemoved> ContactRemoveFromSegmentAsync(string contactId, string segmentId, CancellationToken cancellationToken = default)
         => RequestAsync<SegmentMembershipRemoved>(HttpMethod.Delete, $"/contacts/{E(contactId)}/segments/{E(segmentId)}", null, null, cancellationToken);
 
-    public Task<ListResponse<Segment>> ContactListSegmentsAsync(string contactId, CancellationToken cancellationToken = default)
-        => RequestAsync<ListResponse<Segment>>(HttpMethod.Get, $"/contacts/{E(contactId)}/segments", null, null, cancellationToken);
+    public Task<ListResponse<ContactSegmentRef>> ContactListSegmentsAsync(string contactId, PaginationOptions? pagination = null, CancellationToken cancellationToken = default)
+        => RequestAsync<ListResponse<ContactSegmentRef>>(HttpMethod.Get, $"/contacts/{E(contactId)}/segments" + Paginate(pagination), null, null, cancellationToken);
 
     public Task<ContactTopics> ContactRetrieveTopicsAsync(string contactId, CancellationToken cancellationToken = default)
         => RequestAsync<ContactTopics>(HttpMethod.Get, $"/contacts/{E(contactId)}/topics", null, null, cancellationToken);

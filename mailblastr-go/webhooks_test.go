@@ -145,3 +145,36 @@ func TestWebhooksCreateReturnsSecretOnce(t *testing.T) {
 		t.Errorf("SigningSecret = %q", res.SigningSecret)
 	}
 }
+
+// The test route reports success in `ok`, and a failed delivery is still
+// HTTP 200 — so the result must be read, not the error return.
+func TestWebhooksTestReadsOkField(t *testing.T) {
+	client := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/webhooks/wh_1/test" {
+			t.Errorf("%s %s, want POST /webhooks/wh_1/test", r.Method, r.URL.Path)
+		}
+		w.Write([]byte(`{"object":"webhook_test","id":"wh_1","ok":true,"status":200}`))
+	})
+
+	res, err := client.Webhooks.Test("wh_1")
+	if err != nil {
+		t.Fatalf("Test: %v", err)
+	}
+	if !res.Ok || res.Status != 200 {
+		t.Errorf("unexpected result: %+v", res)
+	}
+}
+
+func TestWebhooksTestFailedDeliveryIs200(t *testing.T) {
+	client := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{"object":"webhook_test","id":"wh_1","ok":false,"error":"lookup_failed"}`))
+	})
+
+	res, err := client.Webhooks.Test("wh_1")
+	if err != nil {
+		t.Fatalf("a failed delivery must not surface as an error: %v", err)
+	}
+	if res.Ok || res.Error != "lookup_failed" {
+		t.Errorf("unexpected result: %+v", res)
+	}
+}

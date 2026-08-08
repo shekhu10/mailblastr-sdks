@@ -10,14 +10,14 @@ use std::sync::Arc;
 use reqwest::Method;
 use serde_json::json;
 
-use crate::client::{seg, Config};
+use crate::client::{page_query, seg, Config};
 use crate::services::contact_types::{
-    Contact, ContactInput, ContactLookup, ContactTopics, CreateContactOptions,
-    DeletedContactResponse, ImportContactsResponse, ImportCsvOptions, ListContactsParams,
-    OnConflict, RemovedFromSegmentResponse, UpdateContactOptions, UpdateContactTopicsOptions,
+    Contact, ContactImportUpload, ContactInput, ContactLookup, ContactSegmentRef, ContactTopics,
+    CreateContactOptions, DeletedContactResponse, ImportContactsResponse, ImportCsvOptions,
+    ListContactsParams, OnConflict, RemovedFromSegmentResponse, UpdateContactOptions,
+    UpdateContactTopicsOptions,
 };
-use crate::services::segments::Segment;
-use crate::types::{Error, IdResponse, ListResponse, ObjectAck, Result};
+use crate::types::{Error, IdResponse, ListResponse, ObjectAck, PaginationParams, Result};
 
 /// `mailblastr.contacts`.
 #[derive(Clone, Debug)]
@@ -118,13 +118,65 @@ impl ContactsSvc {
             .await
     }
 
-    /// Bulk-import contacts from CSV text (header row optional; upserts by
-    /// email). `POST /audiences/:id/contacts/import`
+    /// Bulk-import contacts from inline CSV text (header row optional;
+    /// upserts by email). Inline CSV is capped at 5 MB and 10,000 rows —
+    /// beyond that use [`create_import_upload`](Self::create_import_upload) +
+    /// [`import_from_storage_key`](Self::import_from_storage_key).
+    /// `POST /audiences/:id/contacts/import`
     pub async fn import(
         &self,
         audience_id: &str,
         csv: &str,
         options: ImportCsvOptions,
+    ) -> Result<ImportContactsResponse> {
+        let mut body = json!({ "csv": csv });
+        if let Some(file_name) = &options.file_name {
+            body["file_name"] = json!(file_name);
+        }
+        self.import_body(audience_id, body, &options).await
+    }
+
+    /// Mint a presigned direct-to-S3 upload slot for a large contact CSV (up
+    /// to 256 MB). PUT the file to `upload_url`, then pass the returned
+    /// `storage_key` to [`import_from_storage_key`](Self::import_from_storage_key).
+    /// `POST /audiences/:id/contacts/import/upload`
+    pub async fn create_import_upload(
+        &self,
+        audience_id: &str,
+        filename: &str,
+        size: u64,
+    ) -> Result<ContactImportUpload> {
+        let path = format!("/audiences/{}/contacts/import/upload", seg(audience_id));
+        self.config
+            .send(
+                self.config
+                    .request(Method::POST, &path)
+                    .json(&json!({ "filename": filename, "size": size })),
+            )
+            .await
+    }
+
+    /// Import a CSV that was already uploaded via
+    /// [`create_import_upload`](Self::create_import_upload). Unlike the inline
+    /// path this never fails on the contact cap — the overflow is reported as
+    /// `limit_skipped`. `POST /audiences/:id/contacts/import`
+    pub async fn import_from_storage_key(
+        &self,
+        audience_id: &str,
+        storage_key: &str,
+        options: ImportCsvOptions,
+    ) -> Result<ImportContactsResponse> {
+        self.import_body(audience_id, json!({ "storage_key": storage_key }), &options)
+            .await
+    }
+
+    /// Shared transport for both CSV import modes: the query string carries
+    /// `on_conflict` / `create_properties` / `segment_id`.
+    async fn import_body(
+        &self,
+        audience_id: &str,
+        body: serde_json::Value,
+        options: &ImportCsvOptions,
     ) -> Result<ImportContactsResponse> {
         let path = format!("/audiences/{}/contacts/import", seg(audience_id));
         let mut query: Vec<(&str, String)> = Vec::new();
@@ -134,12 +186,15 @@ impl ContactsSvc {
         if options.create_properties == Some(false) {
             query.push(("create_properties", "false".to_owned()));
         }
+        if let Some(segment_id) = &options.segment_id {
+            query.push(("segment_id", segment_id.clone()));
+        }
         self.config
             .send(
                 self.config
                     .request(Method::POST, &path)
                     .query(&query)
-                    .json(&json!({ "csv": csv })),
+                    .json(&body),
             )
             .await
     }
@@ -211,12 +266,20 @@ impl ContactsSvc {
             .await
     }
 
-    /// List the segments a contact belongs to. `GET /contacts/:id/segments`
-    pub async fn list_segments(&self, contact_id: &str) -> Result<ListResponse<Segment>> {
+    /// List the segments a contact belongs to. Rows are the reduced
+    /// [`ContactSegmentRef`] shape (`id`/`name`/`created_at`), not the full
+    /// segment — use `segments.get(id)` for that. `GET /contacts/:id/segments`
+    pub async fn list_segments(
+        &self,
+        contact_id: &str,
+        params: Option<PaginationParams>,
+    ) -> Result<ListResponse<ContactSegmentRef>> {
         let path = format!("/contacts/{}/segments", seg(contact_id));
-        self.config
-            .send(self.config.request(Method::GET, &path))
-            .await
+        let req = self
+            .config
+            .request(Method::GET, &path)
+            .query(&page_query(params.as_ref()));
+        self.config.send(req).await
     }
 
     /// Get a contact's topic subscriptions. `GET /contacts/:id/topics`

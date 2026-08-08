@@ -27,6 +27,15 @@ public partial class MailblastrClient
     public Task<ObjectRef> DomainVerifyAsync(string domainId, CancellationToken cancellationToken = default)
         => RequestAsync<ObjectRef>(HttpMethod.Post, $"/domains/{E(domainId)}/verify", null, null, cancellationToken);
 
+    public Task<MxCheckResult> DomainCheckMxAsync(string domainName, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(domainName);
+        return RequestAsync<MxCheckResult>(HttpMethod.Get, "/domains/mx-check" + Query(("name", domainName)), null, null, cancellationToken);
+    }
+
+    public Task<string> DomainRetrieveRecordsCsvAsync(string domainId, CancellationToken cancellationToken = default)
+        => RequestTextAsync(HttpMethod.Get, $"/domains/{E(domainId)}/records.csv", cancellationToken);
+
     public Task<DomainClaim> DomainClaimAsync(DomainClaimOptions options, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(options);

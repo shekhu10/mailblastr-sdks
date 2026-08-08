@@ -9,6 +9,7 @@ public final class AllTests {
         DomainsTest.run();
         WebhooksTest.run();
         MiscResourcesTest.run();
+        ContractParityTest.run();
         HttpCoreTest.run();
         Check.finish();
     }

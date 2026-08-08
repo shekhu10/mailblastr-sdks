@@ -76,6 +76,32 @@ class ContactsTest < Minitest::Test
     assert_equal "email\na@b.com", last_body["csv"]
   end
 
+  def test_csv_import_forwards_segment_id_and_file_name
+    Mailblastr::Contacts.import({
+                                  audience_id: "aud_1",
+                                  csv: "email\na@b.com",
+                                  file_name: "june.csv",
+                                  on_conflict: "skip",
+                                  segment_id: "seg_1"
+                                })
+    assert_request :post, "/audiences/aud_1/contacts/import?on_conflict=skip&segment_id=seg_1"
+    assert_equal "june.csv", last_body["file_name"]
+  end
+
+  def test_csv_import_by_storage_key_does_not_send_a_null_csv
+    Mailblastr::Contacts.import({ audience_id: "aud_1", storage_key: "imports/abc.csv" })
+    assert_request :post, "/audiences/aud_1/contacts/import"
+    assert_equal({ "storage_key" => "imports/abc.csv" }, last_body)
+  end
+
+  def test_import_upload_mints_a_presigned_slot
+    Mailblastr::Contacts.import_upload({ audience_id: "aud_1", filename: "list.csv", size: 2048 })
+    assert_request :post, "/audiences/aud_1/contacts/import/upload"
+    assert_equal "list.csv", last_body["filename"]
+    assert_equal 2048, last_body["size"]
+    refute last_body.key?("audience_id")
+  end
+
   def test_segment_membership_and_topics
     Mailblastr::Contacts.add_to_segment("cont_1", "seg_1")
     assert_request :post, "/contacts/cont_1/segments/seg_1"
@@ -86,8 +112,14 @@ class ContactsTest < Minitest::Test
     Mailblastr::Contacts.list_segments("cont_1")
     assert_request :get, "/contacts/cont_1/segments"
 
+    Mailblastr::Contacts.list_segments("cont_1", { limit: 10 })
+    assert_request :get, "/contacts/cont_1/segments?limit=10"
+
     Mailblastr::Contacts.get_topics("cont_1")
     assert_request :get, "/contacts/cont_1/topics"
+
+    Mailblastr::Contacts.get_topics("cont_1", { limit: 10 })
+    assert_request :get, "/contacts/cont_1/topics?limit=10"
 
     Mailblastr::Contacts.update_topics("cont_1", { topics: [{ id: "top_1", subscription: "opt_in" }] })
     assert_request :patch, "/contacts/cont_1/topics"

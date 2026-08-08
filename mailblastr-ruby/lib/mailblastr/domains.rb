@@ -13,9 +13,25 @@ module Mailblastr
         Client.request(:get, "/domains/#{Client.path_escape(domain_id)}")
       end
 
-      # GET /domains
+      # GET /domains — with no pagination params every domain is returned.
+      # Rows still pending a DNS-TXT ownership claim are excluded; read those
+      # through get_claim instead.
       def list(params = {})
         Client.request(:get, "/domains", query: Client.pagination(params))
+      end
+
+      # Check a domain's live MX records before adding receiving.
+      # `ours` is true only when every MX host is MailBlastr's. A DNS failure
+      # answers { has_mx: false, ours: false, records: [] }, not an error.
+      # GET /domains/mx-check?name=
+      def mx_check(name)
+        Client.request(:get, "/domains/mx-check", query: { name: name })
+      end
+
+      # Download the domain's DNS records as CSV text (a String, not JSON).
+      # GET /domains/:id/records.csv
+      def records_csv(domain_id)
+        Client.request(:get, "/domains/#{Client.path_escape(domain_id)}/records.csv", raw: true)
       end
 
       # PATCH /domains/:id (returns the slim ack { object: "domain", id }).
@@ -63,8 +79,8 @@ module Mailblastr
 
       # Apply DNS records via the Namecheap API (existing records preserved),
       # then auto-verify. POST /domains/:id/dns/namecheap
-      # params: { api_user: "...", api_key: "...", user_name: "..." } — note the
-      # backend expects camelCase keys (apiUser/apiKey/userName), so pass those.
+      # params: { api_user: "...", api_key: "...", user_name: "..." } — the
+      # camelCase spellings (apiUser/apiKey/userName) are accepted too.
       def apply_namecheap_dns(domain_id, params)
         Client.request(:post, "/domains/#{Client.path_escape(domain_id)}/dns/namecheap", body: params)
       end

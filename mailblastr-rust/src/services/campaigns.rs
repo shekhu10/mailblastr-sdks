@@ -10,8 +10,8 @@ use serde_json::json;
 
 use crate::client::{page_query, seg, Config};
 use crate::services::campaign_types::{
-    Campaign, CampaignAbResult, CampaignStats, CreateCampaignOptions, SendCampaignOptions,
-    UpdateCampaignOptions,
+    Campaign, CampaignAbResult, CampaignEngagement, CampaignListItem, CampaignStats,
+    CreateCampaignOptions, SendCampaignOptions, UpdateCampaignOptions,
 };
 use crate::types::{IdResponse, ListResponse, PaginationParams, RemovedResponse, Result};
 
@@ -46,8 +46,13 @@ impl CampaignsSvc {
             .await
     }
 
-    /// List campaigns. `GET /campaigns`
-    pub async fn list(&self, params: Option<PaginationParams>) -> Result<ListResponse<Campaign>> {
+    /// List campaigns — trimmed [`CampaignListItem`] rows, with no bodies,
+    /// follow-ups, recurrence or statistics. Use [`get`](Self::get) for those.
+    /// `GET /campaigns`
+    pub async fn list(
+        &self,
+        params: Option<PaginationParams>,
+    ) -> Result<ListResponse<CampaignListItem>> {
         let req = self
             .config
             .request(Method::GET, "/campaigns")
@@ -114,7 +119,19 @@ impl CampaignsSvc {
             .await
     }
 
-    /// A/B winner evaluation for an A/B campaign. `GET /campaigns/:id/ab`
+    /// Per-recipient engagement (who opened / clicked / replied). Each list is
+    /// capped at 500 rows; this route is not paginated.
+    /// `GET /campaigns/:id/engagement`
+    pub async fn engagement(&self, campaign_id: &str) -> Result<CampaignEngagement> {
+        let path = format!("/campaigns/{}/engagement", seg(campaign_id));
+        self.config
+            .send(self.config.request(Method::GET, &path))
+            .await
+    }
+
+    /// A/B winner evaluation for an A/B campaign. Answers
+    /// `422 validation_error` when the campaign is not an A/B test.
+    /// `GET /campaigns/:id/ab`
     pub async fn ab(&self, campaign_id: &str) -> Result<CampaignAbResult> {
         let path = format!("/campaigns/{}/ab", seg(campaign_id));
         self.config

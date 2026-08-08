@@ -3,12 +3,13 @@ using System.Text.Json.Serialization;
 
 namespace Mailblastr;
 
-/// <summary>A template variable definition as returned by the API.</summary>
+/// <summary>
+/// A template variable definition as returned by the API. The registry carries
+/// only the declaration — there is no per-variable id or timestamp, so those
+/// are deliberately absent here rather than declared and always null.
+/// </summary>
 public class TemplateVariable
 {
-    [JsonPropertyName("id")]
-    public string Id { get; set; } = null!;
-
     [JsonPropertyName("key")]
     public string Key { get; set; } = null!;
 
@@ -19,12 +20,6 @@ public class TemplateVariable
     /// <summary>String, number or null.</summary>
     [JsonPropertyName("fallback_value")]
     public JsonElement? FallbackValue { get; set; }
-
-    [JsonPropertyName("created_at")]
-    public string? CreatedAt { get; set; }
-
-    [JsonPropertyName("updated_at")]
-    public string? UpdatedAt { get; set; }
 }
 
 /// <summary>A template variable definition accepted on create/update.</summary>
@@ -89,6 +84,50 @@ public class Template
 
     [JsonPropertyName("variables")]
     public List<TemplateVariable>? Variables { get; set; }
+
+    [JsonPropertyName("created_at")]
+    public string CreatedAt { get; set; } = null!;
+
+    [JsonPropertyName("updated_at")]
+    public string? UpdatedAt { get; set; }
+}
+
+/// <summary>
+/// One row of TemplateListAsync (GET /templates). Narrower than the full
+/// <see cref="Template"/>: this route sends no <c>object</c>, <c>from</c>,
+/// <c>reply_to</c>, <c>text</c>, <c>current_version_id</c> or
+/// <c>variables</c>. Use TemplateRetrieveAsync for those.
+/// </summary>
+public class TemplateListItem
+{
+    [JsonPropertyName("id")]
+    public string Id { get; set; } = null!;
+
+    [JsonPropertyName("name")]
+    public string Name { get; set; } = null!;
+
+    [JsonPropertyName("subject")]
+    public string? Subject { get; set; }
+
+    /// <summary>Included so a list view can render a preview without a per-row fetch.</summary>
+    [JsonPropertyName("html")]
+    public string? HtmlBody { get; set; }
+
+    /// <summary><c>draft</c> | <c>published</c>.</summary>
+    [JsonPropertyName("status")]
+    public string? Status { get; set; }
+
+    /// <summary>When the template was last published; null while only a draft exists.</summary>
+    [JsonPropertyName("published_at")]
+    public string? PublishedAt { get; set; }
+
+    /// <summary>Stable handle usable anywhere an id is accepted.</summary>
+    [JsonPropertyName("alias")]
+    public string? Alias { get; set; }
+
+    /// <summary>True when the draft has edits not yet published.</summary>
+    [JsonPropertyName("has_unpublished_versions")]
+    public bool? HasUnpublishedVersions { get; set; }
 
     [JsonPropertyName("created_at")]
     public string CreatedAt { get; set; } = null!;

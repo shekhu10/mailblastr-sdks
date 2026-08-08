@@ -35,8 +35,20 @@ module Mailblastr
       end
 
       # Append a step. POST /automations/:id/steps — params: { type:, config:, key: }
+      # The automation must be disabled first, and `type: "trigger"` is
+      # rejected here (the trigger lives on the automation, not in `steps`).
       def add_step(automation_id, params)
         Client.request(:post, "/automations/#{Client.path_escape(automation_id)}/steps", body: params)
+      end
+
+      # Edit a step in place (automation must be disabled).
+      # PATCH /automations/:id/steps/:step_id
+      def update_step(automation_id, step_id, params)
+        Client.request(
+          :patch,
+          "/automations/#{Client.path_escape(automation_id)}/steps/#{Client.path_escape(step_id)}",
+          body: params
+        )
       end
 
       # Delete a step. DELETE /automations/:id/steps/:step_id
@@ -44,9 +56,24 @@ module Mailblastr
         Client.request(:delete, "/automations/#{Client.path_escape(automation_id)}/steps/#{Client.path_escape(step_id)}")
       end
 
-      # List an automation's runs. GET /automations/:id/runs
+      # Build (or extend) the automation's steps from a prompt.
+      # POST /automations/:id/ai — params: { prompt:, template_ids:, events:, attach: }
+      # `prompt` is required and capped at 2000 characters. Without `attach` the
+      # automation must have no steps yet; pass `attach` ({ from:, type:,
+      # before: }) to append to an existing graph. The automation must be
+      # stopped, and the route is limited to 20 requests per minute per account.
+      def create_with_ai(automation_id, params)
+        Client.request(:post, "/automations/#{Client.path_escape(automation_id)}/ai", body: params)
+      end
+
+      # List an automation's runs. `status` filters to specific run statuses
+      # ("running", "completed", "failed", "skipped") and accepts an Array or a
+      # comma-separated String. GET /automations/:id/runs
       def runs(automation_id, params = {})
-        Client.request(:get, "/automations/#{Client.path_escape(automation_id)}/runs", query: Client.pagination(params))
+        query = Client.pagination(params)
+        status = Client.opt(params, :status)
+        query[:status] = status.is_a?(Array) ? status.join(",") : status unless status.nil?
+        Client.request(:get, "/automations/#{Client.path_escape(automation_id)}/runs", query: query)
       end
 
       # Retrieve a single run with its step trace. GET /automations/:id/runs/:run_id

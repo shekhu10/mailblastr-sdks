@@ -16,11 +16,22 @@ class ReceivingEmails extends Resource
      *
      * @param array $params Cursor pagination (limit, after, before) plus an
      *                      optional received_for filter (only messages
-     *                      received for that address).
+     *                      received for that address). With no limit and no
+     *                      cursor the endpoint returns up to 1000 rows in one
+     *                      response instead of a 20-row page.
      */
     public function list(array $params = []): array
     {
         return $this->client->request('GET', '/emails/receiving' . $this->paginationQuery($params, ['received_for']));
+    }
+
+    /**
+     * Per-address inbound stats (totals, replies, last received).
+     * Not paginated. GET /emails/receiving/addresses
+     */
+    public function addresses(): array
+    {
+        return $this->client->request('GET', '/emails/receiving/addresses');
     }
 
     /** Retrieve a received email. GET /emails/receiving/:id */
@@ -29,10 +40,19 @@ class ReceivingEmails extends Resource
         return $this->client->request('GET', '/emails/receiving/' . Client::e($id));
     }
 
-    /** List a received email's attachments. GET /emails/receiving/:id/attachments */
-    public function listAttachments(string $id): array
+    /**
+     * List a received email's attachments. GET /emails/receiving/:id/attachments
+     *
+     * @param array $params Optional cursor pagination (limit, after, before).
+     *                      With neither limit nor after, every attachment is
+     *                      returned with has_more:false.
+     */
+    public function listAttachments(string $id, array $params = []): array
     {
-        return $this->client->request('GET', '/emails/receiving/' . Client::e($id) . '/attachments');
+        return $this->client->request(
+            'GET',
+            '/emails/receiving/' . Client::e($id) . '/attachments' . $this->paginationQuery($params)
+        );
     }
 
     /**

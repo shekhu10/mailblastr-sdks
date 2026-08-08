@@ -199,6 +199,138 @@ class TestHttpClient(unittest.TestCase):
         self.assertEqual(ctx.exception.status_code, 503)
         self.assertTrue(all(body.closed for body in error_bodies))
 
+    def test_partial_batch_send_is_never_retried(self):
+        """A 429 from /emails/batch that already sent some emails must NOT be
+        retried — retrying would send those recipients a second time."""
+        mailblastr.max_retries = 2
+        self.addCleanup(setattr, mailblastr, "max_retries", None)
+        calls = {"n": 0}
+        body = json.dumps(
+            {
+                "statusCode": 429,
+                "name": "daily_quota_exceeded",
+                "message": "Daily sending quota reached.",
+                "limit": {"kind": "emails_daily", "used": 100, "limit": 100},
+                "sent": [{"id": "em_1"}, {"id": "em_2"}],
+                "sent_count": 2,
+            }
+        ).encode("utf-8")
+
+        def fake_urlopen(req, **kwargs):
+            calls["n"] += 1
+            raise urllib.error.HTTPError(
+                "https://www.mailblastr.com/api/emails/batch", 429, "Too Many",
+                {"Retry-After": "0"}, io.BytesIO(body),
+            )
+
+        with mock.patch("urllib.request.urlopen", side_effect=fake_urlopen):
+            with mock.patch("time.sleep"):
+                with self.assertRaises(MailblastrError) as ctx:
+                    http_client.request("POST", "/emails/batch", [{"x": 1}])
+        self.assertEqual(calls["n"], 1)  # no retry
+        e = ctx.exception
+        self.assertEqual(e.name, "daily_quota_exceeded")
+        self.assertEqual(e.sent_count, 2)
+        self.assertEqual(e.sent, [{"id": "em_1"}, {"id": "em_2"}])
+
+    def test_error_exposes_limit_body_and_retry_after(self):
+        body = json.dumps(
+            {
+                "statusCode": 402,
+                "name": "plan_limit_reached",
+                "message": "Domain limit reached.",
+                "limit": {"kind": "domains", "used": 1, "limit": 1},
+            }
+        ).encode("utf-8")
+        err = urllib.error.HTTPError(
+            "https://www.mailblastr.com/api/domains", 402, "Payment Required",
+            {"Retry-After": "12"}, io.BytesIO(body),
+        )
+        with mock.patch("urllib.request.urlopen", side_effect=err):
+            with self.assertRaises(MailblastrError) as ctx:
+                http_client.request("POST", "/domains", {"name": "acme.com"})
+        e = ctx.exception
+        self.assertEqual(e.status_code, 402)
+        self.assertEqual(e.limit["kind"], "domains")
+        self.assertEqual(e.retry_after, 12.0)
+        self.assertEqual(http_client._retry_after_seconds("3600"), 30.0)  # sleep is capped
+        self.assertEqual(http_client._parse_retry_after("3600"), 3600.0)  # report is not
+        self.assertEqual(e.body["message"], "Domain limit reached.")
+        self.assertEqual(e.sent, [])
+        self.assertEqual(e.sent_count, 0)
+
+    def test_error_extra_in_an_unexpected_shape_keeps_the_envelope(self):
+        """An additive field this version cannot use costs the caller that
+        field only — never the envelope, and never the other extras.
+
+        Ruby, PHP, Java, Go, Rust and .NET all read a malformed extra as
+        absent; without the isinstance guard ``e.limit["kind"]`` would raise a
+        TypeError from inside the caller's own error handler."""
+        body = json.dumps(
+            {
+                "statusCode": 429,
+                "name": "daily_quota_exceeded",
+                "message": "over quota",
+                "limit": "emails_daily",
+                "reputation": "paused",
+                "sent": [{"id": "em_1"}],
+            }
+        ).encode("utf-8")
+        err = urllib.error.HTTPError(
+            "https://www.mailblastr.com/api/emails", 429, "Too Many Requests",
+            {}, io.BytesIO(body),
+        )
+        with mock.patch("urllib.request.urlopen", side_effect=err):
+            with self.assertRaises(MailblastrError) as ctx:
+                http_client.request("POST", "/emails", {"x": 1})
+        e = ctx.exception
+        self.assertEqual(e.status_code, 429)
+        self.assertEqual(e.name, "daily_quota_exceeded")
+        self.assertEqual(e.message, "over quota")
+        self.assertIsNone(e.limit)
+        self.assertIsNone(e.reputation)
+        # A bad `limit` must not drop `sent`.
+        self.assertEqual(e.sent_count, 1)
+        # The raw values stay reachable for a caller that wants them.
+        self.assertEqual(e.body["limit"], "emails_daily")
+
+    def _capture_idempotency_header(self, key):
+        """Issue a send with ``idempotency_key`` and return the header sent."""
+        captured = {}
+
+        def fake_urlopen(req, **kwargs):
+            captured["req"] = req
+            return FakeResponse(b'{"id": "em_1"}')
+
+        with mock.patch("urllib.request.urlopen", side_effect=fake_urlopen):
+            http_client.request("POST", "/emails", {"x": 1}, {"idempotency_key": key})
+        return captured["req"].get_header("Idempotency-key")
+
+    def test_idempotency_key_is_sent_verbatim(self):
+        """The server trims and bounds the key; the SDK does not touch it."""
+        self.assertEqual(self._capture_idempotency_header("  order-1  "), "  order-1  ")
+
+    def test_over_long_idempotency_key_is_left_to_the_server(self):
+        """A 256-character key is a 400 invalid_idempotency_key from the API,
+        not a locally raised error — the server owns the bound."""
+        too_long = "k" * (http_client.IDEMPOTENCY_KEY_MAX_LENGTH + 1)
+        self.assertEqual(self._capture_idempotency_header(too_long), too_long)
+
+    def test_max_length_idempotency_key_is_accepted(self):
+        """255 is the documented maximum — the boundary must not be off by one."""
+        self.assertEqual(http_client.IDEMPOTENCY_KEY_MAX_LENGTH, 255)
+        key = "k" * http_client.IDEMPOTENCY_KEY_MAX_LENGTH
+        self.assertEqual(self._capture_idempotency_header(key), key)
+
+    def test_blank_idempotency_key_is_not_sent(self):
+        """A falsy key means "no idempotency", not an error."""
+        self.assertIsNone(self._capture_idempotency_header(""))
+
+    def test_whitespace_only_idempotency_key_is_left_to_the_server(self):
+        """Whitespace-only trims to length 0 server-side — a 400, not a local
+        raise. It is still transmitted so the API reports it."""
+        self.assertEqual(self._capture_idempotency_header("   "), "   ")
+
     def test_422_is_not_retried(self):
         mailblastr.max_retries = 2
         self.addCleanup(setattr, mailblastr, "max_retries", None)

@@ -1,9 +1,83 @@
 // Public types for the MailBlastr SDK. These mirror the REST API shapes.
 
+/** The plan/quota detail attached to a limit rejection (see {@link MailBlastrError.limit}). */
+export interface PlanLimitDetail {
+  kind:
+    | 'emails_daily' | 'emails_monthly' | 'domains' | 'automation_runs'
+    | 'ai_credits' | 'contacts' | 'campaign_preflight' | (string & {});
+  used: number;
+  limit: number;
+  requested?: number;
+  remaining?: number;
+  /** Rolling window the limit is measured over. */
+  period?: '24h' | '30d' | (string & {});
+  plan: { id: string; name: string };
+  /** The cheapest plan that would fit, or `null` when only Enterprise does. */
+  next_plan?: {
+    id: string; name: string; amount: number; currency: string;
+    monthly_emails: number; daily_emails: number; domains: number;
+    contacts: number; ai_credits: number; automation_runs: number;
+  } | null;
+  /** Top-up credits — present only for the email-quota kinds. */
+  credits?: { balance: number; needed: number; purchasable: boolean; unit: number; amount_per_unit_cents: number };
+}
+
+/**
+ * The reputation-gate detail attached to `reputation_paused` /
+ * `reputation_limit_exceeded` and the platform-wide
+ * `sending_service_unavailable` (see {@link MailBlastrError.reputation}).
+ *
+ * Everything beyond `retryable` and `scope` is optional. The index signature
+ * keeps any reputation field newer than this SDK version reachable.
+ */
+export interface ReputationDetail {
+  /**
+   * Whether waiting and retrying can succeed (a warm-up capacity ceiling)
+   * rather than the send being blocked outright.
+   */
+  retryable: boolean;
+  /** What was gated. */
+  scope: 'tenant' | 'domain' | 'platform' | (string & {});
+  /** The internal reputation state, when reported. */
+  status?: string;
+  /** Identifies the gated entity (e.g. the domain). */
+  scope_key?: string;
+  hourly_limit?: number;
+  daily_limit?: number;
+  hourly_used?: number;
+  daily_used?: number;
+  /** ISO 8601 timestamp for when sending may resume. */
+  retry_at?: string;
+  support_email?: string;
+  [k: string]: unknown;
+}
+
+/**
+ * The API error envelope. `statusCode` always mirrors the HTTP status, and
+ * `name` is the machine-readable reason — branch on `name`, never on `message`
+ * (messages are scrubbed of provider identifiers and may change).
+ *
+ * Some errors are a superset of the envelope; those extra fields are preserved:
+ * `limit` on plan/quota rejections, `reputation` on reputation gates, and
+ * `sent`/`sent_count` on a partial `batch.send` failure.
+ */
 export interface MailBlastrError {
   statusCode: number;
   name: string;
   message: string;
+  /** Present on `plan_limit_reached` and every `*_quota_exceeded` / `*_limit_reached` error. */
+  limit?: PlanLimitDetail;
+  /** Present on `reputation_paused` / `reputation_limit_exceeded`. */
+  reputation?: ReputationDetail;
+  /** Emails already sent before a mid-batch failure (batch send with an Idempotency-Key). */
+  sent?: Array<{ id: string }>;
+  /**
+   * How many emails went out before a mid-batch failure. Falls back to
+   * `sent.length` when the body carried the list but not the count, so it can
+   * always be trusted. Absent on errors that carry no `sent` list.
+   */
+  sent_count?: number;
+  [k: string]: unknown;
 }
 
 /** Every method returns either { data, error: null } or { data: null, error }. */
@@ -13,7 +87,14 @@ export type Result<T> = { data: T; error: null } | { data: null; error: MailBlas
 export interface ObjectRef<O extends string> { object: O; id: string }
 
 export interface RequestOptions {
-  /** Optional Idempotency-Key for safely retrying a create (24h window). */
+  /**
+   * Optional `Idempotency-Key`, so a retried send is de-duplicated rather than
+   * delivered twice. Must be **1–255 characters** after trimming — outside that
+   * range the API replies `400 invalid_idempotency_key`.
+   *
+   * Only `emails.send` and `batch.send` honour it. Every other endpoint ignores
+   * the header, so a retry there creates a second resource.
+   */
   idempotencyKey?: string;
 }
 
@@ -29,10 +110,15 @@ export interface Attachment {
   content_id?: string;
 }
 export interface SendEmailOptions {
+  /** `you@yourdomain.com` or `Name <you@yourdomain.com>`. Max 320 characters, on a VERIFIED domain. */
   from: string;
+  /** 1–50 recipients. */
   to: string | string[];
+  /** No length cap. `''` is allowed; only `null`/`undefined` counts as missing. */
   subject: string;
+  /** Up to 50 addresses. */
   bcc?: string | string[];
+  /** Up to 50 addresses. */
   cc?: string | string[];
   reply_to?: string | string[];
   /**
@@ -50,8 +136,12 @@ export interface SendEmailOptions {
    */
   preview_text?: string;
   headers?: Record<string, string>;
+  /** Max 25 MB decoded per file, 40 MB decoded across all of them. */
   attachments?: Attachment[];
-  /** ISO 8601 timestamp to schedule the send. */
+  /**
+   * When to send: an ISO 8601 timestamp, or a relative phrase like
+   * `'in 1 min'` / `'tomorrow at 9am'`. At most 30 days ahead.
+   */
   scheduled_at?: string;
   /** Drop recipients unsubscribed from this topic (topic gating). */
   topic_id?: string;
@@ -80,6 +170,8 @@ export interface Email {
   message_id?: string | null;
   from: string;
   to: string[];
+  /** The sending domain this email went out on; `null` on legacy rows. */
+  domain_id?: string | null;
   cc?: string[];
   bcc?: string[];
   reply_to?: string[];
@@ -107,6 +199,8 @@ export interface SentEmailListItem {
   message_id: string | null;
   from: string;
   to: string[];
+  /** The sending domain this email went out on; `null` on legacy rows. */
+  domain_id: string | null;
   cc: string[] | null;
   bcc: string[] | null;
   reply_to: string[] | null;
@@ -114,19 +208,55 @@ export interface SentEmailListItem {
   /** Latest recorded event/state, e.g. `sent`, `delivered`, `bounced`. */
   last_event: string;
   scheduled_at: string | null;
+  /** Set when the email came from a campaign send (follow-ups included). */
+  campaign_id: string | null;
+  /** Set when the email came from an automation run. */
+  automation_id: string | null;
   created_at: string;
 }
 
-/** Params for `mb.emails.list()` — cursor pagination plus source filters. */
+/** Params for `mb.emails.list()` — cursor pagination plus filters. */
 export interface ListEmailsParams extends PaginationParams {
   /** Only emails sent by this campaign. Takes precedence over `automation_id`/`source`. */
   campaign_id?: string;
-  /** Only emails sent by this automation. */
+  /** Only emails sent by this automation. Ignored when `campaign_id` is set. */
   automation_id?: string;
-  /** `'individual'` restricts to one-off API sends (no campaign/automation). */
+  /** `'individual'` restricts to one-off API sends (no campaign/automation). Only honored when neither `campaign_id` nor `automation_id` is set. */
   source?: 'individual';
   /** Only emails sent from this sending domain (domain id). Composes with the source filters. */
   domain_id?: string;
+  /** Match the row's latest state, e.g. `delivered` — the same value reads expose as `last_event`. Case-insensitive. */
+  status?: string;
+  /** Substring search across recipients, subject and sender. */
+  search?: string;
+}
+
+/** One row of `mb.emails.sources()` — per-origin send metrics. */
+export interface EmailSource {
+  kind: 'campaign' | 'automation' | 'individual';
+  /** `null` for the `individual` roll-up row. */
+  id: string | null;
+  name: string | null;
+  /** `null` for `automation` and `individual` rows. */
+  subject: string | null;
+  status: string | null;
+  total: number;
+  sent: number;
+  delivered: number;
+  opened: number;
+  clicked: number;
+  replied: number;
+  failed: number;
+  last_sent_at: string | null;
+}
+
+/** One row of `mb.emails.receiving.addresses()` — per-address inbound stats. */
+export interface ReceivingAddressStats {
+  address: string;
+  total: number;
+  replies: number;
+  interested: number;
+  last_received_at: string | null;
 }
 
 /** Params for `mb.emails.receiving.list()` — cursor pagination plus filters. */
@@ -155,8 +285,10 @@ export interface Domain {
   name: string;
   /**
    * Aggregated verification status: `not_started`, `pending`, `verified`,
-   * `partially_verified`, `partially_failed`, `failed`, `temporary_failure`,
-   * or `revoked` (a different account verified an overlapping domain).
+   * `partially_verified`, `failed`, `temporary_failure`, or `revoked` (a
+   * different account verified an overlapping domain). Rows still in the
+   * `claim` state are hidden from `domains.list()` — read them via
+   * `domains.getClaim()`.
    */
   status: string;
   region: string;
@@ -180,20 +312,31 @@ export interface Domain {
   capabilities?: DomainCapabilities;
   tracking_domain?: string | null;
   tracking_verified?: boolean;
+  /** When the DNS/provider state was last re-checked. */
+  aws_last_checked_at?: string | null;
+  /** Why the last re-check failed, if it did. */
+  aws_check_error?: string | null;
 }
 export interface CreateDomainOptions {
   name: string;
-  region?: string;
+  /** Sending region. Creatable: `us-east-1`, `ap-south-1`. Defaults to `us-east-1`. */
+  region?: 'us-east-1' | 'ap-south-1' | (string & {});
   /** MAIL FROM subdomain (Return-Path); defaults to 'send'. */
   custom_return_path?: string;
+  /** Defaults to false. */
   open_tracking?: boolean;
+  /** Defaults to true. */
   click_tracking?: boolean;
-  /** Custom tracking host label, e.g. 'email' ⇒ email.<domain>. */
+  /** Serve open/click tracking from your own subdomain. Implied by `tracking_subdomain`. */
+  custom_tracking?: boolean;
+  /** Custom tracking host label, e.g. 'email' ⇒ email.<domain>. Defaults to 't'. */
   tracking_subdomain?: string;
-  /** Outbound TLS policy. */
+  /** Outbound TLS policy. Defaults to 'opportunistic'. */
   tls?: 'opportunistic' | 'enforced';
-  /** Capabilities to enable, e.g. { receiving: 'enabled' }. */
+  /** Capabilities to enable, e.g. { receiving: 'enabled' }. Wins over `receiving`. */
   capabilities?: { receiving?: 'enabled' | 'disabled' };
+  /** Shorthand for `capabilities.receiving`. Defaults to false. */
+  receiving?: boolean;
 }
 export interface UpdateDomainOptions {
   open_tracking?: boolean;
@@ -201,8 +344,12 @@ export interface UpdateDomainOptions {
   tracking_subdomain?: string;
   /** Enable/disable the custom open/click tracking host for this domain. */
   custom_tracking?: boolean;
+  /** MAIL FROM subdomain (Return-Path); a single DNS label. */
+  custom_return_path?: string;
   tls?: 'opportunistic' | 'enforced';
   capabilities?: { receiving?: 'enabled' | 'disabled' };
+  /** Shorthand for `capabilities.receiving`; used only when that is absent. */
+  receiving?: boolean;
 }
 
 // ---- Audiences & Contacts ----
@@ -279,7 +426,42 @@ export interface ImportContactsResponse {
   updated: number;  // existing contacts updated
   skipped: number;  // rows dropped: missing/invalid email OR left untouched under on_conflict:'skip'
   total: number;    // distinct contacts processed
+  /** CSV import only — rows with no usable email. */
+  invalid_rows?: number;
+  /** CSV import only — rows dropped because the plan's contact cap was reached. */
+  limit_skipped?: number;
+  /** CSV import only — rows dropped by the importer itself (suppressed addresses, …). */
+  system_skipped?: number;
   ignored_columns?: string[]; // CSV headers that matched no registered property (CSV import only)
+  /** CSV import only — where the uploaded file was archived. */
+  source_file?: { file_name: string; storage_key: string; archived: boolean };
+  /** CSV import only — how the import sat against the plan's contact cap. */
+  contact_limit?: {
+    plan: { id: string; name: string };
+    used_before: number;
+    limit: number;
+    remaining_before: number | null;
+    remaining_after: number | null;
+    limit_skipped: number;
+    reached: boolean;
+    message: string;
+  };
+  /** Present only when `segment_id` was supplied — how many emails joined it. */
+  segment_added?: number;
+}
+
+/** Presigned direct-upload slot for a large CSV (`contacts.createImportUpload`). */
+export interface ContactImportUpload {
+  object: 'contact_import_upload';
+  /** Pass this back to `contacts.import({ storage_key })` once the PUT completes. */
+  storage_key: string;
+  /** Presigned PUT URL — a bearer credential; never log it. */
+  upload_url: string;
+  content_type: string;
+  /** Seconds until `upload_url` expires. */
+  expires_in: number;
+  /** Hard upload ceiling in bytes (256 MB). */
+  max_bytes: number;
 }
 
 /** MX preflight result for a hostname (GET /domains/mx-check). */
@@ -330,23 +512,25 @@ export interface Campaign {
   text?: string | null;
   reply_to?: string | null;
   preview_text?: string | null;
+  /** `draft`, `queued`, `scheduled`, `recurring`, `paused`, `sent`, `failed`. */
   status: string;
   scheduled_at: string | null;
   sent_at: string | null;
   created_at: string;
+  /** IANA zone the schedule and daily batching are evaluated in. */
+  schedule_timezone?: string | null;
+  /** Max recipients fanned out per batch-day (null ⇒ all at once). */
+  daily_batch_size?: number | null;
+  /** Why the campaign failed, when it did. */
+  failure_reason?: string | null;
   /** A/B config + decision. `{ enabled: false }` when not an A/B campaign. */
-  ab_test?: {
-    enabled: boolean;
-    subject_b?: string | null;
-    test_pct?: number;
-    metric?: 'open' | 'click' | 'reply';
-    status?: string | null;
-    winner?: string | null;
-  };
+  ab_test?: CampaignAbState;
   /** Engagement follow-ups (retrieve only). */
   followups?: Array<{
     id: string; condition: string; delay: string; subject: string | null;
+    html?: string | null;
     status: string; run_at: string | null; sent_count: number;
+    created_at?: string | null;
   }>;
   /** Generated mailing-list To address (retrieve only; null unless list_to was set). */
   list_address?: string | null;
@@ -357,7 +541,40 @@ export interface Campaign {
   /** Set on auto-generated occurrences of a recurring campaign. */
   parent_campaign_id?: string | null;
   /** Engagement counts — included only on GET /campaigns/:id (retrieve). */
-  statistics?: Record<string, unknown>;
+  statistics?: Omit<CampaignStats, 'object' | 'campaign_id'>;
+}
+
+/** The A/B block as READ back from the API (`{ enabled: false }` when off). */
+export interface CampaignAbState {
+  enabled: boolean;
+  subject_b?: string | null;
+  html_b?: string | null;
+  text_b?: string | null;
+  test_pct?: number;
+  metric?: 'open' | 'click' | 'reply';
+  eval_hours?: number | null;
+  status?: string | null;
+  winner?: string | null;
+}
+
+/**
+ * One row of `mb.campaigns.list()`. The list serializer is deliberately
+ * narrower than the full {@link Campaign}: no bodies, no reply_to/preview_text,
+ * no follow-ups, no statistics. Use `mb.campaigns.get(id)` for those.
+ */
+export interface CampaignListItem {
+  object: 'campaign';
+  id: string;
+  name: string | null;
+  subject: string | null;
+  audience_id: string;
+  segment_id: string | null;
+  status: string;
+  ab_test: CampaignAbState;
+  created_at: string | null;
+  scheduled_at: string | null;
+  sent_at: string | null;
+  failure_reason: string | null;
 }
 /**
  * A/B-test config accepted on campaign create. When `enabled`, supply at least
@@ -500,19 +717,61 @@ export interface UpdateCampaignOptions {
 export interface CampaignStats {
   object: 'campaign_stats';
   campaign_id: string;
-  links?: Array<Record<string, unknown>>;
-  [k: string]: unknown;
+  total: number;
+  delivered: number;
+  opened: number;
+  clicked: number;
+  replied: number;
+  bounced: number;
+  complained: number;
+  /** Percentages. Open/click/reply are over `delivered`, falling back to `total`. */
+  rates: { delivery: number; open: number; click: number; reply: number; bounce: number; complaint: number };
+  /** Top 50 links by clicks, then url ascending. */
+  links: Array<{ url: string; clicks: number }>;
 }
-/** A/B winner evaluation returned by GET /campaigns/:id/ab. */
+
+/**
+ * Per-recipient engagement returned by GET /campaigns/:id/engagement. Each
+ * list is capped at 500 rows and this endpoint is NOT paginated.
+ */
+export interface CampaignEngagement {
+  object: 'campaign_engagement';
+  campaign_id: string;
+  opened: Array<{ email: string; contact_id: string | null; opened_at: string; open_count: number }>;
+  clicked: Array<{ email: string; contact_id: string | null; clicked_at: string; click_count: number }>;
+  replied: Array<{
+    email: string; contact_id: string | null; replied_at: string | null;
+    received_email_id: string; subject: string | null;
+    /** First 300 characters of the reply body. */
+    preview: string | null;
+    category: string | null; received_at: string;
+  }>;
+}
+
+/**
+ * A/B winner evaluation returned by GET /campaigns/:id/ab. Note `zScore` and
+ * `pValue` are camelCase on the wire — that is deliberate, not a typo.
+ */
 export interface CampaignAbResult {
   object: 'campaign_ab';
   campaign_id: string;
   metric: 'open' | 'click' | 'reply';
-  [k: string]: unknown;
+  a: { variant: 'A'; sent: number; conversions: number; rate: number };
+  b: { variant: 'B'; sent: number; conversions: number; rate: number };
+  winner: 'A' | 'B';
+  /** True when a variant had zero sends or the rates tied (winner defaults to A). */
+  fallback: boolean;
+  lift: number;
+  zScore: number;
+  pValue: number;
+  /** Forced to `low` when either arm has fewer than 20 sends. */
+  confidence: 'low' | 'medium' | 'high';
+  reason: string;
 }
 
 // ---- Segments ----
-export type SegmentStatus = 'all' | 'subscribed' | 'unsubscribed';
+/** `members_only` matches just the explicitly added members, ignoring the filter. */
+export type SegmentStatus = 'all' | 'subscribed' | 'unsubscribed' | 'members_only';
 /** Operators for a custom-property segment predicate. */
 export type PropertyOperator = 'eq' | 'contains' | 'exists';
 /** A single custom-property predicate. `value` is required for eq/contains. */
@@ -521,14 +780,54 @@ export interface PropertyFilter {
   operator: PropertyOperator;
   value?: string | number | null;
 }
+/** Narrow a segment to contacts who did (or did not) engage with one campaign. */
+export interface EngagementFilter {
+  event: 'clicked' | 'not_clicked' | 'opened' | 'not_opened';
+  campaign_id: string;
+}
+/** The filter block of a segment as read back from the API. */
+export interface SegmentFilter {
+  status: SegmentStatus;
+  email_contains: string | null;
+  property_filters: PropertyFilter[];
+  engagement: EngagementFilter | null;
+}
+/** The filter block accepted on segment create/update (every field optional). */
+export interface SegmentFilterInput {
+  status?: SegmentStatus;
+  email_contains?: string | null;
+  /** `null` clears every property predicate. */
+  property_filters?: PropertyFilter[] | null;
+  /** `null` clears the engagement predicate. */
+  engagement?: EngagementFilter | null;
+}
 export interface Segment {
   object: 'segment';
   id: string;
   audience_id: string;
   name: string;
-  filter: { status: SegmentStatus; email_contains: string | null; property_filters: PropertyFilter[] };
+  filter: SegmentFilter;
   created_at: string;
   updated_at: string;
+}
+/**
+ * A row of `mb.segments.contacts()`. The segment-membership serializer is
+ * reduced: there is no `object` key and no `properties`. Use
+ * `mb.contacts.get({ id })` for the full contact.
+ */
+export interface SegmentContact {
+  id: string;
+  email: string;
+  first_name: string | null;
+  last_name: string | null;
+  unsubscribed: boolean;
+  created_at: string | null;
+}
+/** A row of `mb.contacts.listSegments()` — id/name/created_at only. */
+export interface ContactSegmentRef {
+  id: string;
+  name: string;
+  created_at: string | null;
 }
 export interface CreateSegmentOptions {
   /**
@@ -540,26 +839,33 @@ export interface CreateSegmentOptions {
    */
   domain: string;
   name: string;
-  filter?: { status?: SegmentStatus; email_contains?: string | null; property_filters?: PropertyFilter[] };
+  filter?: SegmentFilterInput;
 }
 /** Params for listing segments — domain-scoped (only that domain's segments). */
 export interface ListSegmentsParams extends PaginationParams {
   /** REQUIRED. The sending domain whose segments to list. */
   domain: string;
 }
+/**
+ * A segment's domain cannot change — passing `domain` (or `audience_id`) here
+ * is a 422. Create a new segment on the other domain instead.
+ */
 export interface UpdateSegmentOptions {
   name?: string;
-  filter?: { status?: SegmentStatus; email_contains?: string | null; property_filters?: PropertyFilter[] };
+  filter?: SegmentFilterInput;
 }
 
 // ---- Templates ----
+/**
+ * A declared template variable, as returned inside `Template.variables`. The
+ * registry carries only the declaration — the API sends no per-variable `id`,
+ * `created_at` or `updated_at`, so they are absent here rather than typed and
+ * always `undefined`.
+ */
 export interface TemplateVariable {
-  id: string;
   key: string;
   type: 'string' | 'number';
   fallback_value: string | number | null;
-  created_at: string;
-  updated_at: string;
 }
 export interface Template {
   object: 'template';
@@ -582,49 +888,85 @@ export interface Template {
   created_at: string;
   updated_at: string;
 }
+/**
+ * A row of `mb.templates.list()`. The list serializer is narrower than the
+ * full {@link Template}: no `object`, `from`, `reply_to`, `text`, `variables`
+ * or `current_version_id`. Use `mb.templates.get(idOrAlias)` for those.
+ */
+export interface TemplateListItem {
+  id: string;
+  name: string;
+  subject: string | null;
+  html: string | null;
+  /** 'draft' | 'published' */
+  status: string;
+  published_at: string | null;
+  alias: string | null;
+  has_unpublished_versions: boolean;
+  created_at: string;
+  updated_at: string;
+}
 /** A template variable definition accepted on create/update. */
 export interface TemplateVariableInput {
   key: string;
   type?: 'string' | 'number';
   fallback_value?: string | number | null;
 }
+/** Requires `name` plus at least one of `html` / `text`. */
 export interface CreateTemplateOptions {
+  /** Max 255 characters. */
   name: string;
-  /** Optional stable handle for sending by alias. */
-  alias?: string;
+  /** Optional stable handle for sending by alias. Unique per account; max 255. */
+  alias?: string | null;
+  /** Max 998 characters. */
   subject?: string | null;
+  /** Max 320 characters. */
   from?: string | null;
-  reply_to?: string | string[];
+  /** Max 320 characters (an array is joined with ", " before the check). */
+  reply_to?: string | string[] | null;
   html?: string | null;
   text?: string | null;
+  /** At most 50 entries. */
   variables?: TemplateVariableInput[];
 }
+/**
+ * Patches the DRAFT — it never changes `status` or the published snapshot.
+ * A field present with `null` clears it; an absent field is left alone.
+ * Publish with `mb.templates.publish(id)` to make the edits live.
+ */
 export interface UpdateTemplateOptions {
   name?: string;
-  /** Optional stable handle for sending by alias. */
-  alias?: string;
+  alias?: string | null;
   subject?: string | null;
   from?: string | null;
-  reply_to?: string | string[];
+  reply_to?: string | string[] | null;
   html?: string | null;
   text?: string | null;
   variables?: TemplateVariableInput[];
 }
-/** Body for templates.duplicate. */
+/** Body for templates.duplicate. The copy is always a fresh draft. */
 export interface DuplicateTemplateOptions {
+  /** Defaults to `"<source name> (copy)"`. */
   name?: string;
-  alias?: string;
+  /** Must be unused. Omit to leave the copy without an alias. */
+  alias?: string | null;
 }
 
 // ---- API keys ----
-/** An API key as returned by `mb.apiKeys.list()` (GET /api-keys). */
+/**
+ * An API key as returned by `mb.apiKeys.list()` (GET /api-keys).
+ *
+ * Listing is the only key operation the SDK offers. Creating, re-scoping and
+ * revoking keys happen in the MailBlastr dashboard, behind a signed-in session,
+ * so a leaked key cannot mint a replacement or widen its own access.
+ */
 export interface ApiKey {
   id: string;
   name: string;
   /**
-   * Non-secret display prefix of the key (e.g. `mb_live_abcd…`); `null` for
-   * legacy keys with no stored prefix. The full secret is returned only once,
-   * at creation (see {@link CreateApiKeyResponse}).
+   * Non-secret display prefix — the key's first 8 characters, e.g. `mb_ab12`;
+   * `null` for legacy keys with no stored prefix. The full secret is shown
+   * exactly once, in the dashboard, at the moment the key is created.
    */
   token: string | null;
   /** Derived from the key's scopes. */
@@ -637,21 +979,6 @@ export interface ApiKey {
   /** Last time the key authenticated a request; `null` if never used. */
   last_used_at: string | null;
 }
-export interface CreateApiKeyResponse { object: 'api_key'; id: string; token: string; domain_id: string | null; domain_ids: string[] | null }
-export interface CreateApiKeyOptions {
-  name: string;
-  permission?: 'full_access' | 'sending_access';
-  /** Scope a `sending_access` key to one domain (legacy; prefer `domain_ids`). */
-  domain_id?: string;
-  /**
-   * Scope the key to one or more domains. Only valid with `sending_access` —
-   * full-access keys always work across all your domains (the API rejects the
-   * combination with a validation_error).
-   * Mutually exclusive with `domain_id` — providing both is a 422.
-   */
-  domain_ids?: string[];
-}
-
 export interface ListResponse<T> { object: 'list'; has_more: boolean; data: T[] }
 export interface RemovedResponse { object: string; id: string; deleted: true }
 
@@ -713,7 +1040,7 @@ export interface ReceivedEmail {
   verdicts?: Record<string, unknown>;
   attachments?: ReceivedAttachment[];
   raw_available: boolean;
-  raw?: { download_url: string; expires_at: string };
+  raw?: { download_url: string; expires_at?: string };
   raw_url?: string;
   created_at: string;
 }
@@ -721,6 +1048,20 @@ export interface ForwardReceivedEmailOptions {
   /** A verified sending address to forward from (required by the backend). */
   from: string;
   to: string | string[];
+  /** Falls back to the original subject, else "(no subject)". */
+  subject?: string;
+}
+/**
+ * Reply to a received email. The recipient is derived server-side (the
+ * original's Reply-To, else its From) and the message is threaded via
+ * In-Reply-To/References — you only supply the sender and body.
+ */
+export interface ReplyReceivedEmailOptions {
+  /** A verified sending address to reply from (required by the backend). */
+  from: string;
+  html?: string;
+  text?: string;
+  /** Defaults to the original subject prefixed with "Re: ". */
   subject?: string;
 }
 
@@ -786,11 +1127,15 @@ export interface PollResult {
   answers: PollAnswer[];
 }
 export interface CreateContactPropertyOptions {
-  /** Canonical merge-tag key. `name` is accepted as an alias. */
+  /**
+   * Canonical merge-tag key: 1–50 characters, letters/digits/underscore only.
+   * `name` is accepted as an alias.
+   */
   key?: string;
   name?: string;
-  type: ContactPropertyType;
-  fallback_value?: string | number;
+  /** Defaults to 'string'. Immutable after creation. */
+  type?: ContactPropertyType;
+  fallback_value?: string | number | null;
 }
 /** Only fallback_value is mutable; key/type are immutable. */
 export interface UpdateContactPropertyOptions {
@@ -806,8 +1151,13 @@ export interface ContactTopicSubscription {
 }
 export interface ContactTopics {
   object: 'list';
+  has_more: boolean;
   data: ContactTopicSubscription[];
 }
+/**
+ * Replace a contact's topic subscriptions. The whole list is validated before
+ * anything is written, so one bad entry rejects the request outright.
+ */
 export interface UpdateContactTopicsOptions {
   topics: { id: string; subscription: 'opt_in' | 'opt_out' }[];
 }
@@ -830,9 +1180,13 @@ export interface CreateTopicOptions {
    * `audience_id`. Topic names are reusable across domains.
    */
   domain: string;
+  /** Max 255 characters. */
   name: string;
+  /** Required, and IMMUTABLE after creation. */
   default_subscription: 'opt_in' | 'opt_out';
+  /** Defaults to 'private'. */
   visibility?: 'public' | 'private';
+  /** Max 200 characters. */
   description?: string | null;
 }
 /** Params for listing topics — domain-scoped (only that domain's topics). */
@@ -840,8 +1194,11 @@ export interface ListTopicsParams extends PaginationParams {
   /** REQUIRED. The sending domain whose topics to list. */
   domain: string;
 }
+/** `default_subscription` is immutable and is silently ignored here. */
 export interface UpdateTopicOptions {
+  /** 1–255 characters. */
   name?: string;
+  /** Max 200 characters. */
   description?: string | null;
   visibility?: 'public' | 'private';
 }
@@ -885,7 +1242,17 @@ export interface Automation {
   domain: string | null;
   /** 'enabled' | 'disabled' */
   status: string;
+  /** Set only on the `'mailblastr:schedule'` trigger; `null` otherwise. */
+  trigger_config?: AutomationTriggerConfig | null;
+  /** Graph key of the synthetic trigger step (`'trigger'` when unset). */
+  trigger_key?: string | null;
+  /**
+   * The step graph. OMITTED on `automations.list()` — retrieve one automation
+   * to get its steps. `steps[0]` is always the synthetic trigger step (no
+   * `id`, no `position`).
+   */
   steps?: AutomationStep[];
+  /** Typed edges between step keys. Also omitted on `automations.list()`. */
   connections?: AutomationConnection[];
   /** Enrollment counts — included only on GET /automations/:id (retrieve). */
   enrollments?: { active: number; completed: number };
@@ -922,27 +1289,78 @@ export interface CreateAutomationOptions {
   status?: 'enabled' | 'disabled' | (string & {});
   /** Optional inline step graph; each step may carry a `key` for connections. */
   steps?: Array<{ key?: string; type: string; config?: Record<string, unknown>; [k: string]: unknown }>;
-  /** Optional typed edges between step keys. */
-  connections?: Array<{ from: string; to: string; type?: string }>;
+  /** Optional typed edges between step keys. Cycles are rejected at write time. */
+  connections?: Array<{ from: string; to: string; type?: AutomationConnectionType }>;
 }
 export interface UpdateAutomationOptions {
+  /** Max 255 characters. */
   name?: string;
   status?: 'enabled' | 'disabled' | (string & {});
   /** Re-point the automation at another of your domains (disabled automations only). */
   domain?: string;
+  /** Change the triggering event (disabled automations only). */
+  trigger?: string;
+  /** Graph key for the trigger step; only meaningful alongside `trigger`. */
+  trigger_key?: string;
   /**
    * Update the `'mailblastr:schedule'` trigger's schedule ({ at, timezone }).
-   * Only valid on automations with that trigger.
+   * Only valid on automations with that trigger, and only while disabled.
    */
-  trigger_config?: AutomationTriggerConfig;
-  connections?: Array<{ from: string; to: string; type?: string }>;
+  trigger_config?: AutomationTriggerConfig | null;
+  /** Replace the edge list (disabled automations only). */
+  connections?: Array<{ from: string; to: string; type?: AutomationConnectionType }>;
 }
+/** The edge kinds accepted between automation steps (`'default'` aliases `'next'`). */
+export type AutomationConnectionType =
+  | 'next' | 'default' | 'condition_met' | 'condition_not_met' | 'event_received' | 'timeout';
+/**
+ * Documented step types. The internal names (`send`, `wait`) are accepted on
+ * input too, and are what `steps` responses echo back.
+ */
+export type AutomationStepType =
+  | 'delay' | 'send_email' | 'wait_for_event' | 'condition' | 'split'
+  | 'add_to_segment' | 'contact_update' | 'contact_delete';
 export interface AddAutomationStepOptions {
-  type: string;
+  /** The automation must be `disabled`. `'trigger'` is rejected here. */
+  type: AutomationStepType | (string & {});
+  /** Per-type fields may also sit at the top level of the body. */
   config?: Record<string, unknown>;
+  /** Graph key used by `connections`; defaults to the new step's id. */
   key?: string;
   [k: string]: unknown;
 }
+/** Params for `automations.runs()` — pagination plus a status filter. */
+export interface ListAutomationRunsParams extends PaginationParams {
+  /**
+   * Keep only runs in these statuses (`running`, `completed`, `failed`,
+   * `skipped`). Sent as a comma-separated list; filtering runs before paging.
+   */
+  status?: string | string[];
+}
+/** Body for `automations.ai()` — "Create with AI". */
+export interface AutomationAiOptions {
+  /** Required, max 2000 characters. */
+  prompt: string;
+  /** Templates the plan may send; only the first 10 are used. */
+  template_ids?: string[];
+  /** Event names the plan may wait on; only the first 10 are used. */
+  events?: string[];
+  /**
+   * Append to an existing graph instead of authoring a whole workflow. Without
+   * it the automation must have zero steps.
+   */
+  attach?: {
+    /** The trigger key or an existing step key. */
+    from: string;
+    type?: 'default' | 'condition_met' | 'condition_not_met' | 'event_received' | 'timeout';
+    /** Insert before this existing step key. */
+    before?: string;
+  };
+}
+/** `automations.ai()` result — the updated automation plus what AI did. */
+export type AutomationAiResult = Automation & {
+  ai: { added_steps: number; mode: 'workflow' | 'append' };
+};
 export interface AutomationRunStep {
   key: string;
   type: string;
@@ -959,11 +1377,11 @@ export interface AutomationRun {
   contact_id: string;
   /** Email of the contact the run is for; `null` if that contact was deleted. */
   contact_email: string | null;
-  /** 'running' | 'completed' | 'failed' | 'cancelled' | 'skipped' */
+  /** 'running' | 'completed' | 'failed' | 'skipped' */
   status: string;
-  started_at: string;
+  started_at: string | null;
   completed_at: string | null;
-  created_at: string;
+  created_at: string | null;
   /** Present on GET /automations/:id/runs/:runId (retrieve) only. */
   automation_id?: string;
   steps?: AutomationRunStep[];
@@ -971,11 +1389,36 @@ export interface AutomationRun {
 }
 
 // ---- Webhooks ----
+/**
+ * The canonical webhook event names. Short aliases are accepted on write
+ * (`open`, `click`, `bounce`, `complaint`, `reply`, `unsubscribe`, `sent`,
+ * `delivered`, `delivery_delayed`) but are always normalized to these before
+ * being stored or returned. Anything else is a `validation_error`.
+ */
+export type WebhookEvent =
+  | 'email.sent' | 'email.delivered' | 'email.delivery_delayed' | 'email.bounced'
+  | 'email.complained' | 'email.opened' | 'email.clicked' | 'email.failed'
+  | 'email.scheduled' | 'email.suppressed' | 'email.received'
+  | 'email.replied' | 'email.unsubscribed'
+  | 'contact.created' | 'contact.updated' | 'contact.deleted'
+  | 'domain.created' | 'domain.updated' | 'domain.deleted';
+
+/** Every canonical webhook event name, for validation or building UIs. */
+export const WEBHOOK_EVENTS: readonly WebhookEvent[] = [
+  'email.sent', 'email.delivered', 'email.delivery_delayed', 'email.bounced',
+  'email.complained', 'email.opened', 'email.clicked', 'email.failed',
+  'email.scheduled', 'email.suppressed', 'email.received',
+  'contact.created', 'contact.updated', 'contact.deleted',
+  'domain.created', 'domain.updated', 'domain.deleted',
+  'email.replied', 'email.unsubscribed',
+] as const;
+
 export interface Webhook {
   object: 'webhook';
   id: string;
   endpoint: string;
-  events: string[];
+  events: WebhookEvent[];
+  /** 'enabled' | 'disabled' */
   status: string;
   /** Whether a signing secret is set. (The secret itself is returned ONLY on create + rotate, never on get/list.) */
   has_secret?: boolean;
@@ -988,15 +1431,35 @@ export interface Webhook {
   created_at: string;
 }
 export interface CreateWebhookOptions {
+  /**
+   * Must be `https://` and must not resolve to a private, loopback, CGNAT or
+   * link-local address — plain `http://` is rejected with `requires_https`.
+   */
   endpoint: string;
-  events: string[];
+  /** At least one event. Aliases are normalized to {@link WebhookEvent}. */
+  events: Array<WebhookEvent | (string & {})>;
   /** Optional caller-supplied signing secret. When omitted, MailBlastr generates one (returned once). */
   secret?: string;
 }
 export interface UpdateWebhookOptions {
   endpoint?: string;
-  events?: string[];
+  /** Full replacement of the subscribed events, not a merge. */
+  events?: Array<WebhookEvent | (string & {})>;
+  /** Re-enabling also resets `failure_count` to 0. */
   status?: 'enabled' | 'disabled';
+}
+/**
+ * Result of `webhooks.test()`. A failed delivery is still HTTP 200 — branch on
+ * `ok`, never on the status code.
+ */
+export interface WebhookTestResult {
+  object: 'webhook_test';
+  id: string;
+  ok: boolean;
+  /** The endpoint's HTTP status, when it responded. */
+  status?: number;
+  /** Why the delivery failed, e.g. `lookup_failed`. */
+  error?: string;
 }
 /**
  * The Svix-style delivery headers MailBlastr sends with each webhook. Either the

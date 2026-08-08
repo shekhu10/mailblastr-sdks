@@ -42,6 +42,17 @@ public final class EmailsTest {
         mb.emails().send(req, "order-123");
         Check.eq("idempotency header", "order-123", t.lastHeaders.get("Idempotency-Key"));
 
+        // The documented bound is 1-255 characters, measured AFTER the server
+        // trims the value (api_idempotency.key is VARCHAR(255)) -- 255, not 256.
+        // The constant is exported so the rule is discoverable; the key is sent
+        // verbatim and the SERVER rejects an out-of-range one with
+        // 400 invalid_idempotency_key, so nothing is checked here.
+        Check.eq("idempotency key max length", 255, Mailblastr.IDEMPOTENCY_KEY_MAX_LENGTH);
+        String tooLong = "k".repeat(Mailblastr.IDEMPOTENCY_KEY_MAX_LENGTH + 1);
+        mb.emails().send(req, tooLong);
+        Check.eq("over-long idempotency key is left to the server", tooLong,
+                t.lastHeaders.get("Idempotency-Key"));
+
         // --- attachments + escaping ---
         mb.emails().send(SendEmailRequest.builder()
                 .from("a@b.com").to("c@d.com").subject("q\"uote\nline")

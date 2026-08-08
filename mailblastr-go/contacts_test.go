@@ -164,6 +164,55 @@ func TestContactsBatchOnConflict(t *testing.T) {
 	}
 }
 
+// The delete route returns the contact id as `id` — not `contact`.
+func TestContactsRemoveDecodesId(t *testing.T) {
+	client := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodDelete || r.URL.Path != "/contacts/con_1" {
+			t.Errorf("%s %s, want DELETE /contacts/con_1", r.Method, r.URL.Path)
+		}
+		w.Write([]byte(`{"object":"contact","id":"con_1","deleted":true}`))
+	})
+
+	res, err := client.Contacts.Remove(&RemoveContactRequest{Id: "con_1"})
+	if err != nil {
+		t.Fatalf("Remove: %v", err)
+	}
+	if res.Id != "con_1" || !res.Deleted || res.Object != "contact" {
+		t.Errorf("unexpected response: %+v", res)
+	}
+}
+
+func TestContactsImportSegmentAndStorageKey(t *testing.T) {
+	client := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/audiences/aud_1/contacts/import" {
+			t.Errorf("path = %s", r.URL.Path)
+		}
+		if got := r.URL.Query().Get("segment_id"); got != "seg_1" {
+			t.Errorf("segment_id = %q, want seg_1", got)
+		}
+		body := decodeBody(t, r)
+		if body["storage_key"] != "uploads/abc.csv" {
+			t.Errorf("storage_key = %v", body["storage_key"])
+		}
+		if _, present := body["csv"]; present {
+			t.Error("csv must not be sent alongside storage_key")
+		}
+		w.Write([]byte(`{"object":"contact_import","imported":3,"updated":1,"skipped":0,"total":4,"invalid_rows":0,"limit_skipped":2,"ignored_columns":["notes"],"segment_added":4}`))
+	})
+
+	res, err := client.Contacts.Import(&ImportContactsRequest{
+		AudienceId: "aud_1",
+		StorageKey: "uploads/abc.csv",
+		SegmentId:  "seg_1",
+	})
+	if err != nil {
+		t.Fatalf("Import: %v", err)
+	}
+	if res.LimitSkipped != 2 || res.SegmentAdded != 4 || len(res.IgnoredColumns) != 1 {
+		t.Errorf("CSV-import fields not decoded: %+v", res)
+	}
+}
+
 func TestContactsSegmentMembership(t *testing.T) {
 	client := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost || r.URL.Path != "/contacts/con_1/segments/seg_1" {
@@ -178,5 +227,36 @@ func TestContactsSegmentMembership(t *testing.T) {
 	}
 	if res.Id != "seg_1" {
 		t.Errorf("Id = %q, want seg_1", res.Id)
+	}
+}
+
+func TestContactsListSegmentsReturnsReducedRows(t *testing.T) {
+	client := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/contacts/con_1/segments" {
+			t.Errorf("%s %s, want GET /contacts/con_1/segments", r.Method, r.URL.Path)
+		}
+		if got := r.URL.Query().Get("limit"); got != "5" {
+			t.Errorf("limit = %q, want 5 — pagination params must reach the route", got)
+		}
+		// The route sends ONLY id/name/created_at — no object, audience_id,
+		// filter or updated_at.
+		w.Write([]byte(`{"object":"list","has_more":false,"data":[{"id":"seg_1","name":"General","created_at":"2026-08-08T10:00:00.000Z"}]}`))
+	})
+
+	list, err := client.Contacts.ListSegments("con_1", &ListParams{Limit: 5})
+	if err != nil {
+		t.Fatalf("ListSegments: %v", err)
+	}
+	// Compile-time guard: widening this back to the full Segment (which would
+	// promise an audience_id/filter/updated_at the route never sends) breaks
+	// the build here rather than silently handing callers empty strings.
+	var _ *ListResponse[ContactSegmentRef] = list
+
+	if len(list.Data) != 1 {
+		t.Fatalf("data = %+v, want one row", list.Data)
+	}
+	row := list.Data[0]
+	if row.Id != "seg_1" || row.Name != "General" || row.CreatedAt == "" {
+		t.Errorf("reduced row not decoded: %+v", row)
 	}
 }

@@ -8,6 +8,11 @@ namespace Mailblastr;
 /// <summary>An API key as returned by ApiKeyListAsync (GET /api-keys).</summary>
 public class ApiKey
 {
+    /// <summary><c>api_key</c>; omitted (null) on list rows.</summary>
+    [JsonPropertyName("object")]
+    public string? Object { get; set; }
+
+    /// <summary>String-encoded integer id.</summary>
     [JsonPropertyName("id")]
     public string Id { get; set; } = null!;
 
@@ -15,9 +20,10 @@ public class ApiKey
     public string Name { get; set; } = null!;
 
     /// <summary>
-    /// Non-secret display prefix of the key (e.g. <c>mb_live_abcd…</c>); null
-    /// for legacy keys with no stored prefix. The full secret is returned only
-    /// once, at creation (see <see cref="ApiKeyCreated"/>).
+    /// Non-secret display prefix of the key — its first 8 characters, e.g.
+    /// <c>mb_ab12</c>; null for legacy keys with no stored prefix. (There is no
+    /// <c>mb_live_</c> prefix — every key starts with <c>mb_</c>.) The full
+    /// secret is shown once, in the dashboard, at the moment the key is created.
     /// </summary>
     [JsonPropertyName("token")]
     public string? Token { get; set; }
@@ -42,49 +48,9 @@ public class ApiKey
     public string? LastUsedAt { get; set; }
 }
 
-/// <summary>Payload for creating an API key (POST /api-keys).</summary>
-public class ApiKeyCreateOptions
-{
-    [JsonPropertyName("name")]
-    public string Name { get; set; } = null!;
-
-    /// <summary><c>full_access</c> | <c>sending_access</c>.</summary>
-    [JsonPropertyName("permission")]
-    public string? Permission { get; set; }
-
-    /// <summary>Scope a <c>sending_access</c> key to one domain (legacy; prefer <see cref="DomainIds"/>).</summary>
-    [JsonPropertyName("domain_id")]
-    public string? DomainId { get; set; }
-
-    /// <summary>
-    /// Scope the key to one or more domains. Only valid with <c>sending_access</c> —
-    /// full-access keys always work across all your domains (the API rejects the
-    /// combination with a validation_error).
-    /// Mutually exclusive with <see cref="DomainId"/> — providing both is a 422.
-    /// </summary>
-    [JsonPropertyName("domain_ids")]
-    public List<string>? DomainIds { get; set; }
-}
-
-/// <summary>Response of ApiKeyCreateAsync. <see cref="Token"/> is the full secret, shown ONCE.</summary>
-public class ApiKeyCreated
-{
-    [JsonPropertyName("object")]
-    public string Object { get; set; } = "api_key";
-
-    [JsonPropertyName("id")]
-    public string Id { get; set; } = null!;
-
-    [JsonPropertyName("token")]
-    public string Token { get; set; } = null!;
-
-    [JsonPropertyName("domain_id")]
-    public string? DomainId { get; set; }
-
-    /// <summary>Domains the key is scoped to; null when unscoped.</summary>
-    [JsonPropertyName("domain_ids")]
-    public List<string>? DomainIds { get; set; }
-}
+// There are deliberately no create/update option types here: minting,
+// re-scoping and revoking a key happen in the MailBlastr dashboard, under a
+// signed-in session, so no key can change its own standing or anyone else's.
 
 // ---- Logs ----
 

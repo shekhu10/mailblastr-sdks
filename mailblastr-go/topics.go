@@ -28,13 +28,22 @@ type CreateTopicRequest struct {
 	// Domain is REQUIRED — the sending domain this topic belongs to (e.g.
 	// "yourdomain.com" — one of your domains).
 	Domain string `json:"domain"`
-	Name   string `json:"name"`
-	// DefaultSubscription is "opt_in" | "opt_out".
+	// Name is required, max MaxTopicNameLength characters.
+	Name string `json:"name"`
+	// DefaultSubscription is required: "opt_in" | "opt_out". It is IMMUTABLE
+	// after creation — UpdateTopicRequest silently ignores it.
 	DefaultSubscription string `json:"default_subscription"`
-	// Visibility is "public" | "private".
-	Visibility  string `json:"visibility,omitempty"`
+	// Visibility is "public" | "private" (default "private").
+	Visibility string `json:"visibility,omitempty"`
+	// Description is at most MaxTopicDescriptionLength characters.
 	Description string `json:"description,omitempty"`
 }
+
+// Topic field limits enforced by the API.
+const (
+	MaxTopicNameLength        = 255
+	MaxTopicDescriptionLength = 200
+)
 
 // ListTopicsRequest lists a domain's topics. Domain is REQUIRED.
 type ListTopicsRequest struct {
@@ -45,7 +54,8 @@ type ListTopicsRequest struct {
 	Before string
 }
 
-// UpdateTopicRequest is the payload for PATCH /topics/:id.
+// UpdateTopicRequest is the payload for PATCH /topics/:id. DefaultSubscription
+// is immutable, so it is deliberately absent here.
 type UpdateTopicRequest struct {
 	Name        string `json:"name,omitempty"`
 	Description string `json:"description,omitempty"`

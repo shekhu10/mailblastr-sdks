@@ -75,7 +75,9 @@ type ContactInput struct {
 }
 
 // BatchContactsRequest bulk-imports contacts from a slice. Upserts by email;
-// max 10,000 per call.
+// at most MaxImportContacts per call. Rows missing a valid email are counted
+// as skipped rather than failing the request, and Properties are sanitized but
+// not validated against the contact-property registry on this endpoint.
 type BatchContactsRequest struct {
 	AudienceId string
 	Contacts   []ContactInput
@@ -87,15 +89,83 @@ type BatchContactsRequest struct {
 // optional). Upserts by email. By default every non-builtin CSV column is
 // auto-registered as a custom property; set CreateProperties to
 // mailblastr.Bool(false) for strict mode.
+//
+// Provide Csv for an inline import (max MaxInlineImportBytes of UTF-8 and
+// MaxImportContacts rows), or StorageKey to import a file already uploaded
+// via Contacts.ImportUpload.
 type ImportContactsRequest struct {
 	AudienceId string
 	Csv        string
+	// FileName labels the archived source file (default "contacts.csv").
+	FileName string
+	// StorageKey imports a file uploaded through Contacts.ImportUpload
+	// instead of inline Csv text.
+	StorageKey string
 	// OnConflict "skip" leaves existing contacts untouched (default "upsert").
 	OnConflict       string
 	CreateProperties *bool
+	// SegmentId adds every imported address to that segment. It must be one
+	// of your segments and belong to this audience.
+	SegmentId string
 }
 
-// ImportContactsResponse is the result of a batch / CSV contact import.
+// ImportContactsUploadRequest mints a direct-upload URL for a CSV too large to
+// send inline.
+type ImportContactsUploadRequest struct {
+	AudienceId string `json:"-"`
+	// Filename must end in ".csv".
+	Filename string `json:"filename"`
+	// Size is the file size in bytes; must be > 0 and at most
+	// MaxContactImportUploadBytes.
+	Size int64 `json:"size"`
+}
+
+// ImportContactsUploadResponse carries a presigned direct-upload URL. UploadUrl
+// is a bearer credential — do not log it. PUT the CSV bytes there with the
+// given ContentType, then pass StorageKey to Contacts.Import.
+type ImportContactsUploadResponse struct {
+	Object      string `json:"object"`
+	StorageKey  string `json:"storage_key"`
+	UploadUrl   string `json:"upload_url"`
+	ContentType string `json:"content_type"`
+	// ExpiresIn is the URL's lifetime in seconds.
+	ExpiresIn int   `json:"expires_in"`
+	MaxBytes  int64 `json:"max_bytes"`
+}
+
+// ImportSourceFile describes the archived copy of an imported CSV.
+type ImportSourceFile struct {
+	FileName   string `json:"file_name"`
+	StorageKey string `json:"storage_key"`
+	Archived   bool   `json:"archived"`
+}
+
+// ImportContactLimit reports how the account's contact allowance shaped a CSV
+// import.
+type ImportContactLimit struct {
+	Plan            map[string]any `json:"plan"`
+	UsedBefore      int            `json:"used_before"`
+	Limit           int            `json:"limit"`
+	RemainingBefore *int           `json:"remaining_before"`
+	RemainingAfter  *int           `json:"remaining_after"`
+	LimitSkipped    int            `json:"limit_skipped"`
+	Reached         bool           `json:"reached"`
+	Message         string         `json:"message"`
+}
+
+// Contact-import limits enforced by the API.
+const (
+	// MaxImportContacts caps rows per Contacts.Batch, Contacts.Import (inline)
+	// and Audiences.ImportSheet call.
+	MaxImportContacts = 10000
+	// MaxInlineImportBytes caps the UTF-8 size of inline CSV text.
+	MaxInlineImportBytes = 5 * 1024 * 1024
+	// MaxContactImportUploadBytes caps a direct CSV upload.
+	MaxContactImportUploadBytes = 256 * 1024 * 1024
+)
+
+// ImportContactsResponse is the result of a batch / CSV contact import. The
+// fields below Total are populated by the CSV import only.
 type ImportContactsResponse struct {
 	Object string `json:"object"`
 	// Imported counts newly inserted contacts.
@@ -107,6 +177,20 @@ type ImportContactsResponse struct {
 	Skipped int `json:"skipped"`
 	// Total counts distinct contacts processed.
 	Total int `json:"total"`
+
+	// InvalidRows counts CSV rows without a usable email.
+	InvalidRows int `json:"invalid_rows,omitempty"`
+	// LimitSkipped counts rows dropped because the plan's contact allowance
+	// ran out mid-import.
+	LimitSkipped int `json:"limit_skipped,omitempty"`
+	// SystemSkipped counts rows the importer rejected internally.
+	SystemSkipped int `json:"system_skipped,omitempty"`
+	// IgnoredColumns lists CSV headers that were not imported.
+	IgnoredColumns []string `json:"ignored_columns,omitempty"`
+	// SegmentAdded is present only when SegmentId was supplied.
+	SegmentAdded int                 `json:"segment_added,omitempty"`
+	SourceFile   *ImportSourceFile   `json:"source_file,omitempty"`
+	ContactLimit *ImportContactLimit `json:"contact_limit,omitempty"`
 }
 
 // UpdateContactRequest updates a contact.
@@ -134,19 +218,38 @@ type RemoveContactRequest struct {
 	Id string
 }
 
-// RemoveContactResponse is returned by contact deletion (the id is under
-// Contact).
+// RemoveContactResponse is returned by contact deletion.
 type RemoveContactResponse struct {
-	Object  string `json:"object"`
-	Contact string `json:"contact"`
+	Object string `json:"object"`
+	// Id is the deleted contact's id.
+	Id      string `json:"id"`
 	Deleted bool   `json:"deleted"`
+
+	// Contact is always empty: the API returns the deleted contact's id as
+	// `id`, never as `contact`.
+	//
+	// Deprecated: read Id instead.
+	Contact string `json:"contact,omitempty"`
 }
 
 // SegmentMembershipRemoved is returned when removing a contact from a segment.
 type SegmentMembershipRemoved struct {
-	Id         string `json:"id"`
+	// Id is the contact id.
+	Id string `json:"id"`
+	// AudienceId carries the SEGMENT id despite its name — that is what the
+	// API returns, camelCase key and all.
 	AudienceId string `json:"audienceId"`
 	Deleted    bool   `json:"deleted"`
+}
+
+// ContactSegmentRef is a segment reference as returned by
+// ContactsService.ListSegments (GET /contacts/:id/segments). The route returns
+// only Id, Name and CreatedAt — not the full Segment. Use Segments.Get for the
+// audience, filter and timestamps.
+type ContactSegmentRef struct {
+	Id        string `json:"id"`
+	Name      string `json:"name"`
+	CreatedAt string `json:"created_at"`
 }
 
 // ContactTopicSubscription is one topic subscription state of a contact.
@@ -160,8 +263,9 @@ type ContactTopicSubscription struct {
 
 // ContactTopics is a contact's topic subscription list.
 type ContactTopics struct {
-	Object string                     `json:"object"`
-	Data   []ContactTopicSubscription `json:"data"`
+	Object  string                     `json:"object"`
+	HasMore bool                       `json:"has_more"`
+	Data    []ContactTopicSubscription `json:"data"`
 }
 
 // TopicSubscriptionUpdate sets one topic's subscription state.
@@ -286,12 +390,37 @@ func (s *ContactsService) ImportWithContext(ctx context.Context, params *ImportC
 	if params.CreateProperties != nil && !*params.CreateProperties {
 		q.Set("create_properties", "false")
 	}
+	if params.SegmentId != "" {
+		q.Set("segment_id", params.SegmentId)
+	}
 	path := "/audiences/" + esc(params.AudienceId) + "/contacts/import"
 	if enc := q.Encode(); enc != "" {
 		path += "?" + enc
 	}
-	body := map[string]any{"csv": params.Csv}
+	body := map[string]any{}
+	if params.StorageKey != "" {
+		body["storage_key"] = params.StorageKey
+	} else {
+		body["csv"] = params.Csv
+	}
+	if params.FileName != "" {
+		body["file_name"] = params.FileName
+	}
 	return request[ImportContactsResponse](ctx, s.client, http.MethodPost, path, body, nil)
+}
+
+// ImportUpload mints a presigned direct-upload URL for a CSV too large to send
+// inline. Upload the bytes to the returned UploadUrl, then call Import with
+// the returned StorageKey. POST /audiences/:id/contacts/import/upload
+func (s *ContactsService) ImportUpload(params *ImportContactsUploadRequest) (*ImportContactsUploadResponse, error) {
+	return s.ImportUploadWithContext(context.Background(), params)
+}
+
+// ImportUploadWithContext mints a presigned direct-upload URL for a CSV.
+// POST /audiences/:id/contacts/import/upload
+func (s *ContactsService) ImportUploadWithContext(ctx context.Context, params *ImportContactsUploadRequest) (*ImportContactsUploadResponse, error) {
+	path := "/audiences/" + esc(params.AudienceId) + "/contacts/import/upload"
+	return request[ImportContactsUploadResponse](ctx, s.client, http.MethodPost, path, params, nil)
 }
 
 // Update updates a contact; returns the slim ack { object, id }. On the flat
@@ -350,15 +479,18 @@ func (s *ContactsService) RemoveFromSegmentWithContext(ctx context.Context, id, 
 	return request[SegmentMembershipRemoved](ctx, s.client, http.MethodDelete, "/contacts/"+esc(id)+"/segments/"+esc(segmentId), nil, nil)
 }
 
-// ListSegments lists the segments a contact belongs to.
+// ListSegments lists the segments a contact belongs to. Rows are the reduced
+// ContactSegmentRef shape (Id, Name, CreatedAt), not the full Segment — use
+// Segments.Get for that. Passing nil params returns every segment: this
+// endpoint only pages when you supply pagination params.
 // GET /contacts/:id/segments
-func (s *ContactsService) ListSegments(id string) (*ListResponse[Segment], error) {
-	return s.ListSegmentsWithContext(context.Background(), id)
+func (s *ContactsService) ListSegments(id string, params *ListParams) (*ListResponse[ContactSegmentRef], error) {
+	return s.ListSegmentsWithContext(context.Background(), id, params)
 }
 
 // ListSegmentsWithContext lists the segments a contact belongs to.
-func (s *ContactsService) ListSegmentsWithContext(ctx context.Context, id string) (*ListResponse[Segment], error) {
-	return request[ListResponse[Segment]](ctx, s.client, http.MethodGet, "/contacts/"+esc(id)+"/segments", nil, nil)
+func (s *ContactsService) ListSegmentsWithContext(ctx context.Context, id string, params *ListParams) (*ListResponse[ContactSegmentRef], error) {
+	return request[ListResponse[ContactSegmentRef]](ctx, s.client, http.MethodGet, listPath("/contacts/"+esc(id)+"/segments", params), nil, nil)
 }
 
 // GetTopics gets a contact's topic subscriptions. GET /contacts/:id/topics

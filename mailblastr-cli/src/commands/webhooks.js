@@ -44,9 +44,16 @@ function register({ group, leaf, act }) {
     ({ client, args: [id] }) => client.webhooks.rotate(id),
   );
 
+  // The API answers 200 even when the delivery failed — the outcome lives in
+  // `ok`. Print the body either way, but exit 1 on a failed delivery so the
+  // command is usable in a shell `&&` chain.
   act(
-    leaf(webhooks, 'test <id>', 'Send a synchronous test delivery'),
-    ({ client, args: [id] }) => client.webhooks.test(id),
+    leaf(webhooks, 'test <id>', 'Send a synchronous test delivery (exits 1 when ok is false)'),
+    async ({ client, args: [id] }) => {
+      const result = await client.webhooks.test(id);
+      if (result.error) return result;
+      return { data: result.data, failed: !!result.data && result.data.ok === false };
+    },
   );
 
   act(leaf(webhooks, 'delete <id>', 'Delete a webhook'), ({ client, args: [id] }) =>

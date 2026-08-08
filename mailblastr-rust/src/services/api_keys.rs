@@ -1,13 +1,17 @@
-//! `mailblastr.api_keys` — API key management. The full secret token is
-//! returned only ONCE, at creation.
+//! `mailblastr.api_keys` — read-only listing of your API keys.
+//!
+//! Keys are created, re-scoped and revoked only from a signed-in dashboard
+//! session; the API answers `403 dashboard_only` to any api-key-authenticated
+//! caller on those routes, so this crate deliberately offers `list` and
+//! nothing else. See [`ApiKeysSvc`].
 
 use std::sync::Arc;
 
 use reqwest::Method;
 use serde::{Deserialize, Serialize};
 
-use crate::client::{seg, Config};
-use crate::types::{ListResponse, RemovedResponse, Result};
+use crate::client::{page_query, Config};
+use crate::types::{ListResponse, PaginationParams, Result};
 
 /// What an API key may do.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -17,13 +21,17 @@ pub enum ApiKeyPermission {
     SendingAccess,
 }
 
-/// An API key as returned by `api_keys.list()`.
+/// An API key. `id` is a string-encoded integer on the wire — always treat it
+/// as a string.
 #[derive(Debug, Clone, Deserialize)]
 pub struct ApiKey {
     pub id: String,
+    /// Omitted on list rows.
+    pub object: Option<String>,
     pub name: String,
-    /// Non-secret display prefix (e.g. `mb_live_abcd…`); `None` for legacy
-    /// keys. The full secret is returned only at creation.
+    /// Non-secret 8-character display prefix (e.g. `mb_ab12`); `None` for
+    /// legacy keys. The full secret is shown once, in the dashboard, when the
+    /// key is created.
     pub token: Option<String>,
     /// Derived from the key's scopes.
     pub permission: ApiKeyPermission,
@@ -36,62 +44,33 @@ pub struct ApiKey {
     pub last_used_at: Option<String>,
 }
 
-/// Options for `api_keys.create` (`POST /api-keys`).
-#[derive(Debug, Clone, Serialize)]
-pub struct CreateApiKeyOptions {
-    pub name: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub permission: Option<ApiKeyPermission>,
-    /// Scope a `sending_access` key to one domain (legacy; prefer
-    /// `domain_ids`).
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub domain_id: Option<String>,
-    /// Scope the key to one or more domains. Only valid with `sending_access` —
-/// full-access keys always work across all your domains (the API rejects the
-/// combination with a validation_error).
-    /// Mutually exclusive with `domain_id` — providing both is a 422.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub domain_ids: Option<Vec<String>>,
-}
-
-impl CreateApiKeyOptions {
-    pub fn new(name: impl Into<String>) -> Self {
-        Self {
-            name: name.into(),
-            permission: None,
-            domain_id: None,
-            domain_ids: None,
-        }
-    }
-
-    pub fn with_permission(mut self, permission: ApiKeyPermission) -> Self {
-        self.permission = Some(permission);
-        self
-    }
-
-    pub fn with_domain_id(mut self, domain_id: impl Into<String>) -> Self {
-        self.domain_id = Some(domain_id.into());
-        self
-    }
-
-    pub fn with_domain_ids(mut self, domain_ids: impl IntoIterator<Item = impl Into<String>>) -> Self {
-        self.domain_ids = Some(domain_ids.into_iter().map(Into::into).collect());
-        self
-    }
-}
-
-/// `{ object, id, token, domain_id, domain_ids }` — `token` is the full
-/// secret, revealed ONCE.
-#[derive(Debug, Clone, Deserialize)]
-pub struct CreateApiKeyResponse {
-    pub object: String,
-    pub id: String,
-    pub token: String,
-    pub domain_id: Option<String>,
-    pub domain_ids: Option<Vec<String>>,
-}
-
-/// `mailblastr.api_keys`.
+/// `mailblastr.api_keys` — the one read-only service on the client: `list` and
+/// nothing else.
+///
+/// Minting a key, changing its permission or domain scoping, and revoking it
+/// are dashboard-only operations. `POST /api-keys`, `PATCH /api-keys/:id` and
+/// `DELETE /api-keys/:id` answer `403 dashboard_only` to any caller
+/// authenticating with an API key, whatever its permission — and every call
+/// made through this crate authenticates with a key — so there is deliberately
+/// no method here for those routes.
+///
+/// That boundary is the point: a key that leaks cannot mint itself a
+/// replacement, promote itself to [`ApiKeyPermission::FullAccess`], add a
+/// domain to its own scope, or revoke the keys you would have used to shut it
+/// down. Containment stays a human action in the dashboard.
+///
+/// [`list`](ApiKeysSvc::list) is still yours to use: it returns each key's
+/// non-secret display prefix, permission, domain scoping and `last_used_at`,
+/// which is enough to audit what is live and notice a key being used when it
+/// should not be. Revoke it in the dashboard.
+///
+/// The absence is enforced by the compiler — this does not build:
+///
+/// ```compile_fail
+/// # async fn run(mailblastr: mailblastr::Mailblastr) {
+/// mailblastr.api_keys.create("CI").await;
+/// # }
+/// ```
 #[derive(Clone, Debug)]
 pub struct ApiKeysSvc {
     config: Arc<Config>,
@@ -102,29 +81,14 @@ impl ApiKeysSvc {
         Self { config }
     }
 
-    /// Create an API key (secret returned once). `POST /api-keys`
-    pub async fn create(&self, options: CreateApiKeyOptions) -> Result<CreateApiKeyResponse> {
-        self.config
-            .send(
-                self.config
-                    .request(Method::POST, "/api-keys")
-                    .json(&options),
-            )
-            .await
-    }
-
-    /// List API keys (non-secret prefixes only). `GET /api-keys`
-    pub async fn list(&self) -> Result<ListResponse<ApiKey>> {
-        self.config
-            .send(self.config.request(Method::GET, "/api-keys"))
-            .await
-    }
-
-    /// Revoke an API key. `DELETE /api-keys/:id`
-    pub async fn remove(&self, api_key_id: &str) -> Result<RemovedResponse> {
-        let path = format!("/api-keys/{}", seg(api_key_id));
-        self.config
-            .send(self.config.request(Method::DELETE, &path))
-            .await
+    /// List API keys (non-secret prefixes only; revoked keys excluded). With
+    /// no pagination params the route returns EVERY key with
+    /// `has_more: false`. `GET /api-keys`
+    pub async fn list(&self, params: Option<PaginationParams>) -> Result<ListResponse<ApiKey>> {
+        let req = self
+            .config
+            .request(Method::GET, "/api-keys")
+            .query(&page_query(params.as_ref()));
+        self.config.send(req).await
     }
 }

@@ -112,6 +112,17 @@ public class Domain
 
     [JsonPropertyName("tracking_verified")]
     public bool? TrackingVerified { get; set; }
+
+    /// <summary>
+    /// When the mail service last re-checked this domain's identity;
+    /// <c>null</c> when it never has.
+    /// </summary>
+    [JsonPropertyName("aws_last_checked_at")]
+    public string? AwsLastCheckedAt { get; set; }
+
+    /// <summary>The last identity-check failure, if any.</summary>
+    [JsonPropertyName("aws_check_error")]
+    public string? AwsCheckError { get; set; }
 }
 
 /// <summary>Payload for creating a domain (POST /domains).</summary>
@@ -247,6 +258,35 @@ public class DnsDetectionResult
 
     [JsonPropertyName("methods")]
     public List<JsonElement> Methods { get; set; } = new();
+}
+
+/// <summary>One MX host published for a domain.</summary>
+public class MxRecord
+{
+    [JsonPropertyName("exchange")]
+    public string Exchange { get; set; } = null!;
+
+    [JsonPropertyName("priority")]
+    public int Priority { get; set; }
+}
+
+/// <summary>
+/// Result of GET /domains/mx-check. Fails open: a DNS lookup failure returns
+/// <c>HasMx = false</c> with an empty <see cref="Records"/> list, not an error.
+/// </summary>
+public class MxCheckResult
+{
+    /// <summary>Whether the domain publishes any MX record at all.</summary>
+    [JsonPropertyName("has_mx")]
+    public bool HasMx { get; set; }
+
+    /// <summary>True only when EVERY published MX host is a MailBlastr host.</summary>
+    [JsonPropertyName("ours")]
+    public bool Ours { get; set; }
+
+    /// <summary>Published MX hosts, ascending by priority.</summary>
+    [JsonPropertyName("records")]
+    public List<MxRecord> Records { get; set; } = new();
 }
 
 /// <summary>

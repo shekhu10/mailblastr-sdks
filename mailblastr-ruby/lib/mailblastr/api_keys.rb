@@ -1,25 +1,18 @@
 # frozen_string_literal: true
 
 module Mailblastr
+  # Listing only, by design. Keys are created, re-scoped and revoked in the
+  # MailBlastr dashboard by a signed-in user — POST /api-keys,
+  # PATCH /api-keys/:id and DELETE /api-keys/:id answer 403 `dashboard_only`
+  # to every API-key caller, whatever its permission. Exposing only `list`
+  # means a leaked key cannot mint itself a replacement or widen its access.
   module ApiKeys
     class << self
-      # Create an API key — the full token is returned only once, here.
-      # POST /api-keys — params: { name:, permission: "full_access"|"sending_access", domain_id:, domain_ids: }
-      # domain_ids: scopes the key to one or more domains — sending_access only
-      # (combining a domain restriction with full_access is a 422); domain_id:
-      # is the legacy single-domain form. Providing both is a 422.
-      def create(params)
-        Client.request(:post, "/api-keys", body: params)
-      end
-
-      # GET /api-keys
-      def list
-        Client.request(:get, "/api-keys")
-      end
-
-      # DELETE /api-keys/:id
-      def delete(api_key_id)
-        Client.request(:delete, "/api-keys/#{Client.path_escape(api_key_id)}")
+      # GET /api-keys — with no pagination params every non-revoked key is
+      # returned. `token` here is the 8-character display prefix, never the
+      # secret.
+      def list(params = {})
+        Client.request(:get, "/api-keys", query: Client.pagination(params))
       end
     end
   end

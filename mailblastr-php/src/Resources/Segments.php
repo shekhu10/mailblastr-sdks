@@ -17,9 +17,13 @@ class Segments extends Resource
      * Create a segment on a sending domain. POST /segments
      *
      * @param array $payload ['domain' => REQUIRED, 'name' => …,
-     *                       'filter' => ['status' => 'all'|'subscribed'|'unsubscribed',
+     *                       'filter' => ['status' => 'all'|'subscribed'|'unsubscribed'|'members_only',
      *                                    'email_contains' => …,
-     *                                    'property_filters' => [['key' => …, 'operator' => 'eq'|'contains'|'exists', 'value' => …], …]]]
+     *                                    'property_filters' => [['key' => …, 'operator' => 'eq'|'contains'|'exists', 'value' => …], …],
+     *                                    'engagement' => ['event' => 'opened'|'not_opened'|'clicked'|'not_clicked',
+     *                                                     'campaign_id' => …]]]
+     *                       Every filter field is also accepted at the top
+     *                       level; a nested one wins.
      */
     public function create(array $payload): array
     {
@@ -43,13 +47,25 @@ class Segments extends Resource
         return $this->client->request('GET', '/segments' . $this->paginationQuery($params, ['domain']));
     }
 
-    /** Preview the contacts a segment currently resolves to. GET /segments/:id/contacts */
-    public function contacts(string $id): array
+    /**
+     * Preview the contacts a segment currently resolves to (filter matches plus
+     * explicit memberships). GET /segments/:id/contacts
+     *
+     * @param array $params Optional cursor pagination (limit, after, before).
+     *                      With no params every matching contact is returned.
+     */
+    public function contacts(string $id, array $params = []): array
     {
-        return $this->client->request('GET', '/segments/' . Client::e($id) . '/contacts');
+        return $this->client->request(
+            'GET',
+            '/segments/' . Client::e($id) . '/contacts' . $this->paginationQuery($params)
+        );
     }
 
-    /** Update a segment. PATCH /segments/:id */
+    /**
+     * Update a segment. A segment's domain cannot change — passing 'domain'
+     * (or 'audience_id') at all is a 422. PATCH /segments/:id
+     */
     public function update(string $id, array $payload): array
     {
         return $this->client->request('PATCH', '/segments/' . Client::e($id), $payload);

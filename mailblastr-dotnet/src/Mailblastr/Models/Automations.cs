@@ -90,6 +90,24 @@ public class Automation
     [JsonPropertyName("status")]
     public string Status { get; set; } = null!;
 
+    /// <summary>
+    /// Schedule of the <c>mailblastr:schedule</c> trigger; null for every other
+    /// trigger.
+    /// </summary>
+    [JsonPropertyName("trigger_config")]
+    public AutomationTriggerConfig? TriggerConfig { get; set; }
+
+    /// <summary>
+    /// Key of the synthetic trigger step that <c>connections[].from</c> edges
+    /// reference; defaults to the literal <c>trigger</c>.
+    /// </summary>
+    [JsonPropertyName("trigger_key")]
+    public string? TriggerKey { get; set; }
+
+    /// <summary>
+    /// The step graph. Omitted entirely on LIST responses (GET /automations) —
+    /// retrieve the automation for its steps.
+    /// </summary>
     [JsonPropertyName("steps")]
     public List<AutomationStep>? Steps { get; set; }
 
@@ -183,8 +201,23 @@ public class AutomationUpdateOptions
     public string? Domain { get; set; }
 
     /// <summary>
+    /// Change the triggering event (disabled automations only). The reserved
+    /// <c>mailblastr:</c> prefix is rejected apart from <c>mailblastr:schedule</c>.
+    /// </summary>
+    [JsonPropertyName("trigger")]
+    public string? Trigger { get; set; }
+
+    /// <summary>
+    /// Rename the trigger step key that <c>connections[].from</c> edges reference.
+    /// Only meaningful alongside <see cref="Trigger"/>.
+    /// </summary>
+    [JsonPropertyName("trigger_key")]
+    public string? TriggerKey { get; set; }
+
+    /// <summary>
     /// Update the <c>mailblastr:schedule</c> trigger's schedule
-    /// (<c>{at, timezone}</c>). Only valid on automations with that trigger.
+    /// (<c>{at, timezone}</c>). Only valid on automations with that trigger, and
+    /// only while the automation is disabled.
     /// </summary>
     [JsonPropertyName("trigger_config")]
     public AutomationTriggerConfig? TriggerConfig { get; set; }
@@ -193,9 +226,19 @@ public class AutomationUpdateOptions
     public List<AutomationConnection>? Connections { get; set; }
 }
 
-/// <summary>Payload for appending a step (POST /automations/:id/steps).</summary>
+/// <summary>
+/// Payload for appending a step (POST /automations/:id/steps) or editing one
+/// (PATCH /automations/:id/steps/:stepId). The automation must be DISABLED for
+/// both. <c>type: "trigger"</c> is rejected — the trigger lives on the
+/// automation, not in the step list.
+/// </summary>
 public class AutomationAddStepOptions
 {
+    /// <summary>
+    /// <c>send_email</c> | <c>wait_for_event</c> | <c>delay</c> | <c>condition</c> |
+    /// <c>split</c> | <c>add_to_segment</c> | <c>contact_update</c> |
+    /// <c>contact_delete</c>. Optional on PATCH (leaves the type unchanged).
+    /// </summary>
     [JsonPropertyName("type")]
     public string Type { get; set; } = null!;
 
@@ -204,6 +247,92 @@ public class AutomationAddStepOptions
 
     [JsonPropertyName("key")]
     public string? Key { get; set; }
+}
+
+/// <summary>
+/// Options for listing automation runs (GET /automations/:id/runs): cursor
+/// pagination plus an optional status filter.
+/// </summary>
+public class AutomationRunListOptions
+{
+    /// <summary>Page size (1–100; this endpoint defaults to 20).</summary>
+    public int? Limit { get; set; }
+
+    /// <summary>Cursor: id of the last item on the previous page.</summary>
+    public string? After { get; set; }
+
+    /// <summary>Cursor: id of the first item on the next page.</summary>
+    public string? Before { get; set; }
+
+    /// <summary>
+    /// Keep only runs in these statuses (<c>running</c>, <c>completed</c>,
+    /// <c>failed</c>, <c>skipped</c>). Sent as a comma-separated list; filtering
+    /// happens before pagination.
+    /// </summary>
+    public IEnumerable<string>? Status { get; set; }
+}
+
+/// <summary>
+/// Prompt for "Create with AI" (POST /automations/:id/ai). The automation must
+/// be stopped; without <see cref="Attach"/> it must also have zero steps.
+/// </summary>
+public class AutomationAiOptions
+{
+    /// <summary>What the workflow should do. Required; max 2000 characters.</summary>
+    [JsonPropertyName("prompt")]
+    public string Prompt { get; set; } = null!;
+
+    /// <summary>Templates the plan may send (first 10 kept).</summary>
+    [JsonPropertyName("template_ids")]
+    public List<string>? TemplateIds { get; set; }
+
+    /// <summary>Event names the plan may wait on (first 10 kept).</summary>
+    [JsonPropertyName("events")]
+    public List<string>? Events { get; set; }
+
+    /// <summary>
+    /// Where to graft the generated steps. Supplying it switches to APPEND mode;
+    /// omitting it generates a whole workflow.
+    /// </summary>
+    [JsonPropertyName("attach")]
+    public AutomationAiAttach? Attach { get; set; }
+}
+
+/// <summary>Attachment point for an APPEND-mode "Create with AI" request.</summary>
+public class AutomationAiAttach
+{
+    /// <summary>The trigger key or an existing step key to attach after.</summary>
+    [JsonPropertyName("from")]
+    public string From { get; set; } = null!;
+
+    /// <summary>
+    /// <c>default</c> (the default) | <c>condition_met</c> | <c>condition_not_met</c> |
+    /// <c>event_received</c> | <c>timeout</c>.
+    /// </summary>
+    [JsonPropertyName("type")]
+    public string? Type { get; set; }
+
+    /// <summary>Insert before this existing step key.</summary>
+    [JsonPropertyName("before")]
+    public string? Before { get; set; }
+}
+
+/// <summary>What a "Create with AI" call added.</summary>
+public class AutomationAiInfo
+{
+    [JsonPropertyName("added_steps")]
+    public int AddedSteps { get; set; }
+
+    /// <summary><c>workflow</c> | <c>append</c>.</summary>
+    [JsonPropertyName("mode")]
+    public string? Mode { get; set; }
+}
+
+/// <summary>The automation after a "Create with AI" call, plus what was added.</summary>
+public class AutomationAiResult : Automation
+{
+    [JsonPropertyName("ai")]
+    public AutomationAiInfo? Ai { get; set; }
 }
 
 /// <summary>Acknowledgement of deleting an automation step: <c>{ id, deleted }</c>.</summary>

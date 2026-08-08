@@ -45,6 +45,12 @@ jobs:
       - uses: actions/setup-node@v4
         with: { node-version: '22', registry-url: 'https://registry.npmjs.org' }
       - run: npm install
+      # Same gate as sdks.yml: `npm test` runs through tsx, which strips types
+      # without checking them, so the suite's `@ts-expect-error` absence
+      # assertions (apiKeys.create/update/remove must not exist) are inert
+      # without this step. sdks.yml does not run on tags, so if this job does
+      # not type-check the tests, nothing on the release path does.
+      - run: npm run typecheck:test
       - run: npm test
       - run: npm publish --provenance --access public
         env: { NODE_AUTH_TOKEN: '${{ secrets.NPM_TOKEN }}' }
@@ -61,13 +67,20 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with: { node-version: '22', registry-url: 'https://registry.npmjs.org' }
-      - name: Wait for mailblastr on the registry
+      - name: Wait for THIS release's mailblastr on the registry
+        # Must poll for the exact version just published, not merely for the
+        # package: `npm view mailblastr version` succeeds against whatever is
+        # already on the registry, so a bare existence check returns instantly
+        # and the CLI's `npm install` can still race registry propagation.
         run: |
+          VERSION=$(node -p "require('../mailblastr-npm/package.json').version")
           for i in $(seq 1 30); do
-            npm view mailblastr version >/dev/null 2>&1 && exit 0
+            if [ "$(npm view "mailblastr@${VERSION}" version 2>/dev/null)" = "${VERSION}" ]; then
+              echo "mailblastr@${VERSION} is visible on npm"; exit 0
+            fi
             sleep 10
           done
-          echo "mailblastr not visible on npm after 5m" >&2; exit 1
+          echo "mailblastr@${VERSION} not visible on npm after 5m" >&2; exit 1
       - run: npm install
       - run: npm test
       - run: npm publish --provenance --access public
@@ -172,6 +185,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with: { fetch-depth: 0 }
+      - uses: shivammathur/setup-php@v2
+        with: { php-version: '8.3' }
+      # This push IS the PHP publish (the mirror's webhook updates Packagist),
+      # so gate it on the suite the way every other registry job does. Composer
+      # is not used — `php tests/run.php` is the entrypoint.
+      - name: Lint and test the PHP package
+        run: php -l src/Transport/CurlTransport.php && php tests/run.php
+        working-directory: mailblastr-php
       - name: Split mailblastr-php and push to the mirror
         run: |
           git config user.name "mailblastr-release-bot"
@@ -197,15 +218,34 @@ jobs:
       contents: write
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with: { go-version: 'stable' }
+      # Pushing this tag IS the Go publish, and a version cached by
+      # proxy.golang.org can never be replaced or deleted — only retracted by a
+      # later release. It is the least reversible publish in this workflow, so
+      # gate it on the same build+test every other registry job runs.
+      - name: Build and test the Go module
+        run: go build ./... && go test ./...
+        working-directory: mailblastr-go
       - name: Push subdirectory tag for the Go module
         run: |
           VERSION="${GITHUB_REF_NAME}"                # e.g. v1.0.0
           TAG="mailblastr-go/${VERSION}"
-          if git rev-parse -q --verify "refs/tags/${TAG}" >/dev/null; then
+          # Ask the remote, not the local clone: actions/checkout fetches only
+          # the ref being built, so a local rev-parse never sees an existing
+          # sub-tag and the push below would fail on a re-run.
+          if git ls-remote --exit-code --tags origin "refs/tags/${TAG}" >/dev/null 2>&1; then
             echo "${TAG} already exists"; exit 0
           fi
           git tag "${TAG}" "${GITHUB_SHA}"
           git push origin "${TAG}"
       - name: Nudge the Go module proxy
+        # The proxy path must carry the module's major suffix, which go.mod
+        # declares (…/mailblastr-go/v2 from 2.0.0 on). Derive it from go.mod
+        # rather than hard-coding, so the next major does not silently warm the
+        # wrong path — the UNSUFFIXED path still resolves and would keep
+        # serving v1.3.0, which is a much quieter failure than a 404.
         run: |
-          curl -fsS "https://proxy.golang.org/github.com/shekhu10/mailblastr-sdks/mailblastr-go/@v/${GITHUB_REF_NAME}.info" || true
+          MODULE="$(awk '/^module /{print $2}' mailblastr-go/go.mod)"
+          echo "module path: ${MODULE}"
+          curl -fsS "https://proxy.golang.org/${MODULE}/@v/${GITHUB_REF_NAME}.info" || true

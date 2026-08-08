@@ -64,13 +64,34 @@ class Automations extends Resource
     }
 
     /**
-     * Append a step to an automation. POST /automations/:id/steps
+     * Append a step to an automation. The automation must be disabled first
+     * (stop it with {@see stop()}). POST /automations/:id/steps
      *
-     * @param array $payload ['type' => …, 'config' => …, 'key' => …]
+     * @param array $payload ['type' => 'delay'|'send_email'|'wait_for_event'|
+     *                                  'condition'|'split'|'add_to_segment'|
+     *                                  'contact_update'|'contact_delete',
+     *                       'config' => …, 'key' => …]
+     *                       The trigger is set on the automation, not added as
+     *                       a step — type 'trigger' is a 422 here.
      */
     public function addStep(string $id, array $payload): array
     {
         return $this->client->request('POST', '/automations/' . Client::e($id) . '/steps', $payload);
+    }
+
+    /**
+     * Update a step. The automation must be disabled first.
+     * PATCH /automations/:id/steps/:stepId
+     *
+     * @param array $payload ['type' => …, 'config' => …, 'key' => …]
+     */
+    public function updateStep(string $id, string $stepId, array $payload): array
+    {
+        return $this->client->request(
+            'PATCH',
+            '/automations/' . Client::e($id) . '/steps/' . Client::e($stepId),
+            $payload
+        );
     }
 
     /** Delete a step from an automation. DELETE /automations/:id/steps/:stepId */
@@ -83,15 +104,39 @@ class Automations extends Resource
     }
 
     /**
+     * Build (or extend) an automation's steps with AI. The automation must be
+     * stopped. Limited to 20 requests per minute per account.
+     * POST /automations/:id/ai
+     *
+     * @param array $payload ['prompt' => REQUIRED (max 2000 chars),
+     *                       'template_ids' => [ … ] (first 10 used),
+     *                       'events' => [ … ] (first 10 used),
+     *                       'attach' => ['from' => trigger or step key,
+     *                                    'type' => 'default'|'condition_met'|
+     *                                              'condition_not_met'|
+     *                                              'event_received'|'timeout',
+     *                                    'before' => step key]]
+     *                       Without 'attach' the automation must have no steps
+     *                       yet; with it, the generated steps are spliced in.
+     */
+    public function ai(string $id, array $payload): array
+    {
+        return $this->client->request('POST', '/automations/' . Client::e($id) . '/ai', $payload);
+    }
+
+    /**
      * List an automation's runs. GET /automations/:id/runs
      *
-     * @param array $params Cursor pagination: limit, after, before.
+     * @param array $params Cursor pagination (limit, after, before) plus an
+     *                      optional 'status' filter — a comma-separated list of
+     *                      run statuses ('running', 'completed', 'failed',
+     *                      'skipped'), applied before pagination.
      */
     public function runs(string $id, array $params = []): array
     {
         return $this->client->request(
             'GET',
-            '/automations/' . Client::e($id) . '/runs' . $this->paginationQuery($params)
+            '/automations/' . Client::e($id) . '/runs' . $this->paginationQuery($params, ['status'])
         );
     }
 

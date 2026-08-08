@@ -21,7 +21,10 @@ public final class ContactProperties extends Resource {
         return api.request("GET", "/contact-properties/" + enc(id));
     }
 
-    /** {@code GET /contact-properties} */
+    /**
+     * List the registry. With no pagination params ALL properties are returned
+     * and {@code has_more:false}. {@code GET /contact-properties}
+     */
     public MailblastrResponse list() { return list(null); }
 
     public MailblastrResponse list(ListParams params) {

@@ -66,6 +66,37 @@ class TestContacts(RecordingTestCase):
         mailblastr.Contacts.import_csv({"audience_id": "aud_1", "csv": "email\na@b.com"})
         self.assertCall("POST", "/audiences/aud_1/contacts/import", {"csv": "email\na@b.com"})
 
+    def test_import_csv_with_segment_and_file_name(self):
+        mailblastr.Contacts.import_csv(
+            {
+                "audience_id": "aud_1",
+                "csv": "email\na@b.com",
+                "segment_id": "seg_1",
+                "file_name": "leads.csv",
+            }
+        )
+        self.assertCall(
+            "POST",
+            "/audiences/aud_1/contacts/import?segment_id=seg_1",
+            {"csv": "email\na@b.com", "file_name": "leads.csv"},
+        )
+
+    def test_import_csv_from_storage_key(self):
+        mailblastr.Contacts.import_csv({"audience_id": "aud_1", "storage_key": "imports/x.csv"})
+        self.assertCall(
+            "POST", "/audiences/aud_1/contacts/import", {"storage_key": "imports/x.csv"}
+        )
+
+    def test_import_upload(self):
+        mailblastr.Contacts.import_upload(
+            {"audience_id": "aud_1", "filename": "big.csv", "size": 90000000}
+        )
+        self.assertCall(
+            "POST",
+            "/audiences/aud_1/contacts/import/upload",
+            {"filename": "big.csv", "size": 90000000},
+        )
+
     def test_update_flat_email_with_domain(self):
         mailblastr.Contacts.update(
             {"id": "user@example.com", "domain": "acme.com", "unsubscribed": True}
@@ -99,10 +130,14 @@ class TestContacts(RecordingTestCase):
         self.assertCall("DELETE", "/contacts/con_1/segments/seg_1")
         mailblastr.Contacts.list_segments("con_1")
         self.assertCall("GET", "/contacts/con_1/segments")
+        mailblastr.Contacts.list_segments("con_1", {"limit": 5})
+        self.assertCall("GET", "/contacts/con_1/segments?limit=5")
 
     def test_topics(self):
         mailblastr.Contacts.get_topics("con_1")
         self.assertCall("GET", "/contacts/con_1/topics")
+        mailblastr.Contacts.get_topics("con_1", {"limit": 5})
+        self.assertCall("GET", "/contacts/con_1/topics?limit=5")
         payload = {"topics": [{"id": "top_1", "subscription": "opt_in"}]}
         mailblastr.Contacts.update_topics("con_1", payload)
         self.assertCall("PATCH", "/contacts/con_1/topics", payload)

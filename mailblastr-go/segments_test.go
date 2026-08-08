@@ -22,7 +22,7 @@ func TestSegmentsCreateDomainRequired(t *testing.T) {
 		if !ok || filter["status"] != "subscribed" {
 			t.Errorf("filter = %v", body["filter"])
 		}
-		w.Write([]byte(`{"object":"segment","id":"seg_1","audience_id":"aud_1","name":"VIP","filter":{"status":"subscribed","email_contains":null,"property_filters":[]},"created_at":"2026-07-06T00:00:00Z","updated_at":"2026-07-06T00:00:00Z"}`))
+		w.Write([]byte(`{"object":"segment","id":"seg_1","audience_id":"aud_1","name":"VIP","filter":{"status":"subscribed","email_contains":null,"property_filters":[],"engagement":null},"created_at":"2026-07-06T00:00:00Z","updated_at":"2026-07-06T00:00:00Z"}`))
 	})
 
 	seg, err := client.Segments.Create(&CreateSegmentRequest{
@@ -35,6 +35,39 @@ func TestSegmentsCreateDomainRequired(t *testing.T) {
 	}
 	if seg.Id != "seg_1" || seg.Name != "VIP" || seg.Filter.Status != "subscribed" {
 		t.Errorf("unexpected segment: %+v", seg)
+	}
+}
+
+func TestSegmentsCreateEngagementFilter(t *testing.T) {
+	client := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		body := decodeBody(t, r)
+		filter, ok := body["filter"].(map[string]any)
+		if !ok {
+			t.Fatalf("filter = %v", body["filter"])
+		}
+		eng, ok := filter["engagement"].(map[string]any)
+		if !ok || eng["event"] != "not_opened" || eng["campaign_id"] != "cmp_1" {
+			t.Errorf("engagement = %v, want {event:not_opened, campaign_id:cmp_1}", filter["engagement"])
+		}
+		if filter["status"] != "members_only" {
+			t.Errorf("status = %v, want members_only", filter["status"])
+		}
+		w.Write([]byte(`{"object":"segment","id":"seg_2","audience_id":"aud_1","name":"Re-engage","filter":{"status":"members_only","engagement":{"event":"not_opened","campaign_id":"cmp_1"}},"created_at":null,"updated_at":null}`))
+	})
+
+	seg, err := client.Segments.Create(&CreateSegmentRequest{
+		Domain: "yourdomain.com",
+		Name:   "Re-engage",
+		Filter: &SegmentFilter{
+			Status:     "members_only",
+			Engagement: &SegmentEngagement{Event: "not_opened", CampaignId: "cmp_1"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if seg.Filter.Engagement == nil || seg.Filter.Engagement.CampaignId != "cmp_1" {
+		t.Errorf("engagement not round-tripped: %+v", seg.Filter)
 	}
 }
 
@@ -70,7 +103,7 @@ func TestSegmentsContactsPreview(t *testing.T) {
 		w.Write([]byte(`{"object":"list","has_more":false,"data":[]}`))
 	})
 
-	list, err := client.Segments.Contacts("seg_1")
+	list, err := client.Segments.Contacts("seg_1", nil)
 	if err != nil {
 		t.Fatalf("Contacts: %v", err)
 	}

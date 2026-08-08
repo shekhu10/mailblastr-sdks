@@ -96,21 +96,41 @@ module Mailblastr
         )
       end
 
-      # Bulk-import contacts from CSV text (header row optional; upsert by
-      # email). Non-builtin columns auto-register as custom properties unless
-      # `create_properties: false`. POST /audiences/:id/contacts/import
+      # Bulk-import contacts from CSV (header row optional; upsert by email).
+      # Non-builtin columns auto-register as custom properties unless
+      # `create_properties: false`. Pass `segment_id` to also add every
+      # imported email to one of this audience's segments.
+      # POST /audiences/:id/contacts/import
+      #
+      # Inline CSV text (capped at 5 MB and 10,000 rows):
       #   Contacts.import({ audience_id: "aud_1", csv: "email\na@b.com" })
+      # Or a file already uploaded via import_upload (no row cap — the
+      # overflow past your contact limit comes back as `limit_skipped`):
+      #   Contacts.import({ audience_id: "aud_1", storage_key: key })
       def import(params)
         audience_id = Client.opt(params, :audience_id)
-        query = {}
-        on_conflict = Client.opt(params, :on_conflict)
-        query[:on_conflict] = on_conflict if on_conflict
+        query = Client.filters(params, :on_conflict, :segment_id)
         query[:create_properties] = "false" if Client.opt(params, :create_properties) == false
+        body = Client.filters(params, :csv, :file_name, :storage_key)
         Client.request(
           :post,
           "/audiences/#{Client.path_escape(audience_id)}/contacts/import",
-          body: { csv: Client.opt(params, :csv) },
+          body: body,
           query: query
+        )
+      end
+
+      # Mint a presigned direct-upload URL for a CSV too large to inline
+      # (up to 256 MB). Upload the file to `upload_url`, then pass the returned
+      # `storage_key` to Contacts.import.
+      # POST /audiences/:id/contacts/import/upload — params: { filename:, size: }
+      # The `upload_url` is a bearer credential — do not log it.
+      def import_upload(params)
+        audience_id = Client.opt(params, :audience_id)
+        Client.request(
+          :post,
+          "/audiences/#{Client.path_escape(audience_id)}/contacts/import/upload",
+          body: Client.without(params, :audience_id)
         )
       end
 
@@ -124,14 +144,23 @@ module Mailblastr
         Client.request(:delete, "/contacts/#{Client.path_escape(contact_id)}/segments/#{Client.path_escape(segment_id)}")
       end
 
-      # List the segments a contact belongs to. GET /contacts/:id/segments
-      def list_segments(contact_id)
-        Client.request(:get, "/contacts/#{Client.path_escape(contact_id)}/segments")
+      # List the segments a contact belongs to — items carry id/name/created_at
+      # only, not the full segment object. GET /contacts/:id/segments
+      def list_segments(contact_id, params = {})
+        Client.request(
+          :get,
+          "/contacts/#{Client.path_escape(contact_id)}/segments",
+          query: Client.pagination(params)
+        )
       end
 
       # Get a contact's topic subscriptions. GET /contacts/:id/topics
-      def get_topics(contact_id)
-        Client.request(:get, "/contacts/#{Client.path_escape(contact_id)}/topics")
+      def get_topics(contact_id, params = {})
+        Client.request(
+          :get,
+          "/contacts/#{Client.path_escape(contact_id)}/topics",
+          query: Client.pagination(params)
+        )
       end
 
       # Update a contact's topic subscriptions. PATCH /contacts/:id/topics

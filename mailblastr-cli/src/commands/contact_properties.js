@@ -1,6 +1,6 @@
 'use strict';
 
-const { clean, withPagination, pagination } = require('../helpers');
+const { CliError, clean, withPagination, pagination } = require('../helpers');
 
 function register({ group, leaf, act }) {
   const props = group('contact-properties', 'Manage custom contact properties (merge-tag keys)');
@@ -25,12 +25,20 @@ function register({ group, leaf, act }) {
   );
 
   act(
-    leaf(props, 'update <id>', 'Update a contact property (only the fallback is mutable)').requiredOption(
-      '--fallback-value <value>',
-      'new fallback value',
-    ),
-    ({ client, opts, args: [id] }) =>
-      client.contactProperties.update(id, { fallback_value: opts.fallbackValue }),
+    leaf(props, 'update <id>', 'Update a contact property (only the fallback is mutable)')
+      .option('--fallback-value <value>', 'new fallback value')
+      .option('--clear-fallback', 'clear the fallback (sets it to null)'),
+    ({ client, opts, args: [id] }) => {
+      if (opts.clearFallback && opts.fallbackValue !== undefined) {
+        throw new CliError('Provide only one of --fallback-value or --clear-fallback.');
+      }
+      if (!opts.clearFallback && opts.fallbackValue === undefined) {
+        throw new CliError('Provide --fallback-value <value> or --clear-fallback.');
+      }
+      return client.contactProperties.update(id, {
+        fallback_value: opts.clearFallback ? null : opts.fallbackValue,
+      });
+    },
   );
 
   act(leaf(props, 'delete <id>', 'Delete a contact property'), ({ client, args: [id] }) =>

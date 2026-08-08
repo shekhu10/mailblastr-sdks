@@ -23,7 +23,10 @@ public final class Audiences extends Resource {
         return api.request("GET", "/audiences/" + enc(id));
     }
 
-    /** {@code GET /audiences} */
+    /**
+     * List audiences. This route always applies a limit — with no pagination
+     * params you get the first 20. {@code GET /audiences}
+     */
     public MailblastrResponse list() { return list(null); }
 
     public MailblastrResponse list(ListParams params) {

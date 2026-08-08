@@ -145,7 +145,25 @@ class Webhooks:
     @classmethod
     def test(cls, webhook_id):
         """Send a synchronous test delivery and return the endpoint's live
-        result. POST /webhooks/:id/test"""
+        result. POST /webhooks/:id/test
+
+        A FAILED delivery is still HTTP 200, so this does NOT raise when your
+        endpoint rejects the test. The outcome is the ``ok`` key::
+
+            {"object": "webhook_test", "id": "<id>",
+             "ok": True,  "status": 200}                 # endpoint accepted it
+            {"object": "webhook_test", "id": "<id>",
+             "ok": False, "error": "lookup_failed"}      # it did not
+
+            result = mailblastr.Webhooks.test(webhook_id)
+            if not result["ok"]:
+                print("test delivery failed:", result.get("error"))
+
+        ``status`` is your endpoint's HTTP status when it responded at all;
+        ``error`` says why the delivery failed (e.g. ``"lookup_failed"``,
+        ``"webhook missing or disabled"``). It is a single attempt — no
+        retries are scheduled.
+        """
         return http_client.request("POST", f"/webhooks/{_e(webhook_id)}/test")
 
     @classmethod

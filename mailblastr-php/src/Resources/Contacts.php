@@ -104,15 +104,25 @@ class Contacts extends Resource
     }
 
     /**
-     * Bulk-import contacts from CSV text (header row optional). Upserts by
-     * email. By default every non-builtin CSV column is auto-registered as a
-     * custom property (so `company`, `plan`, … survive and become {{merge}}
-     * tags). Pass 'create_properties' => false for strict mode.
+     * Bulk-import contacts from CSV. Upserts by email. By default every
+     * non-builtin CSV column is auto-registered as a custom property (so
+     * `company`, `plan`, … survive and become {{merge}} tags); pass
+     * 'create_properties' => false for strict mode.
      * POST /audiences/:id/contacts/import
      *
-     * @param array $params ['audienceId' => …, 'csv' => …,
+     * Two input modes: inline 'csv' text (max 5 MB / 10,000 rows), or
+     * 'storage_key' from {@see uploadUrl()} for a file uploaded straight to
+     * storage (no size limit beyond the upload cap; rows beyond the account's
+     * remaining contact capacity are reported as limit_skipped instead of
+     * failing).
+     *
+     * @param array $params ['audienceId' => …,
+     *                      'csv' => … OR 'storage_key' => …,
+     *                      'file_name' => name recorded for the inline CSV,
      *                      'on_conflict' => 'upsert'|'skip',
-     *                      'create_properties' => bool]
+     *                      'create_properties' => bool,
+     *                      'segment_id' => add every imported email to this
+     *                      segment (must belong to the same audience)]
      */
     public function import(array $params): array
     {
@@ -123,10 +133,50 @@ class Contacts extends Resource
         if (($params['create_properties'] ?? null) === false) {
             $query['create_properties'] = 'false';
         }
+        if (isset($params['segment_id'])) {
+            $query['segment_id'] = $params['segment_id'];
+        }
+
+        $body = [];
+        foreach (['csv', 'storage_key', 'file_name'] as $key) {
+            if (isset($params[$key])) {
+                $body[$key] = $params[$key];
+            }
+        }
+        if ($body === []) {
+            $body['csv'] = '';
+        }
+
         return $this->client->request(
             'POST',
             '/audiences/' . Client::e((string) $params['audienceId']) . '/contacts/import' . $this->client->query($query),
-            ['csv' => $params['csv'] ?? '']
+            $body
+        );
+    }
+
+    /**
+     * Mint a presigned URL for uploading a CSV straight to storage, so a large
+     * file never passes through the API. PUT the file to the returned
+     * 'upload_url', then hand the returned 'storage_key' to {@see import()}.
+     * POST /audiences/:id/contacts/import/upload
+     *
+     * The returned 'upload_url' is a bearer credential — do not log it.
+     *
+     * @param array $params ['audienceId' => …, 'filename' => must end in .csv,
+     *                      'size' => file size in bytes (max 256 MB)]
+     */
+    public function uploadUrl(array $params): array
+    {
+        $body = [];
+        foreach (['filename', 'size'] as $key) {
+            if (isset($params[$key])) {
+                $body[$key] = $params[$key];
+            }
+        }
+        return $this->client->request(
+            'POST',
+            '/audiences/' . Client::e((string) $params['audienceId']) . '/contacts/import/upload',
+            $body
         );
     }
 
@@ -194,16 +244,32 @@ class Contacts extends Resource
         );
     }
 
-    /** List the segments a contact belongs to. GET /contacts/:id/segments */
-    public function listSegments(string $id): array
+    /**
+     * List the segments a contact belongs to. GET /contacts/:id/segments
+     *
+     * @param array $params Optional cursor pagination (limit, after, before).
+     *                      With no params every segment is returned.
+     */
+    public function listSegments(string $id, array $params = []): array
     {
-        return $this->client->request('GET', '/contacts/' . Client::e($id) . '/segments');
+        return $this->client->request(
+            'GET',
+            '/contacts/' . Client::e($id) . '/segments' . $this->paginationQuery($params)
+        );
     }
 
-    /** Get a contact's topic subscriptions. GET /contacts/:id/topics */
-    public function getTopics(string $id): array
+    /**
+     * Get a contact's topic subscriptions. GET /contacts/:id/topics
+     *
+     * @param array $params Optional cursor pagination (limit, after, before).
+     *                      With no params every topic is returned.
+     */
+    public function getTopics(string $id, array $params = []): array
     {
-        return $this->client->request('GET', '/contacts/' . Client::e($id) . '/topics');
+        return $this->client->request(
+            'GET',
+            '/contacts/' . Client::e($id) . '/topics' . $this->paginationQuery($params)
+        );
     }
 
     /**

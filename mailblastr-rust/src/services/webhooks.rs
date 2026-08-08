@@ -115,11 +115,34 @@ pub struct CreateWebhookResponse {
 }
 
 /// Result of a synchronous test delivery (`POST /webhooks/:id/test`).
+///
+/// **A FAILED DELIVERY IS STILL HTTP 200.** The route answers `200` whether or
+/// not your endpoint accepted the event, so `webhooks.test(..)` returns `Ok`
+/// either way — branch on [`ok`](Self::ok), never on the absence of an error:
+///
+/// ```no_run
+/// # async fn run(mb: mailblastr::Mailblastr) -> mailblastr::Result<()> {
+/// let result = mb.webhooks.test("42").await?;
+/// if !result.ok {
+///     eprintln!("delivery failed: {:?}", result.error);
+/// }
+/// # Ok(())
+/// # }
+/// ```
 #[derive(Debug, Clone, Deserialize)]
 pub struct WebhookTestResult {
     pub object: String,
     pub id: String,
-    /// The endpoint's live result (open shape).
+    /// Whether the endpoint accepted the test delivery. `false` means the
+    /// delivery FAILED even though the HTTP status was 200.
+    #[serde(default)]
+    pub ok: bool,
+    /// The HTTP status your endpoint returned, when it responded at all.
+    pub status: Option<u16>,
+    /// Why the delivery failed when [`ok`](Self::ok) is `false`, e.g.
+    /// `lookup_failed` or `webhook missing or disabled`.
+    pub error: Option<String>,
+    /// Any further fields the route grows, kept verbatim.
     #[serde(flatten)]
     pub extra: Map<String, Value>,
 }
@@ -339,6 +362,9 @@ impl WebhooksSvc {
 
     /// Send a synchronous test delivery and return the endpoint's live
     /// result. `POST /webhooks/:id/test`
+    ///
+    /// A failed delivery is still HTTP 200, so this returns `Ok` even then —
+    /// inspect [`WebhookTestResult::ok`].
     pub async fn test(&self, webhook_id: &str) -> Result<WebhookTestResult> {
         let path = format!("/webhooks/{}/test", seg(webhook_id));
         self.config

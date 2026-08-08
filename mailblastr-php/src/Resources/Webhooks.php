@@ -59,7 +59,25 @@ class Webhooks extends Resource
         return $this->client->request('POST', '/webhooks/' . Client::e($id) . '/rotate');
     }
 
-    /** Send a synchronous test delivery and return the endpoint's live result. POST /webhooks/:id/test */
+    /**
+     * Send a synchronous test delivery and return the endpoint's live result.
+     * POST /webhooks/:id/test
+     *
+     * A FAILED delivery is still HTTP 200, so this does NOT throw when your
+     * endpoint rejects the test — the outcome is `ok`:
+     *
+     *     $result = $mb->webhooks->test($id);
+     *     if (!$result['ok']) {
+     *         error_log("test delivery failed: {$result['error']}");
+     *     }
+     *
+     * `status` is your endpoint's HTTP status when it responded at all;
+     * `error` says why the delivery failed (e.g. 'lookup_failed',
+     * 'webhook missing or disabled'). It is a single attempt — no retries are
+     * scheduled.
+     *
+     * @return array{object: string, id: string, ok: bool, status?: int, error?: string}
+     */
     public function test(string $id): array
     {
         return $this->client->request('POST', '/webhooks/' . Client::e($id) . '/test');

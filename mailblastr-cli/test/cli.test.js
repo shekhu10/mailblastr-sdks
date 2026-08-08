@@ -191,7 +191,7 @@ test('emails receiving list / get / attachments / delete map to the receiving su
   assert.deepEqual([call.resource, call.method, call.args], ['emails.receiving', 'get', ['rem_1']]);
 
   call = lastCall(await runCli(['emails', 'receiving', 'attachments', 'rem_1']));
-  assert.deepEqual([call.resource, call.method, call.args], ['emails.receiving', 'listAttachments', ['rem_1']]);
+  assert.deepEqual([call.resource, call.method, call.args], ['emails.receiving', 'listAttachments', ['rem_1', {}]]);
 
   call = lastCall(await runCli(['emails', 'receiving', 'delete', 'rem_1']));
   assert.deepEqual([call.resource, call.method, call.args], ['emails.receiving', 'remove', ['rem_1']]);
@@ -398,7 +398,7 @@ test('contacts remove-from-segment / topics / set-topics map to segment and topi
   assert.deepEqual([call.resource, call.method, call.args], ['contacts', 'removeFromSegment', ['con_1', 'seg_2']]);
 
   call = lastCall(await runCli(['contacts', 'topics', 'con_1']));
-  assert.deepEqual([call.method, call.args], ['getTopics', ['con_1']]);
+  assert.deepEqual([call.method, call.args], ['getTopics', ['con_1', {}]]);
 
   call = lastCall(
     await runCli(['contacts', 'set-topics', 'con_1', '--topics', '[{"id":"top_1","subscription":"opt_out"}]']),
@@ -629,24 +629,9 @@ test('webhooks create splits comma-separated events', async () => {
   });
 });
 
-test('api-keys create / list / delete', async () => {
-  let call = lastCall(await runCli(['api-keys', 'create', '--name', 'CI', '--permission', 'sending_access']));
-  assert.deepEqual([call.resource, call.method], ['apiKeys', 'create']);
-  assert.deepEqual(call.args[0], { name: 'CI', permission: 'sending_access' });
-
-  call = lastCall(await runCli(['api-keys', 'create', '--name', 'CI', '--domain-id', 'dom_1']));
-  assert.deepEqual(call.args[0], { name: 'CI', domain_id: 'dom_1' });
-
-  call = lastCall(
-    await runCli(['api-keys', 'create', '--name', 'CI', '--domain-ids', 'dom_1,dom_2', '--domain-ids', 'dom_3']),
-  );
-  assert.deepEqual(call.args[0], { name: 'CI', domain_ids: ['dom_1', 'dom_2', 'dom_3'] });
-
-  call = lastCall(await runCli(['api-keys', 'list']));
-  assert.deepEqual([call.method, call.args], ['list', []]);
-
-  call = lastCall(await runCli(['api-keys', 'delete', 'key_1']));
-  assert.deepEqual([call.method, call.args], ['remove', ['key_1']]);
+test('api-keys list', async () => {
+  const call = lastCall(await runCli(['api-keys', 'list']));
+  assert.deepEqual([call.resource, call.method, call.args], ['apiKeys', 'list', [{}]]);
 });
 
 test('logs list maps method and numeric status filters', async () => {
@@ -738,7 +723,398 @@ test('--help exits 0 at root and resource level', async () => {
   assert.match(r.out, /attachments/);
 });
 
+// The documented Idempotency-Key bound is 1-255 characters, measured AFTER the
+// server trims the value. The CLI does not pre-check it — the server answers a
+// bad key with 400 invalid_idempotency_key — so the help text is where the rule
+// is discoverable, and both send and batch must state it identically.
+test('--idempotency-key help states the documented 1-255 bound', async () => {
+  for (const cmd of ['send', 'batch']) {
+    const r = await runCli(['emails', cmd, '--help']);
+    assert.equal(r.exitCode, 0);
+    assert.match(r.out, /--idempotency-key <key>\s+idempotency key for safe retries \(1-255 characters\)/);
+  }
+});
+
 test('unknown command exits non-zero', async () => {
   const r = await runCli(['bogus']);
   assert.equal(r.exitCode, 1);
+});
+
+// ---- 2.0.0: contract-parity additions ----
+
+test('emails list maps the status and search filters', async () => {
+  const call = lastCall(
+    await runCli(['emails', 'list', '--status', 'delivered', '--search', 'invoice', '--limit', '50']),
+  );
+  assert.deepEqual([call.resource, call.method], ['emails', 'list']);
+  assert.deepEqual(call.args[0], { limit: 50, status: 'delivered', search: 'invoice' });
+});
+
+test('--after and --before are mutually exclusive (the API answers 422)', async () => {
+  const r = await runCli(['emails', 'list', '--after', 'em_1', '--before', 'em_9']);
+  assert.equal(r.exitCode, 1);
+  assert.equal(r.calls.length, 0);
+  assert.match(r.err, /--after or --before, not both/);
+});
+
+test('emails send attaches local files as base64 and hosted files by path', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mb-cli-'));
+  const file = path.join(dir, 'invoice.pdf');
+  fs.writeFileSync(file, 'pdf-bytes');
+
+  const call = lastCall(
+    await runCli([
+      'emails', 'send', '--from', 'hi@yourdomain.com', '--to', 'a@b.com', '--subject', 'hi', '--text', 'x',
+      '--attachment', file,
+      '--attachment-url', 'https://cdn.example.com/files/terms.pdf',
+    ]),
+  );
+  assert.deepEqual(call.args[0].attachments, [
+    { filename: 'invoice.pdf', content: Buffer.from('pdf-bytes').toString('base64') },
+    { filename: 'terms.pdf', path: 'https://cdn.example.com/files/terms.pdf' },
+  ]);
+
+  let bad = await runCli([
+    'emails', 'send', '--from', 'hi@yourdomain.com', '--to', 'a@b.com', '--subject', 'hi', '--text', 'x',
+    '--attachment', '/nope/missing.pdf',
+  ]);
+  assert.equal(bad.exitCode, 1);
+  assert.equal(bad.calls.length, 0);
+  assert.match(bad.err, /Cannot read --attachment/);
+
+  bad = await runCli([
+    'emails', 'send', '--from', 'hi@yourdomain.com', '--to', 'a@b.com', '--subject', 'hi', '--text', 'x',
+    '--attachment-url', 'not-a-url',
+  ]);
+  assert.equal(bad.exitCode, 1);
+  assert.match(bad.err, /Invalid URL for --attachment-url/);
+});
+
+test('emails send resolves a template by alias, and refuses both selectors', async () => {
+  const call = lastCall(
+    await runCli([
+      'emails', 'send', '--from', 'hi@yourdomain.com', '--to', 'a@b.com', '--subject', 'hi',
+      '--template-alias', 'welcome', '--variables', '{"first_name":"Ada"}',
+    ]),
+  );
+  assert.deepEqual(call.args[0].template, { alias: 'welcome', variables: { first_name: 'Ada' } });
+
+  const bad = await runCli([
+    'emails', 'send', '--from', 'hi@yourdomain.com', '--to', 'a@b.com', '--subject', 'hi',
+    '--template-id', 'tmpl_1', '--template-alias', 'welcome',
+  ]);
+  assert.equal(bad.exitCode, 1);
+  assert.equal(bad.calls.length, 0);
+  assert.match(bad.err, /--template-id or --template-alias/);
+});
+
+test('domains mx-check maps to domains.mxCheck', async () => {
+  const call = lastCall(await runCli(['domains', 'mx-check', 'yourdomain.com']));
+  assert.deepEqual([call.resource, call.method, call.args], ['domains', 'mxCheck', ['yourdomain.com']]);
+});
+
+test('domains add / update map the receiving capability and return-path flags', async () => {
+  let call = lastCall(await runCli(['domains', 'add', 'yourdomain.com', '--receiving']));
+  assert.deepEqual(call.args[0], { name: 'yourdomain.com', capabilities: { receiving: 'enabled' } });
+
+  call = lastCall(await runCli(['domains', 'add', 'yourdomain.com', '--no-receiving']));
+  assert.deepEqual(call.args[0], { name: 'yourdomain.com', capabilities: { receiving: 'disabled' } });
+
+  call = lastCall(
+    await runCli(['domains', 'update', 'dom_1', '--custom-return-path', 'mail', '--custom-tracking', '--no-receiving']),
+  );
+  assert.deepEqual(call.args, [
+    'dom_1',
+    { custom_tracking: true, custom_return_path: 'mail', capabilities: { receiving: 'disabled' } },
+  ]);
+
+  // Untouched booleans stay out of the patch entirely.
+  call = lastCall(await runCli(['domains', 'update', 'dom_1', '--tls', 'enforced']));
+  assert.deepEqual(call.args, ['dom_1', { tls: 'enforced' }]);
+});
+
+test('contacts create / list accept --audience-id as an alternative to --domain', async () => {
+  let call = lastCall(await runCli(['contacts', 'create', '--audience-id', 'aud_1', '--email', 'a@b.com']));
+  assert.deepEqual(call.args[0], { audienceId: 'aud_1', email: 'a@b.com' });
+
+  call = lastCall(await runCli(['contacts', 'list', '--audience-id', 'aud_1', '--limit', '5']));
+  assert.deepEqual(call.args[0], { audienceId: 'aud_1', limit: 5 });
+
+  let bad = await runCli(['contacts', 'list', '--domain', 'd.com', '--audience-id', 'aud_1']);
+  assert.equal(bad.exitCode, 1);
+  assert.equal(bad.calls.length, 0);
+  assert.match(bad.err, /only one of --domain or --audience-id/);
+
+  bad = await runCli(['contacts', 'list']);
+  assert.equal(bad.exitCode, 1);
+  assert.match(bad.err, /--domain/);
+});
+
+test('contact-properties update clears the fallback with --clear-fallback', async () => {
+  const call = lastCall(await runCli(['contact-properties', 'update', 'prop_1', '--clear-fallback']));
+  assert.deepEqual(call.args, ['prop_1', { fallback_value: null }]);
+
+  let bad = await runCli(['contact-properties', 'update', 'prop_1']);
+  assert.equal(bad.exitCode, 1);
+  assert.match(bad.err, /--fallback-value .* or --clear-fallback/);
+
+  bad = await runCli(['contact-properties', 'update', 'prop_1', '--fallback-value', 'x', '--clear-fallback']);
+  assert.equal(bad.exitCode, 1);
+  assert.match(bad.err, /only one of --fallback-value or --clear-fallback/);
+});
+
+test('campaigns create maps recurrence, A/B, follow-ups and send-on-create', async () => {
+  const call = lastCall(
+    await runCli([
+      'campaigns', 'create', '--domain', 'yourdomain.com',
+      '--from', 'Acme <hi@yourdomain.com>', '--subject', 'Sale', '--html', '<p>x</p>',
+      '--unsubscribe-policy', 'domain', '--list-to',
+      '--recurrence', 'weekly', '--recurrence-every', '2',
+      '--ab-test', '{"enabled":true,"subject_b":"Sale B"}',
+      '--followups', '[{"condition":"not_opened","delay":"2 days","html":"<p>ping</p>"}]',
+      '--send', '--scheduled-at', 'in 1 min',
+    ]),
+  );
+  assert.deepEqual(call.args[0], {
+    domain: 'yourdomain.com',
+    from: 'Acme <hi@yourdomain.com>',
+    subject: 'Sale',
+    html: '<p>x</p>',
+    send: true,
+    scheduled_at: 'in 1 min',
+    unsubscribe_policy: 'domain',
+    list_to: true,
+    recurrence: 'weekly',
+    recurrence_every: 2,
+    ab_test: { enabled: true, subject_b: 'Sale B' },
+    followups: [{ condition: 'not_opened', delay: '2 days', html: '<p>ping</p>' }],
+  });
+});
+
+test('campaigns update can re-target the domain and replace follow-ups', async () => {
+  const call = lastCall(
+    await runCli([
+      'campaigns', 'update', 'camp_1', '--domain', 'other.com', '--reply-to', 'r@other.com', '--followups', '[]',
+    ]),
+  );
+  assert.deepEqual(call.args, [
+    'camp_1',
+    { domain: 'other.com', reply_to: ['r@other.com'], followups: [] },
+  ]);
+});
+
+test('automations update-step maps to updateStep', async () => {
+  const call = lastCall(
+    await runCli(['automations', 'update-step', 'auto_1', 'step_2', '--config', '{"timeout":"12 hours"}']),
+  );
+  assert.deepEqual([call.resource, call.method], ['automations', 'updateStep']);
+  assert.deepEqual(call.args, ['auto_1', 'step_2', { config: { timeout: '12 hours' } }]);
+});
+
+test('events update patches or clears the schema (the name is immutable)', async () => {
+  let call = lastCall(await runCli(['events', 'update', 'evt_1', '--schema', '{"plan":"string"}']));
+  assert.deepEqual([call.resource, call.method], ['events', 'update']);
+  assert.deepEqual(call.args, ['evt_1', { schema: { plan: 'string' } }]);
+
+  call = lastCall(await runCli(['events', 'update', 'evt_1', '--clear-schema']));
+  assert.deepEqual(call.args, ['evt_1', { schema: null }]);
+
+  const bad = await runCli(['events', 'update', 'evt_1']);
+  assert.equal(bad.exitCode, 1);
+  assert.match(bad.err, /--schema .* or --clear-schema/);
+});
+
+// ---- 2.0.0: SDK-parity commands (capabilities the SDK exposed but the CLI did not) ----
+
+test('emails sources maps to emails.sources (no params, not paginated)', async () => {
+  const call = lastCall(await runCli(['emails', 'sources']));
+  assert.deepEqual([call.resource, call.method, call.args], ['emails', 'sources', []]);
+});
+
+test('emails receiving addresses maps to the receiving sub-resource', async () => {
+  const call = lastCall(await runCli(['emails', 'receiving', 'addresses']));
+  assert.deepEqual([call.resource, call.method, call.args], ['emails.receiving', 'addresses', []]);
+});
+
+test('emails receiving attachments forwards pagination flags', async () => {
+  let call = lastCall(await runCli(['emails', 'receiving', 'attachments', 'rem_1', '--limit', '5']));
+  assert.deepEqual([call.resource, call.method, call.args], [
+    'emails.receiving', 'listAttachments', ['rem_1', { limit: 5 }],
+  ]);
+
+  call = lastCall(await runCli(['emails', 'receiving', 'attachments', 'rem_1']));
+  assert.deepEqual(call.args, ['rem_1', {}]);
+});
+
+test('campaigns engagement maps to campaigns.engagement', async () => {
+  const call = lastCall(await runCli(['campaigns', 'engagement', 'camp_1']));
+  assert.deepEqual([call.resource, call.method, call.args], ['campaigns', 'engagement', ['camp_1']]);
+});
+
+test('api-keys list forwards pagination flags', async () => {
+  const call = lastCall(await runCli(['api-keys', 'list', '--limit', '5', '--after', 'key_9']));
+  assert.deepEqual([call.resource, call.method, call.args], [
+    'apiKeys', 'list', [{ limit: 5, after: 'key_9' }],
+  ]);
+});
+
+test('api-keys exposes list only — create/update/delete are dashboard-only', async () => {
+  // Key lifecycle needs a signed-in dashboard session, so the CLI ships no
+  // subcommand for it: a leaked key cannot mint a replacement or widen its own
+  // scope from a terminal. Unknown subcommands must fail without calling the SDK.
+  for (const argv of [
+    ['api-keys', 'create', '--name', 'CI'],
+    ['api-keys', 'update', 'key_1', '--name', 'CI'],
+    ['api-keys', 'delete', 'key_1'],
+  ]) {
+    const r = await runCli(argv);
+    assert.equal(r.exitCode, 1, `expected ${argv[1]} to be rejected`);
+    assert.equal(r.calls.length, 0);
+  }
+
+  const help = await runCli(['api-keys', '--help']);
+  assert.match(help.out, /list/);
+  assert.doesNotMatch(help.out, /^\s*(create|update|delete)\b/m);
+});
+
+test('domains records-csv writes the CSV, defaulting to <id>-dns-records.csv', async () => {
+  const csv = 'Type,Host,Full name,Value,Priority,TTL,Purpose,Status\r\nTXT,@,x,y,,3600,SPF,verified\r\n';
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mb-cli-'));
+  const prev = process.cwd();
+  process.chdir(dir);
+  try {
+    const r = await runCli(['domains', 'records-csv', 'dom_1'], { response: { data: csv, error: null } });
+    const call = lastCall(r);
+    assert.deepEqual([call.resource, call.method, call.args], ['domains', 'recordsCsv', ['dom_1']]);
+    assert.equal(fs.readFileSync(path.join(dir, 'dom_1-dns-records.csv'), 'utf8'), csv);
+    assert.equal(JSON.parse(r.out).bytes, Buffer.byteLength(csv));
+  } finally {
+    process.chdir(prev);
+  }
+
+  const out = path.join(dir, 'records.csv');
+  const r = await runCli(['domains', 'records-csv', 'dom_1', '--output', out], {
+    response: { data: csv, error: null },
+  });
+  lastCall(r);
+  assert.equal(fs.readFileSync(out, 'utf8'), csv);
+
+  // An API error surfaces without writing anything.
+  const error = { statusCode: 404, name: 'not_found', message: 'Domain not found.' };
+  const failed = await runCli(['domains', 'records-csv', 'dom_1', '--output', '/nope/never-written.csv'], {
+    response: { data: null, error },
+  });
+  assert.equal(failed.exitCode, 1);
+  assert.equal(failed.out, '');
+  assert.deepEqual(JSON.parse(failed.err), error);
+});
+
+test('automations runs filters by --status (repeatable or comma-separated)', async () => {
+  let call = lastCall(await runCli(['automations', 'runs', 'auto_1', '--status', 'failed']));
+  assert.deepEqual([call.resource, call.method, call.args], [
+    'automations', 'runs', ['auto_1', { status: ['failed'] }],
+  ]);
+
+  call = lastCall(
+    await runCli(['automations', 'runs', 'auto_1', '--status', 'running,failed', '--status', 'skipped', '--limit', '5']),
+  );
+  assert.deepEqual(call.args, ['auto_1', { limit: 5, status: ['running', 'failed', 'skipped'] }]);
+
+  // No filter → the params object carries pagination only.
+  call = lastCall(await runCli(['automations', 'runs', 'auto_1']));
+  assert.deepEqual(call.args, ['auto_1', {}]);
+});
+
+test('automations ai maps the prompt, allow-lists and the attach slot', async () => {
+  let call = lastCall(await runCli(['automations', 'ai', 'auto_1', '--prompt', 'welcome new signups']));
+  assert.deepEqual([call.resource, call.method, call.args], [
+    'automations', 'ai', ['auto_1', { prompt: 'welcome new signups' }],
+  ]);
+
+  call = lastCall(
+    await runCli([
+      'automations', 'ai', 'auto_1', '--prompt', 'nudge them',
+      '--template-id', 'tmpl_1,tmpl_2', '--event', 'signup.completed',
+      '--attach-from', 'step_3', '--attach-type', 'condition_met', '--attach-before', 'step_9',
+    ]),
+  );
+  assert.deepEqual(call.args, ['auto_1', {
+    prompt: 'nudge them',
+    template_ids: ['tmpl_1', 'tmpl_2'],
+    events: ['signup.completed'],
+    attach: { from: 'step_3', type: 'condition_met', before: 'step_9' },
+  }]);
+
+  const bad = await runCli(['automations', 'ai', 'auto_1']);
+  assert.equal(bad.exitCode, 1);
+  assert.equal(bad.calls.length, 0);
+  assert.match(bad.err, /--prompt/);
+});
+
+test('contacts import-upload sends the CSV name and size, not its contents', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mbcli-'));
+  const csvFile = path.join(dir, 'big-list.csv');
+  fs.writeFileSync(csvFile, 'email\na@x.com\n');
+
+  const call = lastCall(await runCli(['contacts', 'import-upload', 'aud_1', '--csv', csvFile]));
+  assert.deepEqual([call.resource, call.method], ['contacts', 'createImportUpload']);
+  assert.deepEqual(call.args[0], {
+    audienceId: 'aud_1',
+    filename: 'big-list.csv',
+    size: fs.statSync(csvFile).size,
+  });
+
+  const bad = await runCli(['contacts', 'import-upload', 'aud_1', '--csv', '/nope/missing.csv']);
+  assert.equal(bad.exitCode, 1);
+  assert.equal(bad.calls.length, 0);
+  assert.match(bad.err, /Cannot read --csv/);
+});
+
+test('contacts import accepts --storage-key / --segment-id / --file-name and needs exactly one source', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mbcli-'));
+  const csvFile = path.join(dir, 'contacts.csv');
+  fs.writeFileSync(csvFile, 'email\nz@x.com\n');
+
+  let call = lastCall(
+    await runCli(['contacts', 'import', 'aud_1', '--storage-key', 'imports/abc.csv', '--segment-id', 'seg_1']),
+  );
+  assert.deepEqual([call.resource, call.method], ['contacts', 'import']);
+  assert.deepEqual(call.args[0], { audienceId: 'aud_1', storage_key: 'imports/abc.csv', segment_id: 'seg_1' });
+
+  call = lastCall(await runCli(['contacts', 'import', 'aud_1', '--csv', csvFile, '--file-name', 'july.csv']));
+  assert.deepEqual(call.args[0], { audienceId: 'aud_1', csv: 'email\nz@x.com\n', file_name: 'july.csv' });
+
+  let bad = await runCli(['contacts', 'import', 'aud_1']);
+  assert.equal(bad.exitCode, 1);
+  assert.equal(bad.calls.length, 0);
+  assert.match(bad.err, /--csv <path>/);
+
+  bad = await runCli(['contacts', 'import', 'aud_1', '--csv', csvFile, '--storage-key', 'imports/abc.csv']);
+  assert.equal(bad.exitCode, 1);
+  assert.equal(bad.calls.length, 0);
+  assert.match(bad.err, /only one of --csv or --storage-key/);
+});
+
+test('contacts segments / topics and segments contacts forward pagination flags', async () => {
+  let call = lastCall(await runCli(['contacts', 'segments', 'con_1', '--limit', '5']));
+  assert.deepEqual([call.resource, call.method, call.args], ['contacts', 'listSegments', ['con_1', { limit: 5 }]]);
+
+  call = lastCall(await runCli(['contacts', 'topics', 'con_1', '--after', 'top_9']));
+  assert.deepEqual([call.method, call.args], ['getTopics', ['con_1', { after: 'top_9' }]]);
+
+  call = lastCall(await runCli(['segments', 'contacts', 'seg_1', '--limit', '10']));
+  assert.deepEqual([call.resource, call.method, call.args], ['segments', 'contacts', ['seg_1', { limit: 10 }]]);
+});
+
+test('webhooks test prints the body but exits 1 when the delivery failed', async () => {
+  const failed = { object: 'webhook_test', id: 'wh_1', ok: false, error: 'lookup_failed' };
+  let r = await runCli(['webhooks', 'test', 'wh_1'], { response: { data: failed, error: null } });
+  assert.equal(r.exitCode, 1);
+  assert.equal(r.err, '');
+  assert.deepEqual(JSON.parse(r.out), failed);
+
+  const ok = { object: 'webhook_test', id: 'wh_1', ok: true, status: 200 };
+  r = await runCli(['webhooks', 'test', 'wh_1'], { response: { data: ok, error: null } });
+  assert.equal(r.exitCode, 0);
+  assert.deepEqual(JSON.parse(r.out), ok);
 });

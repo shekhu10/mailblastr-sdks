@@ -9,17 +9,45 @@ use reqwest::Method;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::client::{seg, Config};
-use crate::services::contact_types::Contact;
-use crate::types::{ListResponse, RemovedResponse, Result};
+use crate::client::{page_query, seg, Config};
+use crate::types::{ListResponse, PaginationParams, RemovedResponse, Result};
 
 /// Subscription-status filter of a segment.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
+#[serde(rename_all = "snake_case")]
 pub enum SegmentStatus {
     All,
     Subscribed,
     Unsubscribed,
+    /// Only contacts with an explicit membership row — the shape the CSV /
+    /// Google-Sheet importers create.
+    MembersOnly,
+}
+
+/// The engagement signal an engagement-scoped segment matches on.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum EngagementEvent {
+    Clicked,
+    NotClicked,
+    Opened,
+    NotOpened,
+}
+
+/// Narrow a segment to contacts who did (or did not) engage with one campaign.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SegmentEngagement {
+    pub event: EngagementEvent,
+    pub campaign_id: String,
+}
+
+impl SegmentEngagement {
+    pub fn new(event: EngagementEvent, campaign_id: impl Into<String>) -> Self {
+        Self {
+            event,
+            campaign_id: campaign_id.into(),
+        }
+    }
 }
 
 /// Operator for a custom-property segment predicate.
@@ -77,6 +105,8 @@ pub struct SegmentFilter {
     pub email_contains: Option<String>,
     #[serde(default)]
     pub property_filters: Vec<PropertyFilter>,
+    /// Campaign-engagement narrowing, when set.
+    pub engagement: Option<SegmentEngagement>,
 }
 
 /// A segment.
@@ -87,8 +117,22 @@ pub struct Segment {
     pub audience_id: String,
     pub name: String,
     pub filter: SegmentFilter,
-    pub created_at: String,
-    pub updated_at: String,
+    pub created_at: Option<String>,
+    pub updated_at: Option<String>,
+}
+
+/// A row of `segments.contacts()` — the REDUCED contact shape the resolver
+/// returns (no `object`, no `properties`); use `contacts.get(..)` for the
+/// full [`Contact`](crate::services::contact_types::Contact).
+#[derive(Debug, Clone, Deserialize)]
+pub struct SegmentContact {
+    pub id: String,
+    pub email: String,
+    pub first_name: Option<String>,
+    pub last_name: Option<String>,
+    #[serde(default)]
+    pub unsubscribed: bool,
+    pub created_at: Option<String>,
 }
 
 /// Filter accepted on segment create/update.
@@ -100,6 +144,9 @@ pub struct SegmentFilterOptions {
     pub email_contains: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub property_filters: Option<Vec<PropertyFilter>>,
+    /// Narrow to contacts who did (or did not) engage with one campaign.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub engagement: Option<SegmentEngagement>,
 }
 
 impl SegmentFilterOptions {
@@ -121,6 +168,12 @@ impl SegmentFilterOptions {
         self.property_filters
             .get_or_insert_with(Vec::new)
             .push(filter);
+        self
+    }
+
+    /// Narrow to contacts who did (or did not) engage with one campaign.
+    pub fn with_engagement(mut self, engagement: SegmentEngagement) -> Self {
+        self.engagement = Some(engagement);
         self
     }
 }
@@ -265,13 +318,21 @@ impl SegmentsSvc {
             .await
     }
 
-    /// Preview the contacts a segment currently resolves to.
-    /// `GET /segments/:id/contacts`
-    pub async fn contacts(&self, segment_id: &str) -> Result<ListResponse<Contact>> {
+    /// Preview the contacts a segment currently resolves to (filter matches ∪
+    /// explicit memberships). Rows are the reduced [`SegmentContact`] shape.
+    /// With no `limit` and no `after` cursor the route returns the WHOLE
+    /// membership with `has_more: false`. `GET /segments/:id/contacts`
+    pub async fn contacts(
+        &self,
+        segment_id: &str,
+        params: Option<PaginationParams>,
+    ) -> Result<ListResponse<SegmentContact>> {
         let path = format!("/segments/{}/contacts", seg(segment_id));
-        self.config
-            .send(self.config.request(Method::GET, &path))
-            .await
+        let req = self
+            .config
+            .request(Method::GET, &path)
+            .query(&page_query(params.as_ref()));
+        self.config.send(req).await
     }
 
     /// Update a segment. `PATCH /segments/:id`
@@ -288,5 +349,61 @@ impl SegmentsSvc {
         self.config
             .send(self.config.request(Method::DELETE, &path))
             .await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn segment_status_round_trips_every_wire_value() {
+        // `members_only` is what the CSV / Google-Sheet importers create, so a
+        // missing variant makes `segments.get` fail to decode.
+        for (value, expected) in [
+            ("all", SegmentStatus::All),
+            ("subscribed", SegmentStatus::Subscribed),
+            ("unsubscribed", SegmentStatus::Unsubscribed),
+            ("members_only", SegmentStatus::MembersOnly),
+        ] {
+            let parsed: SegmentStatus =
+                serde_json::from_str(&format!("\"{value}\"")).expect("status should parse");
+            assert_eq!(parsed, expected);
+            assert_eq!(
+                serde_json::to_string(&expected).unwrap(),
+                format!("\"{value}\"")
+            );
+        }
+    }
+
+    #[test]
+    fn segment_decodes_engagement_and_null_timestamps() {
+        let segment: Segment = serde_json::from_str(
+            r#"{"object":"segment","id":"seg_1","audience_id":"aud_1","name":"Clickers",
+                "filter":{"status":"members_only","email_contains":null,"property_filters":[],
+                          "engagement":{"event":"not_clicked","campaign_id":"cmp_1"}},
+                "created_at":null,"updated_at":null}"#,
+        )
+        .expect("segment should decode");
+
+        assert_eq!(segment.filter.status, SegmentStatus::MembersOnly);
+        assert_eq!(
+            segment.filter.engagement,
+            Some(SegmentEngagement::new(EngagementEvent::NotClicked, "cmp_1"))
+        );
+        assert!(segment.created_at.is_none());
+    }
+
+    #[test]
+    fn engagement_filter_serializes_snake_case_campaign_id() {
+        let filter = SegmentFilterOptions::new()
+            .with_status(SegmentStatus::MembersOnly)
+            .with_engagement(SegmentEngagement::new(EngagementEvent::Opened, "cmp_9"));
+        let json = serde_json::to_string(&filter).unwrap();
+        assert!(json.contains(r#""status":"members_only""#), "got: {json}");
+        assert!(
+            json.contains(r#""engagement":{"event":"opened","campaign_id":"cmp_9"}"#),
+            "got: {json}"
+        );
     }
 }

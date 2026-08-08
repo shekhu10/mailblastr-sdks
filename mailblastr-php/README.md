@@ -45,6 +45,39 @@ try {
 }
 ```
 
+Branch on `getName()`, and read `getStatusCode()` from the response rather than
+inferring it from the name — a handler may return a name with a non-default
+status (a missing `User-Agent`, for example, is `validation_error` with a 403,
+and `max_active_keys` is a 429). Messages are sanitized human text and change
+freely, so never match on them.
+
+Some errors carry more than that envelope. The extras are accessors on the
+exception and return `null` on an ordinary error:
+
+```php
+} catch (MailblastrException $e) {
+    // WHICH quota ran out, and what would clear it.
+    if ($limit = $e->getLimit()) {
+        echo $limit['kind'];                    // 'emails_daily'
+        echo "{$limit['used']}/{$limit['limit']} used over {$limit['period']}";
+        echo $limit['next_plan']['name'] ?? ''; // 'Pro'
+    }
+
+    // Reputation gates: whether waiting helps, and until when.
+    if ($rep = $e->getReputation()) {
+        echo $rep['scope'], $rep['retryable'] ? " until {$rep['retry_at']}" : ' (not retryable)';
+    }
+
+    // A batch that failed part way through — do NOT resend these.
+    if ($sent = $e->getSent()) {
+        echo "{$e->getSentCount()} already went out: " . implode(', ', array_column($sent, 'id'));
+    }
+}
+```
+
+`$e->getBody()` is the whole parsed error body, so a field newer than this SDK
+version is still reachable.
+
 ### Attachments
 
 Attach files by hosted URL (`path`, fetched at send time) or inline base64 (`content`):
@@ -77,13 +110,16 @@ The client exposes one property per resource, each following a consistent
 
 `emails` (with nested `emails->attachments` and `emails->receiving`), `batch`,
 `domains`, `audiences`, `contacts`, `contactProperties`, `campaigns`, `segments`,
-`topics`, `templates`, `automations`, `webhooks`, `logs`, `events`, `apiKeys`, `polls`.
+`topics`, `templates`, `automations`, `webhooks`, `logs`, `events`,
+`apiKeys` (list only — see below), `polls`.
 
 ```php
 // Emails
 $mailblastr->emails->send(['from' => …, 'to' => …, 'subject' => …, 'html' => …]);
 $mailblastr->emails->list(['limit' => 20, 'after' => $cursor]); // cursor pagination
+$mailblastr->emails->list(['status' => 'bounced', 'search' => 'ada@']); // server-side filters
 $mailblastr->emails->get($id);
+$mailblastr->emails->sources();                                 // per-campaign/automation send metrics
 $mailblastr->emails->attachments->list(emailId: $id);
 $mailblastr->emails->attachments->get(emailId: $id, attachmentId: $attachmentId);
 $mailblastr->emails->update($id, ['scheduled_at' => $ts]);      // reschedule
@@ -91,6 +127,7 @@ $mailblastr->emails->cancel($id);
 
 // Inbound email
 $mailblastr->emails->receiving->list();
+$mailblastr->emails->receiving->addresses();                    // per-address inbound stats
 $mailblastr->emails->receiving->get($id);
 $mailblastr->emails->receiving->forward($id, ['from' => 'me@yourdomain.com', 'to' => 'team@you.com']);
 $mailblastr->emails->receiving->reply($id, ['from' => 'me@yourdomain.com', 'text' => 'Thanks!']);
@@ -107,6 +144,8 @@ $mailblastr->domains->claim(['name' => 'example.com']);
 $mailblastr->domains->verifyClaim($id);
 $mailblastr->domains->detectDns($id);
 $mailblastr->domains->applyCloudflareDns($id, ['token' => $cfToken]);
+$mailblastr->domains->mxCheck('example.com');   // live MX lookup
+$csv = $mailblastr->domains->recordsCsv($id);   // DNS records as CSV text
 
 // Contacts are DOMAIN-FIRST: each sending domain has its own contact pool
 // (the same address on two domains is two records with separate consent).
@@ -118,6 +157,9 @@ $mailblastr->contacts->update(['id' => $contactId, 'unsubscribed' => true]);
 $mailblastr->contacts->remove(['id' => $contactId]);
 $mailblastr->contacts->batch(['audienceId' => $audienceId, 'contacts' => [ … ]]);
 $mailblastr->contacts->import(['audienceId' => $audienceId, 'csv' => $csvText]);
+// Large files: upload straight to storage, then import by key.
+$slot = $mailblastr->contacts->uploadUrl(['audienceId' => $audienceId, 'filename' => 'leads.csv', 'size' => $bytes]);
+$mailblastr->contacts->import(['audienceId' => $audienceId, 'storage_key' => $slot['storage_key']]);
 $mailblastr->contacts->addToSegment($contactId, $segmentId);
 $mailblastr->contacts->updateTopics($contactId, ['topics' => [['id' => 'top_1', 'subscription' => 'opt_in']]]);
 
@@ -129,6 +171,8 @@ $mailblastr->contactProperties->create(['key' => 'plan', 'type' => 'string']);
 // across domains), and every domain carries an auto-created "General" segment.
 $mailblastr->campaigns->create(['domain' => 'example.com', 'from' => …, 'subject' => …, 'html' => …, 'segment_id' => $segmentId]);
 $mailblastr->campaigns->send($id, ['scheduled_at' => $ts]);
+$mailblastr->campaigns->stats($id);       // counts, rates, top links
+$mailblastr->campaigns->engagement($id);  // who opened / clicked / replied
 $mailblastr->segments->create(['domain' => 'yourdomain.com', 'name' => 'VIP']);
 $mailblastr->segments->list(['domain' => 'yourdomain.com']);
 $mailblastr->segments->contacts($id);   // preview who matches
@@ -142,15 +186,28 @@ $mailblastr->emails->send(['from' => …, 'to' => …, 'template_id' => $templat
 // Audiences (incl. Google Sheet import)
 $mailblastr->audiences->importSheet($audienceId, ['url' => $sheetUrl]);
 
-// API keys
-$mailblastr->apiKeys->create(['name' => 'CI', 'permission' => 'sending_access']);
+// API keys (listing only — creating, re-scoping and revoking is dashboard-only)
 $mailblastr->apiKeys->list();
-$mailblastr->apiKeys->remove($id);
+
+// Custom events (the triggers for automations)
+$mailblastr->events->create(['name' => 'signup.completed', 'schema' => ['plan' => 'string']]);
+$mailblastr->events->update($eventId, ['schema' => ['plan' => 'string', 'seats' => 'number']]);
 
 // Polls (read-only results of the in-email poll widget)
 $mailblastr->polls->list();
 $mailblastr->polls->get($emailId);
 ```
+
+### API keys are managed in the dashboard
+
+`apiKeys->list()` is the whole API-key surface: the SDK deliberately exposes no
+method to create, re-scope or revoke a key. Key lifecycle belongs to a signed-in
+dashboard session, and the API enforces it — `POST /api-keys`,
+`PATCH /api-keys/:id` and `DELETE /api-keys/:id` answer `403 dashboard_only` to
+any API-key caller, whatever its permission. That is the point: a key that leaks
+cannot mint itself a replacement, widen its own access, or revoke the keys you
+would use to shut it off. Create and revoke keys at
+[mailblastr.com](https://www.mailblastr.com).
 
 ### Topics
 
@@ -188,7 +245,12 @@ $mailblastr->automations->addStep($automation['id'], [
     'type' => 'send_email',
     'config' => ['template_id' => 'tmpl_welcome'],
 ]);
+$mailblastr->automations->updateStep($automation['id'], $stepId, ['config' => ['duration' => '3 days']]);
 $mailblastr->automations->update($automation['id'], ['status' => 'enabled']);
+
+// Or let AI draft the steps (the automation must be stopped and, without
+// 'attach', have no steps yet)
+$mailblastr->automations->ai($automation['id'], ['prompt' => 'Welcome new signups over 3 days']);
 
 // Fire a custom event — only yourdomain.com's automations are triggered
 $mailblastr->events->send([
@@ -198,8 +260,8 @@ $mailblastr->events->send([
     'payload' => ['plan' => 'pro'],
 ]);
 
-// Inspect execution
-$runs = $mailblastr->automations->runs($automation['id'], ['limit' => 25]);
+// Inspect execution ('status' takes a comma-separated list)
+$runs = $mailblastr->automations->runs($automation['id'], ['limit' => 25, 'status' => 'failed,running']);
 $mailblastr->automations->getRun($automation['id'], $runs['data'][0]['id']);
 ```
 
@@ -207,15 +269,31 @@ $mailblastr->automations->getRun($automation['id'], $runs['data'][0]['id']);
 
 ```php
 $hook = $mailblastr->webhooks->create([
+    // The endpoint must be https:// and must not resolve to a private address.
     'endpoint' => 'https://yourapp.com/hooks/mailblastr',
-    'events' => ['email.delivered', 'email.bounced', 'contact.unsubscribed'],
+    'events' => ['email.delivered', 'email.bounced', 'email.unsubscribed'],
 ]);
 // $hook['signing_secret'] is shown ONCE — store it now.
 
 $mailblastr->webhooks->list();
 $mailblastr->webhooks->update($hook['id'], ['status' => 'disabled']);
 $mailblastr->webhooks->rotate($hook['id']); // new signing_secret, revealed once
+
+// A failed delivery still returns HTTP 200 and does NOT throw — the outcome is
+// $result['ok'], with $result['status'] (your endpoint's HTTP status, when it
+// responded) and $result['error'] (e.g. 'lookup_failed').
+$result = $mailblastr->webhooks->test($hook['id']);
+if (!$result['ok']) {
+    error_log("test delivery failed: {$result['error']}");
+}
 ```
+
+Subscribable events: `email.sent`, `email.delivered`, `email.delivery_delayed`,
+`email.bounced`, `email.complained`, `email.opened`, `email.clicked`,
+`email.failed`, `email.scheduled`, `email.suppressed`, `email.received`,
+`email.replied`, `email.unsubscribed`, `contact.created`, `contact.updated`,
+`contact.deleted`, `domain.created`, `domain.updated`, `domain.deleted`.
+Anything else is rejected with a 422.
 
 Verify a delivery's Svix-style signature in your endpoint (a pure local
 HMAC-SHA256 computation — no HTTP request). Pass the EXACT raw request body:
@@ -252,19 +330,58 @@ appended as a query string:
 $mailblastr->campaigns->list(['limit' => 25, 'after' => 'cursor_abc']);
 ```
 
+`limit` must be an integer between 1 and 100 (default 20). `after` and `before`
+are item ids and are mutually exclusive — passing both is a 422. Every list
+response is `['object' => 'list', 'has_more' => bool, 'data' => [...]]`; there is
+no total and no next cursor, so page forward with the last `data` item's `id` as
+`after`. An unknown cursor returns an empty page, not an error.
+
+Note that some list endpoints return the **whole** collection (with
+`has_more => false`) when you pass no pagination params at all — `domains`,
+`apiKeys`, `topics`, `campaigns`, `contacts`, `contactProperties`, `segments`,
+`segments->contacts()`, `contacts->listSegments()`, `contacts->getTopics()` and
+`emails->receiving->listAttachments()`. Pass a `limit` to page them. The other
+direction is just as uneven: `templates`, `webhooks`, `audiences`,
+`automations`, `automations->runs()` and `events` always cap an unpaginated
+call at 20.
+
 ### Idempotency
 
-Pass an idempotency key to safely retry a create:
+Pass an idempotency key to safely retry a send:
 
 ```php
 $mailblastr->emails->send($payload, ['idempotencyKey' => 'order-123']);
+$mailblastr->batch->send($payloads, ['idempotencyKey' => 'batch-2026-08-08']);
 ```
+
+The key must be **1–255 characters**, measured after the server trims it — 255,
+not 256. `Mailblastr\Client::IDEMPOTENCY_KEY_MAX_LENGTH` carries that number.
+The SDK sends the key verbatim and lets the **server** be the authority: an
+out-of-range key comes back as a 400 `invalid_idempotency_key`.
+
+Replaying a key returns the original response; reusing it with a different
+payload is a 409. Only `emails->send()` and `batch->send()` honour it — every
+other endpoint, including `events->send()`, still accepts an `idempotencyKey`
+option and forwards it, but the API ignores it there, so a retry creates a
+second resource. De-duplicate on your side instead.
+
+### Rate limits
+
+Only the `/emails` routes are rate limited: 30 requests per minute per IP,
+covering reads and the inbound subtree as well as sends. Those responses carry
+`RateLimit-Limit` / `RateLimit-Remaining` / `RateLimit-Reset` headers on success
+too. `automations->ai()` is separately limited to 20 requests per minute per
+account. The default transport retries a 429 or 503 automatically (honouring
+`Retry-After`) up to `maxRetries` times.
 
 ## Testing
 
 The HTTP transport is swappable — pass any `Mailblastr\Transport\TransportInterface`
-implementation as `'transport'` to fake responses in your tests. The SDK's own
-test suite (no framework needed) runs with:
+implementation as `'transport'` to fake responses in your tests. A real custom
+transport must send the headers it is handed verbatim: the API rejects any
+request without a non-empty `User-Agent` with a 403 before it even authenticates.
+
+The SDK's own test suite (no framework needed) runs with:
 
 ```bash
 php tests/run.php

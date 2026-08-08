@@ -42,9 +42,14 @@ public partial class MailblastrClient
             ("campaign_id", options.CampaignId),
             ("automation_id", options.AutomationId),
             ("source", options.Source),
-            ("domain_id", options.DomainId));
+            ("domain_id", options.DomainId),
+            ("status", options.Status),
+            ("search", options.Search));
         return RequestAsync<ListResponse<SentEmailListItem>>(HttpMethod.Get, "/emails" + query, null, null, cancellationToken);
     }
+
+    public Task<ListResponse<EmailSource>> EmailListSourcesAsync(CancellationToken cancellationToken = default)
+        => RequestAsync<ListResponse<EmailSource>>(HttpMethod.Get, "/emails/sources", null, null, cancellationToken);
 
     public Task<Email> EmailRetrieveAsync(string emailId, CancellationToken cancellationToken = default)
         => RequestAsync<Email>(HttpMethod.Get, $"/emails/{E(emailId)}", null, null, cancellationToken);
@@ -81,11 +86,14 @@ public partial class MailblastrClient
         return RequestAsync<ListResponse<ReceivedEmail>>(HttpMethod.Get, "/emails/receiving" + query, null, null, cancellationToken);
     }
 
+    public Task<ListResponse<ReceivedEmailAddressStats>> ReceivedEmailListAddressesAsync(CancellationToken cancellationToken = default)
+        => RequestAsync<ListResponse<ReceivedEmailAddressStats>>(HttpMethod.Get, "/emails/receiving/addresses", null, null, cancellationToken);
+
     public Task<ReceivedEmail> ReceivedEmailRetrieveAsync(string receivedEmailId, CancellationToken cancellationToken = default)
         => RequestAsync<ReceivedEmail>(HttpMethod.Get, $"/emails/receiving/{E(receivedEmailId)}", null, null, cancellationToken);
 
-    public Task<ListResponse<ReceivedAttachment>> ReceivedEmailListAttachmentsAsync(string receivedEmailId, CancellationToken cancellationToken = default)
-        => RequestAsync<ListResponse<ReceivedAttachment>>(HttpMethod.Get, $"/emails/receiving/{E(receivedEmailId)}/attachments", null, null, cancellationToken);
+    public Task<ListResponse<ReceivedAttachment>> ReceivedEmailListAttachmentsAsync(string receivedEmailId, PaginationOptions? pagination = null, CancellationToken cancellationToken = default)
+        => RequestAsync<ListResponse<ReceivedAttachment>>(HttpMethod.Get, $"/emails/receiving/{E(receivedEmailId)}/attachments" + Paginate(pagination), null, null, cancellationToken);
 
     public Task<byte[]> ReceivedEmailDownloadAttachmentAsync(string receivedEmailId, string attachmentId, CancellationToken cancellationToken = default)
         => RequestBytesAsync(HttpMethod.Get, $"/emails/receiving/{E(receivedEmailId)}/attachments/{E(attachmentId)}", cancellationToken);

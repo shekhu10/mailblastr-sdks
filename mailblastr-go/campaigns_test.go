@@ -87,7 +87,7 @@ func TestCampaignsStats(t *testing.T) {
 		if r.Method != http.MethodGet || r.URL.Path != "/campaigns/cmp_1/stats" {
 			t.Errorf("%s %s, want GET /campaigns/cmp_1/stats", r.Method, r.URL.Path)
 		}
-		w.Write([]byte(`{"object":"campaign_stats","campaign_id":"cmp_1","links":[{"url":"https://example.com","clicks":3}]}`))
+		w.Write([]byte(`{"object":"campaign_stats","campaign_id":"cmp_1","total":100,"delivered":95,"opened":40,"clicked":12,"replied":3,"bounced":4,"complained":1,"rates":{"delivery":95,"open":42.1,"click":12.6,"reply":3.2,"bounce":4,"complaint":1},"links":[{"url":"https://example.com","clicks":3}]}`))
 	})
 
 	stats, err := client.Campaigns.Stats("cmp_1")
@@ -96,5 +96,133 @@ func TestCampaignsStats(t *testing.T) {
 	}
 	if stats.CampaignId != "cmp_1" || len(stats.Links) != 1 {
 		t.Errorf("unexpected stats: %+v", stats)
+	}
+	if stats.Total != 100 || stats.Delivered != 95 || stats.Opened != 40 {
+		t.Errorf("counts not decoded: %+v", stats)
+	}
+	if stats.Rates.Open != 42.1 || stats.Rates.Delivery != 95 {
+		t.Errorf("rates not decoded: %+v", stats.Rates)
+	}
+	if stats.Links[0].Url != "https://example.com" || stats.Links[0].Clicks != 3 {
+		t.Errorf("links not decoded: %+v", stats.Links[0])
+	}
+}
+
+func TestCampaignsEngagement(t *testing.T) {
+	client := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/campaigns/cmp_1/engagement" {
+			t.Errorf("%s %s, want GET /campaigns/cmp_1/engagement", r.Method, r.URL.Path)
+		}
+		w.Write([]byte(`{"object":"campaign_engagement","campaign_id":"cmp_1","opened":[{"email":"a@b.com","contact_id":"con_1","opened_at":"2026-08-08T00:00:00Z","open_count":2}],"clicked":[],"replied":[{"email":"a@b.com","contact_id":null,"replied_at":null,"received_email_id":"rcv_1","subject":"Re: Launch","preview":"sounds good","category":"interested","received_at":"2026-08-08T01:00:00Z"}]}`))
+	})
+
+	eng, err := client.Campaigns.Engagement("cmp_1")
+	if err != nil {
+		t.Fatalf("Engagement: %v", err)
+	}
+	if len(eng.Opened) != 1 || eng.Opened[0].OpenCount != 2 {
+		t.Errorf("opened not decoded: %+v", eng.Opened)
+	}
+	if len(eng.Replied) != 1 || eng.Replied[0].ReceivedEmailId != "rcv_1" || eng.Replied[0].Category != "interested" {
+		t.Errorf("replied not decoded: %+v", eng.Replied)
+	}
+}
+
+func TestCampaignsAbCamelCaseStats(t *testing.T) {
+	client := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/campaigns/cmp_1/ab" {
+			t.Errorf("path = %s", r.URL.Path)
+		}
+		w.Write([]byte(`{"object":"campaign_ab","campaign_id":"cmp_1","metric":"open","a":{"variant":"A","sent":50,"conversions":10,"rate":20},"b":{"variant":"B","sent":50,"conversions":15,"rate":30},"winner":"B","fallback":false,"lift":50,"zScore":1.29,"pValue":0.197,"confidence":"low","reason":"B leads on open rate"}`))
+	})
+
+	res, err := client.Campaigns.Ab("cmp_1")
+	if err != nil {
+		t.Fatalf("Ab: %v", err)
+	}
+	if res.Winner != "B" || res.B.Conversions != 15 || res.Confidence != "low" {
+		t.Errorf("unexpected result: %+v", res)
+	}
+	// zScore / pValue are camelCase on the wire, deliberately.
+	if res.ZScore != 1.29 || res.PValue != 0.197 {
+		t.Errorf("camelCase stats not decoded: zScore=%v pValue=%v", res.ZScore, res.PValue)
+	}
+}
+
+// PATCH is 'key in body'-based, so clearing follow-ups needs an explicit empty
+// array — a nil slice must stay omitted.
+func TestCampaignsUpdateClearsFollowups(t *testing.T) {
+	client := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		body := decodeBody(t, r)
+		followups, present := body["followups"]
+		if !present {
+			t.Fatal("followups must be sent when set to an empty slice")
+		}
+		if arr, ok := followups.([]any); !ok || len(arr) != 0 {
+			t.Errorf("followups = %v, want []", followups)
+		}
+		if body["list_to"] != false {
+			t.Errorf("list_to = %v, want false", body["list_to"])
+		}
+		w.Write([]byte(`{"id":"cmp_1"}`))
+	})
+
+	if _, err := client.Campaigns.Update("cmp_1", &UpdateCampaignRequest{
+		Followups: &[]CampaignFollowupInput{},
+		ListTo:    Bool(false),
+	}); err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+}
+
+func TestCampaignsUpdateOmitsUnsetFollowups(t *testing.T) {
+	client := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		body := decodeBody(t, r)
+		if _, present := body["followups"]; present {
+			t.Error("unset followups must be omitted, not sent as null")
+		}
+		if _, present := body["list_to"]; present {
+			t.Error("unset list_to must be omitted")
+		}
+		w.Write([]byte(`{"id":"cmp_1"}`))
+	})
+
+	if _, err := client.Campaigns.Update("cmp_1", &UpdateCampaignRequest{Name: "Renamed"}); err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+}
+
+func TestCampaignsListReturnsReducedRows(t *testing.T) {
+	client := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/campaigns" {
+			t.Errorf("%s %s, want GET /campaigns", r.Method, r.URL.Path)
+		}
+		// The list serializer sends ONLY these keys — no from, topic_id, html,
+		// text, reply_to, preview_text, schedule_timezone, daily_batch_size,
+		// followups, list_address, unsubscribe_policy, recurrence or statistics.
+		w.Write([]byte(`{"object":"list","has_more":false,"data":[{"object":"campaign","id":"cmp_1",` +
+			`"name":"Launch","subject":"Hi","audience_id":"aud_1","segment_id":null,"status":"sent",` +
+			`"ab_test":{"enabled":false},"created_at":"2026-08-08T10:00:00.000Z",` +
+			`"scheduled_at":null,"sent_at":"2026-08-08T11:00:00.000Z","failure_reason":null}]}`))
+	})
+
+	list, err := client.Campaigns.List(nil)
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	// Compile-time guard: widening this back to the full Campaign would promise
+	// bodies, follow-ups and statistics the route never sends, and would hand
+	// callers empty strings instead of an error.
+	var _ *ListResponse[CampaignListItem] = list
+
+	if len(list.Data) != 1 {
+		t.Fatalf("data = %+v, want one row", list.Data)
+	}
+	row := list.Data[0]
+	if row.Id != "cmp_1" || row.Name != "Launch" || row.Subject != "Hi" || row.AudienceId != "aud_1" {
+		t.Errorf("reduced row not decoded: %+v", row)
+	}
+	if row.Status != "sent" || row.SentAt == "" || row.AbTest == nil || row.AbTest.Enabled {
+		t.Errorf("reduced row not decoded: %+v", row)
 	}
 }

@@ -25,9 +25,15 @@ module Mailblastr
         Client.request(:get, "/segments", query: { domain: domain }.merge(Client.pagination(params)))
       end
 
-      # Preview the contacts a segment currently resolves to. GET /segments/:id/contacts
-      def contacts(segment_id)
-        Client.request(:get, "/segments/#{Client.path_escape(segment_id)}/contacts")
+      # Preview the contacts a segment currently resolves to (filter matches
+      # plus explicit memberships). With no pagination params every contact is
+      # returned. GET /segments/:id/contacts
+      def contacts(segment_id, params = {})
+        Client.request(
+          :get,
+          "/segments/#{Client.path_escape(segment_id)}/contacts",
+          query: Client.pagination(params)
+        )
       end
 
       # PATCH /segments/:id

@@ -109,8 +109,17 @@ class Campaigns:
         return http_client.request("GET", f"/campaigns/{_e(campaign_id)}/stats")
 
     @classmethod
+    def engagement(cls, campaign_id):
+        """Who opened, clicked and replied — per-recipient engagement rows.
+        Each of the three lists is capped at 500 rows and this endpoint is not
+        paginated. GET /campaigns/:id/engagement"""
+        return http_client.request("GET", f"/campaigns/{_e(campaign_id)}/engagement")
+
+    @classmethod
     def ab(cls, campaign_id):
-        """A/B winner evaluation for an A/B campaign. GET /campaigns/:id/ab"""
+        """A/B winner evaluation for an A/B campaign (422 when the campaign is
+        not an A/B test). Note the camelCase ``zScore`` / ``pValue`` keys in the
+        result. GET /campaigns/:id/ab"""
         return http_client.request("GET", f"/campaigns/{_e(campaign_id)}/ab")
 
     @classmethod

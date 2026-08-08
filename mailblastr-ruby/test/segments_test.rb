@@ -33,6 +33,9 @@ class SegmentsTest < Minitest::Test
     Mailblastr::Segments.contacts("seg_1")
     assert_request :get, "/segments/seg_1/contacts"
 
+    Mailblastr::Segments.contacts("seg_1", { limit: 50, after: "cont_9" })
+    assert_request :get, "/segments/seg_1/contacts?limit=50&after=cont_9"
+
     Mailblastr::Segments.update("seg_1", { name: "VIP customers" })
     assert_request :patch, "/segments/seg_1"
     assert_equal "VIP customers", last_body["name"]

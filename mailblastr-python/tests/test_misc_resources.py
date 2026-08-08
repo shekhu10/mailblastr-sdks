@@ -71,14 +71,30 @@ class TestAutomations(RecordingTestCase):
         step = {"type": "send_email", "config": {"template_id": "tmpl_1"}}
         mailblastr.Automations.add_step("auto_1", step)
         self.assertCall("POST", "/automations/auto_1/steps", step)
+        patch = {"config": {"template_id": "tmpl_2"}}
+        mailblastr.Automations.update_step("auto_1", "step_1", patch)
+        self.assertCall("PATCH", "/automations/auto_1/steps/step_1", patch)
         mailblastr.Automations.delete_step("auto_1", "step_1")
         self.assertCall("DELETE", "/automations/auto_1/steps/step_1")
+
+    def test_ai(self):
+        params = {"prompt": "Wait 2 days then send the welcome email"}
+        mailblastr.Automations.ai("auto_1", params)
+        self.assertCall("POST", "/automations/auto_1/ai", params)
 
     def test_runs(self):
         mailblastr.Automations.runs("auto_1", {"limit": 25})
         self.assertCall("GET", "/automations/auto_1/runs?limit=25")
         mailblastr.Automations.get_run("auto_1", "run_1")
         self.assertCall("GET", "/automations/auto_1/runs/run_1")
+
+    def test_runs_status_filter(self):
+        mailblastr.Automations.runs("auto_1", {"status": "running,failed"})
+        self.assertCall("GET", "/automations/auto_1/runs?status=running%2Cfailed")
+
+    def test_runs_no_params(self):
+        mailblastr.Automations.runs("auto_1")
+        self.assertCall("GET", "/automations/auto_1/runs")
 
     def test_stop_update_remove(self):
         mailblastr.Automations.stop("auto_1")
@@ -117,15 +133,30 @@ class TestEvents(RecordingTestCase):
         mailblastr.Events.remove("evt_1")
         self.assertCall("DELETE", "/events/evt_1")
 
+    def test_update_schema(self):
+        mailblastr.Events.update("evt_1", {"schema": {"plan": "string", "seats": "number"}})
+        self.assertCall(
+            "PATCH", "/events/evt_1", {"schema": {"plan": "string", "seats": "number"}}
+        )
+
 
 class TestApiKeys(RecordingTestCase):
-    def test_all(self):
-        mailblastr.ApiKeys.create({"name": "CI", "permission": "sending_access"})
-        self.assertCall("POST", "/api-keys", {"name": "CI", "permission": "sending_access"})
+    def test_list(self):
         mailblastr.ApiKeys.list()
         self.assertCall("GET", "/api-keys")
-        mailblastr.ApiKeys.remove("key_1")
-        self.assertCall("DELETE", "/api-keys/key_1")
+
+    def test_list_paginated(self):
+        mailblastr.ApiKeys.list({"limit": 10, "after": "41"})
+        self.assertCall("GET", "/api-keys?limit=10&after=41")
+
+    def test_lifecycle_is_dashboard_only(self):
+        """Keys are created, re-scoped and revoked in the dashboard only, so
+        the SDK exposes no method that would reach those endpoints."""
+        for name in ("create", "update", "remove", "delete", "revoke"):
+            self.assertFalse(
+                hasattr(mailblastr.ApiKeys, name),
+                f"ApiKeys.{name} must not exist",
+            )
 
 
 class TestLogs(RecordingTestCase):

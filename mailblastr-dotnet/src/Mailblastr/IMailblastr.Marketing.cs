@@ -10,8 +10,12 @@ public partial interface IMailblastr
     /// <summary>Retrieve a campaign (includes statistics/followups/list_address). GET /campaigns/:id</summary>
     Task<Campaign> CampaignRetrieveAsync(string campaignId, CancellationToken cancellationToken = default);
 
-    /// <summary>List campaigns. GET /campaigns</summary>
-    Task<ListResponse<Campaign>> CampaignListAsync(PaginationOptions? pagination = null, CancellationToken cancellationToken = default);
+    /// <summary>
+    /// List campaigns. Rows are the trimmed <see cref="CampaignListItem"/> — no
+    /// bodies, follow-ups, recurrence or statistics; use
+    /// <see cref="CampaignRetrieveAsync"/> for those. GET /campaigns
+    /// </summary>
+    Task<ListResponse<CampaignListItem>> CampaignListAsync(PaginationOptions? pagination = null, CancellationToken cancellationToken = default);
 
     /// <summary>Update a draft campaign. PATCH /campaigns/:id</summary>
     Task<IdResponse> CampaignUpdateAsync(string campaignId, CampaignUpdateOptions options, CancellationToken cancellationToken = default);
@@ -36,6 +40,12 @@ public partial interface IMailblastr
     /// <summary>Per-campaign analytics (counts, engagement rates, top links). GET /campaigns/:id/stats</summary>
     Task<CampaignStats> CampaignRetrieveStatsAsync(string campaignId, CancellationToken cancellationToken = default);
 
+    /// <summary>
+    /// Per-recipient engagement (who opened / clicked / replied). Not paginated —
+    /// each list is capped at 500 rows. GET /campaigns/:id/engagement
+    /// </summary>
+    Task<CampaignEngagement> CampaignRetrieveEngagementAsync(string campaignId, CancellationToken cancellationToken = default);
+
     /// <summary>A/B winner evaluation for an A/B campaign. GET /campaigns/:id/ab</summary>
     Task<CampaignAbResult> CampaignRetrieveAbResultAsync(string campaignId, CancellationToken cancellationToken = default);
 
@@ -59,8 +69,13 @@ public partial interface IMailblastr
     /// </summary>
     Task<ListResponse<Segment>> SegmentListAsync(string domain, PaginationOptions? pagination = null, CancellationToken cancellationToken = default);
 
-    /// <summary>Preview the contacts a segment currently resolves to. GET /segments/:id/contacts</summary>
-    Task<ListResponse<Contact>> SegmentListContactsAsync(string segmentId, CancellationToken cancellationToken = default);
+    /// <summary>
+    /// Preview the contacts a segment currently resolves to (filter matches plus
+    /// explicit members). Rows are the REDUCED <see cref="SegmentContact"/> shape.
+    /// With no pagination options the API returns the whole set.
+    /// GET /segments/:id/contacts
+    /// </summary>
+    Task<ListResponse<SegmentContact>> SegmentListContactsAsync(string segmentId, PaginationOptions? pagination = null, CancellationToken cancellationToken = default);
 
     /// <summary>Update a segment. PATCH /segments/:id</summary>
     Task<Segment> SegmentUpdateAsync(string segmentId, SegmentUpdateOptions options, CancellationToken cancellationToken = default);
@@ -93,8 +108,12 @@ public partial interface IMailblastr
     /// <summary>Retrieve a template. GET /templates/:id</summary>
     Task<Template> TemplateRetrieveAsync(string templateId, CancellationToken cancellationToken = default);
 
-    /// <summary>List templates. GET /templates</summary>
-    Task<ListResponse<Template>> TemplateListAsync(PaginationOptions? pagination = null, CancellationToken cancellationToken = default);
+    /// <summary>
+    /// List templates. Rows are the trimmed <see cref="TemplateListItem"/> — no
+    /// <c>from</c>/<c>reply_to</c>/<c>text</c>/<c>variables</c>; use
+    /// <see cref="TemplateRetrieveAsync"/> for those. GET /templates
+    /// </summary>
+    Task<ListResponse<TemplateListItem>> TemplateListAsync(PaginationOptions? pagination = null, CancellationToken cancellationToken = default);
 
     /// <summary>Update a template (creates a new draft version). PATCH /templates/:id</summary>
     Task<ObjectRef> TemplateUpdateAsync(string templateId, TemplateUpdateOptions options, CancellationToken cancellationToken = default);

@@ -9,7 +9,14 @@ import com.mailblastr.requests.UpdateTemplateRequest;
 
 import java.util.Collections;
 
-/** Templates — {@code mailblastr.templates()}. */
+/**
+ * Templates — {@code mailblastr.templates()}.
+ *
+ * <p>Every {@code /templates/:id} route accepts either the template UUID
+ * <em>or</em> its {@code alias}; no other resource does. New templates start
+ * as a {@code draft} and sends always use the published snapshot, so call
+ * {@link #publish(String)} before referencing one from a send.
+ */
 public final class Templates extends Resource {
     public Templates(ApiClient api) { super(api); }
 
@@ -18,12 +25,17 @@ public final class Templates extends Resource {
         return api.request("POST", "/templates", request);
     }
 
-    /** {@code GET /templates/:id} */
+    /** Retrieve by id OR alias. {@code GET /templates/:id} */
     public MailblastrResponse get(String id) {
         return api.request("GET", "/templates/" + enc(id));
     }
 
-    /** {@code GET /templates} */
+    /**
+     * List templates. This route always applies a limit — with no pagination
+     * params you get the first 20. Items use a reduced shape (no
+     * {@code object}, {@code from}, {@code text} or {@code variables}); fetch
+     * one with {@link #get(String)} for the full object. {@code GET /templates}
+     */
     public MailblastrResponse list() { return list(null); }
 
     public MailblastrResponse list(ListParams params) {

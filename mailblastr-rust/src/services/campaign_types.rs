@@ -107,13 +107,18 @@ impl CampaignAbTestOptions {
 }
 
 /// A/B config + decision as returned on retrieve
-/// (`{ enabled: false }` when not an A/B campaign).
+/// (`{ enabled: false }` when not an A/B campaign). On LIST rows only
+/// `enabled`/`metric`/`status`/`winner` are present.
 #[derive(Debug, Clone, Deserialize)]
 pub struct CampaignAbTestInfo {
     pub enabled: bool,
     pub subject_b: Option<String>,
+    pub html_b: Option<String>,
+    pub text_b: Option<String>,
     pub test_pct: Option<u8>,
     pub metric: Option<AbMetric>,
+    /// Hours the test runs before the winner is picked.
+    pub eval_hours: Option<u16>,
     pub status: Option<String>,
     pub winner: Option<String>,
 }
@@ -159,16 +164,21 @@ pub struct CampaignFollowupInfo {
     pub condition: String,
     pub delay: String,
     pub subject: Option<String>,
+    /// The follow-up body.
+    pub html: Option<String>,
     pub status: String,
     pub run_at: Option<String>,
     #[serde(default)]
     pub sent_count: u64,
+    pub created_at: Option<String>,
 }
 
-/// Recurrence cadence as returned on retrieve.
+/// Recurrence cadence as returned on retrieve. `interval` is `None` on a
+/// campaign whose recurrence was cleared.
 #[derive(Debug, Clone, Deserialize)]
 pub struct RecurrenceInfo {
-    pub interval: CampaignRecurrence,
+    pub interval: Option<CampaignRecurrence>,
+    #[serde(default)]
     pub every: u32,
 }
 
@@ -189,10 +199,18 @@ pub struct Campaign {
     pub text: Option<String>,
     pub reply_to: Option<String>,
     pub preview_text: Option<String>,
+    /// `draft`, `queued` (the wire name for an in-flight `sending`),
+    /// `scheduled`, `recurring`, `paused`, `sent`, `failed`.
     pub status: String,
     pub scheduled_at: Option<String>,
+    /// IANA timezone the schedule + daily batching are evaluated in.
+    pub schedule_timezone: Option<String>,
+    /// Max recipients fanned out per batch-day.
+    pub daily_batch_size: Option<u32>,
     pub sent_at: Option<String>,
-    pub created_at: String,
+    pub created_at: Option<String>,
+    /// Why the last send attempt failed, when it did.
+    pub failure_reason: Option<String>,
     pub ab_test: Option<CampaignAbTestInfo>,
     /// Engagement follow-ups (retrieve only).
     pub followups: Option<Vec<CampaignFollowupInfo>>,
@@ -206,6 +224,32 @@ pub struct Campaign {
     pub parent_campaign_id: Option<String>,
     /// Engagement counts — included only on retrieve.
     pub statistics: Option<Value>,
+}
+
+/// A row of `campaigns.list()` — a SMALLER shape than [`Campaign`], with no
+/// bodies (`html`/`text`), no `from`/`topic_id`/`reply_to`/`preview_text`, no
+/// schedule detail, follow-ups, recurrence or statistics. Use
+/// `campaigns.get(id)` for the full record.
+#[derive(Debug, Clone, Deserialize)]
+pub struct CampaignListItem {
+    pub object: String,
+    pub id: String,
+    pub name: Option<String>,
+    /// Included so a list view can render it without a per-row fetch.
+    pub subject: Option<String>,
+    pub audience_id: String,
+    /// Segment target (`None` ⇒ whole audience).
+    pub segment_id: Option<String>,
+    /// `draft`, `queued`, `scheduled`, `recurring`, `paused`, `sent`, `failed`.
+    pub status: String,
+    /// Lightweight A/B marker — `enabled` plus metric/status/winner when
+    /// enabled. Full A/B detail is on `campaigns.get` / `campaigns.ab`.
+    pub ab_test: Option<CampaignAbTestInfo>,
+    pub created_at: Option<String>,
+    pub scheduled_at: Option<String>,
+    pub sent_at: Option<String>,
+    /// Why the last send attempt failed, when it did.
+    pub failure_reason: Option<String>,
 }
 
 /// Options for `campaigns.create` (`POST /campaigns`).
@@ -594,12 +638,66 @@ pub struct CampaignStats {
 }
 
 /// A/B winner evaluation (`GET /campaigns/:id/ab`).
+///
+/// The statistical fields the API spreads in here are camelCase on the wire
+/// (`zScore`, `pValue`) and stay that way in [`extra`](Self::extra).
 #[derive(Debug, Clone, Deserialize)]
 pub struct CampaignAbResult {
     pub object: String,
     pub campaign_id: String,
     pub metric: AbMetric,
-    /// Remaining evaluation details (open shape).
+    /// Remaining evaluation details (open shape): `a`, `b`, `winner`,
+    /// `fallback`, `lift`, `zScore`, `pValue`, `confidence`, `reason`.
     #[serde(flatten)]
     pub extra: Map<String, Value>,
+}
+
+/// One recipient who opened a campaign email.
+#[derive(Debug, Clone, Deserialize)]
+pub struct CampaignOpen {
+    pub email: String,
+    pub contact_id: Option<String>,
+    pub opened_at: Option<String>,
+    #[serde(default)]
+    pub open_count: u64,
+}
+
+/// One recipient who clicked a link in a campaign email.
+#[derive(Debug, Clone, Deserialize)]
+pub struct CampaignClick {
+    pub email: String,
+    pub contact_id: Option<String>,
+    pub clicked_at: Option<String>,
+    #[serde(default)]
+    pub click_count: u64,
+}
+
+/// One reply received to a campaign email.
+#[derive(Debug, Clone, Deserialize)]
+pub struct CampaignReply {
+    pub email: String,
+    pub contact_id: Option<String>,
+    pub replied_at: Option<String>,
+    pub received_email_id: String,
+    pub subject: Option<String>,
+    /// First 300 characters of the reply text.
+    pub preview: Option<String>,
+    /// AI reply intent, e.g. `interested`.
+    pub category: Option<String>,
+    pub received_at: Option<String>,
+}
+
+/// Per-recipient engagement for one campaign
+/// (`GET /campaigns/:id/engagement`). Each list is capped at 500 rows and
+/// this route is NOT paginated.
+#[derive(Debug, Clone, Deserialize)]
+pub struct CampaignEngagement {
+    pub object: String,
+    pub campaign_id: String,
+    #[serde(default)]
+    pub opened: Vec<CampaignOpen>,
+    #[serde(default)]
+    pub clicked: Vec<CampaignClick>,
+    #[serde(default)]
+    pub replied: Vec<CampaignReply>,
 }

@@ -6,23 +6,27 @@ import (
 )
 
 // TemplateVariable is a variable definition on a saved template.
+//
+// The registry carries only the declaration: the API sends no per-variable id
+// or timestamps, so those are absent from this type rather than declared and
+// handed back as empty strings.
 type TemplateVariable struct {
-	Id  string `json:"id"`
 	Key string `json:"key"`
 	// Type is "string" | "number".
 	Type string `json:"type"`
 	// FallbackValue is a string, number, or nil.
-	FallbackValue any    `json:"fallback_value"`
-	CreatedAt     string `json:"created_at"`
-	UpdatedAt     string `json:"updated_at"`
+	FallbackValue any `json:"fallback_value"`
 }
 
 // TemplateVariableInput is a variable definition accepted on create/update.
 type TemplateVariableInput struct {
+	// Key must match ^[A-Za-z_][A-Za-z0-9_.]*$, be unique within the template,
+	// and must not be one of ReservedTemplateVariableKeys.
 	Key string `json:"key"`
-	// Type is "string" | "number".
-	Type          string `json:"type,omitempty"`
-	FallbackValue any    `json:"fallback_value,omitempty"`
+	// Type is "string" (default) | "number".
+	Type string `json:"type,omitempty"`
+	// FallbackValue must be numeric when Type is "number".
+	FallbackValue any `json:"fallback_value,omitempty"`
 }
 
 // Template is a saved email template.
@@ -50,10 +54,59 @@ type Template struct {
 	UpdatedAt              string             `json:"updated_at"`
 }
 
-// CreateTemplateRequest is the payload for POST /templates.
+// TemplateListItem is one row of TemplatesService.List (GET /templates).
+//
+// The list serializer is narrower than the full Template: it sends no Object,
+// From, ReplyTo, Text, CurrentVersionId or Variables. Typing the list as
+// Template would promise those and hand back empty strings and nil slices, so
+// they are absent from the type. Use Templates.Get for the full record.
+type TemplateListItem struct {
+	Id      string `json:"id"`
+	Name    string `json:"name"`
+	Subject string `json:"subject"`
+	// Html is included so a list view can render a preview without a per-row
+	// fetch.
+	Html   string `json:"html"`
+	Status string `json:"status"`
+	// PublishedAt is when the template was last published (empty while only a
+	// draft exists).
+	PublishedAt string `json:"published_at"`
+	// Alias is a stable handle usable anywhere an id is accepted.
+	Alias string `json:"alias"`
+	// HasUnpublishedVersions is true when the draft has edits not yet published.
+	HasUnpublishedVersions bool   `json:"has_unpublished_versions"`
+	CreatedAt              string `json:"created_at"`
+	UpdatedAt              string `json:"updated_at"`
+}
+
+// Template field limits enforced by the API. Exceeding one is a 422
+// validation_error.
+const (
+	MaxTemplateNameLength    = 255
+	MaxTemplateAliasLength   = 255
+	MaxTemplateSubjectLength = 998
+	MaxTemplateFromLength    = 320
+	// MaxTemplateReplyToLength applies to ReplyTo after the parts are joined
+	// with ", ".
+	MaxTemplateReplyToLength = 320
+	// MaxTemplateVariables caps the declared variable registry.
+	MaxTemplateVariables = 50
+)
+
+// ReservedTemplateVariableKeys cannot be declared in Variables — the renderer
+// already provides them.
+var ReservedTemplateVariableKeys = []string{
+	"FIRST_NAME", "LAST_NAME", "EMAIL", "UNSUBSCRIBE_URL", "contact", "this",
+	"MAILBLASTR_UNSUBSCRIBE_URL", "MAILBLASTR_PREFERENCES_URL",
+}
+
+// CreateTemplateRequest is the payload for POST /templates. Name is required
+// (max MaxTemplateNameLength) and so is at least one of Html / Text. Created
+// templates always start as a draft — publish before sending.
 type CreateTemplateRequest struct {
 	Name string `json:"name"`
-	// Alias is an optional stable handle for sending by alias.
+	// Alias is an optional stable handle for sending by alias; it must be
+	// unique across your templates.
 	Alias     string                  `json:"alias,omitempty"`
 	Subject   string                  `json:"subject,omitempty"`
 	From      string                  `json:"from,omitempty"`
@@ -107,14 +160,17 @@ func (s *TemplatesService) GetWithContext(ctx context.Context, id string) (*Temp
 	return request[Template](ctx, s.client, http.MethodGet, "/templates/"+esc(id), nil, nil)
 }
 
-// List lists templates. GET /templates
-func (s *TemplatesService) List(params *ListParams) (*ListResponse[Template], error) {
+// List lists templates, newest first. Rows are the reduced TemplateListItem
+// shape — Object, From, ReplyTo, Text, CurrentVersionId and Variables are not
+// sent by this route; use Get for those. This endpoint always pages (20 per
+// page by default). GET /templates
+func (s *TemplatesService) List(params *ListParams) (*ListResponse[TemplateListItem], error) {
 	return s.ListWithContext(context.Background(), params)
 }
 
-// ListWithContext lists templates. GET /templates
-func (s *TemplatesService) ListWithContext(ctx context.Context, params *ListParams) (*ListResponse[Template], error) {
-	return request[ListResponse[Template]](ctx, s.client, http.MethodGet, listPath("/templates", params), nil, nil)
+// ListWithContext lists templates. Rows are TemplateListItem. GET /templates
+func (s *TemplatesService) ListWithContext(ctx context.Context, params *ListParams) (*ListResponse[TemplateListItem], error) {
+	return request[ListResponse[TemplateListItem]](ctx, s.client, http.MethodGet, listPath("/templates", params), nil, nil)
 }
 
 // Update updates a template; returns the slim ack { object, id }.

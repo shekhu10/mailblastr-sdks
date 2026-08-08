@@ -44,8 +44,13 @@ public class ReceivedEmailRaw
     [JsonPropertyName("download_url")]
     public string DownloadUrl { get; set; } = null!;
 
+    /// <summary>
+    /// Not sent by the API today — the raw pointer carries only
+    /// <see cref="DownloadUrl"/>. Nullable so the type does not promise a value
+    /// that never arrives.
+    /// </summary>
     [JsonPropertyName("expires_at")]
-    public string ExpiresAt { get; set; } = null!;
+    public string? ExpiresAt { get; set; }
 }
 
 /// <summary>An inbound email (GET /emails/receiving/:id).</summary>
@@ -62,6 +67,10 @@ public class ReceivedEmail
 
     [JsonPropertyName("to")]
     public List<string> To { get; set; } = new();
+
+    /// <summary>Id of the receiving domain the message arrived on; null for legacy rows.</summary>
+    [JsonPropertyName("domain_id")]
+    public string? DomainId { get; set; }
 
     [JsonPropertyName("cc")]
     public List<string>? Cc { get; set; }
@@ -149,6 +158,30 @@ public class ReceivedEmailListOptions
 
     /// <summary>Only messages received for this address (matches the <c>received_for</c> recipients).</summary>
     public string? ReceivedFor { get; set; }
+}
+
+/// <summary>
+/// Inbound counters for one receiving address (GET /emails/receiving/addresses).
+/// Not paginated; sorted by <see cref="LastReceivedAt"/> descending.
+/// </summary>
+public class ReceivedEmailAddressStats
+{
+    [JsonPropertyName("address")]
+    public string Address { get; set; } = null!;
+
+    [JsonPropertyName("total")]
+    public int Total { get; set; }
+
+    /// <summary>How many of them were recognised as replies to a sent email.</summary>
+    [JsonPropertyName("replies")]
+    public int Replies { get; set; }
+
+    /// <summary>How many replies the AI classifier categorised as <c>interested</c>.</summary>
+    [JsonPropertyName("interested")]
+    public int Interested { get; set; }
+
+    [JsonPropertyName("last_received_at")]
+    public string? LastReceivedAt { get; set; }
 }
 
 /// <summary>

@@ -31,7 +31,19 @@ public final class Emails extends Resource {
         return api.request("POST", "/emails", request);
     }
 
-    /** Send a single email with an Idempotency-Key (24h retry window). */
+    /**
+     * Send a single email with an {@code Idempotency-Key}, so a retry replays
+     * the first response instead of sending twice.
+     *
+     * <p>The key must be <strong>1–255 characters</strong> after trimming
+     * (anything else is a {@code 400 invalid_idempotency_key}). It is bound to
+     * the request body: reusing it with a different payload is a
+     * {@code 409 invalid_idempotent_request}, and reusing it while the first
+     * call is still in flight is {@code 409 concurrent_idempotent_requests}.
+     *
+     * <p>{@code POST /emails} and {@code POST /emails/batch} are the only
+     * endpoints that read this header.
+     */
     public MailblastrResponse send(SendEmailRequest request, String idempotencyKey) {
         return api.request("POST", "/emails", request, idempotencyKey);
     }
@@ -64,8 +76,8 @@ public final class Emails extends Resource {
 
     /**
      * List sent emails with optional server-side {@code campaign_id} /
-     * {@code automation_id} / {@code source} / {@code domain_id} filters.
-     * {@code GET /emails}
+     * {@code automation_id} / {@code source} / {@code domain_id} /
+     * {@code status} / {@code search} filters. {@code GET /emails}
      */
     public MailblastrResponse list(ListEmailsParams params) {
         Query q = new Query();
@@ -76,9 +88,19 @@ public final class Emails extends Resource {
              .add("campaign_id", params.getCampaignId())
              .add("automation_id", params.getAutomationId())
              .add("source", params.getSource())
-             .add("domain_id", params.getDomainId());
+             .add("domain_id", params.getDomainId())
+             .add("status", params.getStatus())
+             .add("search", params.getSearch());
         }
         return api.request("GET", "/emails" + q);
+    }
+
+    /**
+     * Per-source send metrics — one row per campaign / automation, plus an
+     * {@code "individual"} roll-up. Not paginated. {@code GET /emails/sources}
+     */
+    public MailblastrResponse sources() {
+        return api.request("GET", "/emails/sources");
     }
 
     /** Retrieve a sent email and its events. {@code GET /emails/:id} */
@@ -111,7 +133,12 @@ public final class Emails extends Resource {
     public static final class Receiving extends Resource {
         Receiving(ApiClient api) { super(api); }
 
-        /** List received emails. {@code GET /emails/receiving} */
+        /**
+         * List received emails. Called with no pagination params the route
+         * returns up to 1000 rows in one response; supplying a {@code limit}
+         * or a cursor restores normal 1–100 paging.
+         * {@code GET /emails/receiving}
+         */
         public MailblastrResponse list() { return list((ListParams) null); }
 
         public MailblastrResponse list(ListParams params) {
@@ -133,14 +160,30 @@ public final class Emails extends Resource {
             return api.request("GET", "/emails/receiving" + q);
         }
 
+        /**
+         * Per-address inbound stats (totals, replies, last received).
+         * Not paginated. {@code GET /emails/receiving/addresses}
+         */
+        public MailblastrResponse addresses() {
+            return api.request("GET", "/emails/receiving/addresses");
+        }
+
         /** Retrieve a received email. {@code GET /emails/receiving/:id} */
         public MailblastrResponse get(String id) {
             return api.request("GET", "/emails/receiving/" + enc(id));
         }
 
-        /** List a received email's attachments. {@code GET /emails/receiving/:id/attachments} */
+        /**
+         * List a received email's attachments. With no pagination params the
+         * route returns ALL attachments and {@code has_more:false}; pass
+         * {@link ListParams} to page. {@code GET /emails/receiving/:id/attachments}
+         */
         public MailblastrResponse listAttachments(String id) {
-            return api.request("GET", "/emails/receiving/" + enc(id) + "/attachments");
+            return listAttachments(id, null);
+        }
+
+        public MailblastrResponse listAttachments(String id, ListParams params) {
+            return api.request("GET", "/emails/receiving/" + enc(id) + "/attachments" + paginate(params));
         }
 
         /**

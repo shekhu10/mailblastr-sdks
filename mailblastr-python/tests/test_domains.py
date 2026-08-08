@@ -43,6 +43,17 @@ class TestDomains(RecordingTestCase):
         mailblastr.Domains.apply_namecheap_dns("dom_1", {"apiUser": "u", "apiKey": "k"})
         self.assertCall("POST", "/domains/dom_1/dns/namecheap", {"apiUser": "u", "apiKey": "k"})
 
+    def test_mx_check(self):
+        mailblastr.Domains.mx_check("acme.com")
+        self.assertCall("GET", "/domains/mx-check?name=acme.com")
+
+    def test_records_csv_is_binary(self):
+        data = mailblastr.Domains.records_csv("dom_1")
+        self.assertEqual(self.last["path"], "/domains/dom_1/records.csv")
+        self.assertEqual(self.last["method"], "GET")
+        self.assertTrue(self.last.get("raw"))
+        self.assertEqual(data, self.raw_response)
+
     def test_remove_escapes_id(self):
         mailblastr.Domains.remove("dom_x/../../admin")
         self.assertCall("DELETE", "/domains/dom_x%2F..%2F..%2Fadmin")

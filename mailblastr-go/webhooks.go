@@ -11,13 +11,53 @@ import (
 	"time"
 )
 
+// Webhook event names accepted by CreateWebhookRequest.Events and
+// UpdateWebhookRequest.Events. Short aliases ("opened", "click", "bounce", …)
+// are also accepted on write but are normalized to these canonical values, so
+// reads always return the forms below. Anything else is a 422
+// validation_error ("Unknown event '<value>'.").
+const (
+	EventEmailSent            = "email.sent"
+	EventEmailDelivered       = "email.delivered"
+	EventEmailDeliveryDelayed = "email.delivery_delayed"
+	EventEmailBounced         = "email.bounced"
+	EventEmailComplained      = "email.complained"
+	EventEmailOpened          = "email.opened"
+	EventEmailClicked         = "email.clicked"
+	EventEmailFailed          = "email.failed"
+	EventEmailScheduled       = "email.scheduled"
+	EventEmailSuppressed      = "email.suppressed"
+	EventEmailReceived        = "email.received"
+	EventEmailReplied         = "email.replied"
+	EventEmailUnsubscribed    = "email.unsubscribed"
+	EventContactCreated       = "contact.created"
+	EventContactUpdated       = "contact.updated"
+	EventContactDeleted       = "contact.deleted"
+	EventDomainCreated        = "domain.created"
+	EventDomainUpdated        = "domain.updated"
+	EventDomainDeleted        = "domain.deleted"
+)
+
+// WebhookEvents lists every canonical webhook event name.
+var WebhookEvents = []string{
+	EventEmailSent, EventEmailDelivered, EventEmailDeliveryDelayed,
+	EventEmailBounced, EventEmailComplained, EventEmailOpened,
+	EventEmailClicked, EventEmailFailed, EventEmailScheduled,
+	EventEmailSuppressed, EventEmailReceived, EventEmailReplied,
+	EventEmailUnsubscribed, EventContactCreated, EventContactUpdated,
+	EventContactDeleted, EventDomainCreated, EventDomainUpdated,
+	EventDomainDeleted,
+}
+
 // Webhook is a delivery endpoint subscribed to events.
 type Webhook struct {
-	Object   string   `json:"object"`
+	Object string `json:"object"`
+	// Id is a string-encoded integer.
 	Id       string   `json:"id"`
 	Endpoint string   `json:"endpoint"`
 	Events   []string `json:"events"`
-	Status   string   `json:"status"`
+	// Status is "enabled" | "disabled".
+	Status string `json:"status"`
 	// HasSecret reports whether a signing secret is set. (The secret itself is
 	// returned ONLY on create + rotate, never on get/list.)
 	HasSecret bool `json:"has_secret,omitempty"`
@@ -33,8 +73,12 @@ type Webhook struct {
 
 // CreateWebhookRequest is the payload for POST /webhooks.
 type CreateWebhookRequest struct {
-	Endpoint string   `json:"endpoint"`
-	Events   []string `json:"events"`
+	// Endpoint must be an https:// URL that resolves to a public address —
+	// http://, IPv6 literals and private/loopback addresses are rejected with
+	// a 422 validation_error ("Endpoint URL rejected: <reason>").
+	Endpoint string `json:"endpoint"`
+	// Events must be non-empty; see WebhookEvents for the canonical names.
+	Events []string `json:"events"`
 	// Secret is an optional caller-supplied signing secret. When omitted,
 	// MailBlastr generates one (returned once).
 	Secret string `json:"secret,omitempty"`
@@ -58,14 +102,18 @@ type UpdateWebhookRequest struct {
 
 // WebhookTestResult is the endpoint's live result from a synchronous test
 // delivery.
+//
+// A failed delivery still comes back as HTTP 200 — inspect Ok, not the error
+// return of Webhooks.Test.
 type WebhookTestResult struct {
 	Object string `json:"object"`
 	Id     string `json:"id"`
-	// Delivered reports whether the endpoint accepted the test delivery.
-	Delivered bool `json:"delivered,omitempty"`
-	// Status is the HTTP status the endpoint returned.
-	Status int    `json:"status,omitempty"`
-	Error  string `json:"error,omitempty"`
+	// Ok reports whether the endpoint accepted the test delivery.
+	Ok bool `json:"ok"`
+	// Status is the HTTP status the endpoint returned (0 when Ok is false).
+	Status int `json:"status,omitempty"`
+	// Error is the failure reason when Ok is false, e.g. "lookup_failed".
+	Error string `json:"error,omitempty"`
 }
 
 // VerifyWebhookResult is the outcome of verifying a webhook delivery signature.
@@ -145,7 +193,8 @@ func (s *WebhooksService) RotateWithContext(ctx context.Context, id string) (*Cr
 }
 
 // Test sends a synchronous test delivery and returns the endpoint's live
-// result. POST /webhooks/:id/test
+// result. A failed delivery is still HTTP 200 — check the result's Ok field.
+// POST /webhooks/:id/test
 func (s *WebhooksService) Test(id string) (*WebhookTestResult, error) {
 	return s.TestWithContext(context.Background(), id)
 }

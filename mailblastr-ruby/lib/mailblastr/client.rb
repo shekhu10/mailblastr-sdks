@@ -27,6 +27,16 @@ module Mailblastr
     # Upper bound (seconds) on any single backoff wait.
     MAX_BACKOFF_SECONDS = 30.0
 
+    # `Idempotency-Key` is stored in a VARCHAR(255) column, so the API accepts
+    # 1-255 characters measured after it trims the value — 255, not 256 — and
+    # answers anything else with 400 invalid_idempotency_key. Only
+    # POST /emails and POST /emails/batch read the header; every other endpoint
+    # ignores it, so a retry there creates a second resource.
+    #
+    # Exposed for discoverability only: the SDK sends the key as given and lets
+    # the server be the authority.
+    IDEMPOTENCY_KEY_MAX_LENGTH = 255
+
     # Perform an API request and return the parsed JSON body (a Hash/Array),
     # or the raw body String when `raw: true` (binary download endpoints).
     # Raises Mailblastr::Error on any non-2xx response.
@@ -114,7 +124,7 @@ module Mailblastr
       req["Authorization"] = "Bearer #{key}"
       req["User-Agent"] = "mailblastr-ruby/#{Mailblastr::VERSION}"
       req["Accept"] = "application/json"
-      idem = opt(options, :idempotency_key)
+      idem = idempotency_key(opt(options, :idempotency_key))
       req["Idempotency-Key"] = idem if idem
       unless body.nil?
         req["Content-Type"] = "application/json"
@@ -157,10 +167,14 @@ module Mailblastr
           nil
         end
         parsed = {} unless parsed.is_a?(Hash)
+        # The whole body rides along: plan/quota errors add `limit`, reputation
+        # gates add `reputation`, and a partial batch failure adds
+        # `sent`/`sent_count` (see Mailblastr::Error).
         raise Mailblastr::Error.new(
           parsed["message"] || "Request failed with status #{code}",
           status_code: parsed["statusCode"] || code,
-          error_name: parsed["name"] || "application_error"
+          error_name: parsed["name"] || "application_error",
+          body: parsed
         )
       end
     end
@@ -169,6 +183,20 @@ module Mailblastr
     # traverse the URL path (spaces become %20, "/" becomes %2F).
     def path_escape(value)
       CGI.escape(value.to_s).gsub("+", "%20")
+    end
+
+    # Normalize an `idempotency_key` option into the header value. nil/absent or
+    # an empty string means "no header"; anything else is sent VERBATIM.
+    #
+    # The 1-255 bound (IDEMPOTENCY_KEY_MAX_LENGTH) is the server's to enforce —
+    # it trims the value and answers an out-of-range key with
+    # 400 invalid_idempotency_key. Checking here would only risk drifting from
+    # the server, and would disagree with the other MailBlastr SDKs.
+    def idempotency_key(value)
+      return nil if value.nil?
+
+      key = value.to_s
+      key.empty? ? nil : key
     end
 
     # Read a hash param by symbol or string key.
@@ -192,6 +220,16 @@ module Mailblastr
         q[k] = v unless v.nil?
       end
       q
+    end
+
+    # Copy the given keys out of `params` into a query hash, skipping the
+    # ones the caller left out. Used to expose an endpoint's server-side
+    # filters without forwarding unrelated params.
+    def filters(params, *keys)
+      keys.each_with_object({}) do |k, q|
+        v = opt(params, k)
+        q[k] = v unless v.nil?
+      end
     end
 
     # Domain-first guard: several resources require the sending domain.

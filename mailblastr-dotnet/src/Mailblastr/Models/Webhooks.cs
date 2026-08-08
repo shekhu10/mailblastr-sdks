@@ -85,7 +85,11 @@ public class WebhookCreated
     public string SigningSecret { get; set; } = null!;
 }
 
-/// <summary>Result of a synchronous test delivery (POST /webhooks/:id/test).</summary>
+/// <summary>
+/// Result of a synchronous test delivery (POST /webhooks/:id/test).
+/// A failed delivery is still HTTP 200 — branch on <see cref="Ok"/>, never on
+/// the fact that the call returned without throwing.
+/// </summary>
 public class WebhookTestResult
 {
     [JsonPropertyName("object")]
@@ -94,7 +98,25 @@ public class WebhookTestResult
     [JsonPropertyName("id")]
     public string Id { get; set; } = null!;
 
-    /// <summary>The endpoint's live result fields (status, latency, body...).</summary>
+    /// <summary>
+    /// Whether your endpoint accepted the test delivery. THIS is the outcome —
+    /// the request itself succeeds either way.
+    /// </summary>
+    [JsonPropertyName("ok")]
+    public bool Ok { get; set; }
+
+    /// <summary>The endpoint's HTTP status, when it responded at all.</summary>
+    [JsonPropertyName("status")]
+    public int? Status { get; set; }
+
+    /// <summary>
+    /// Why the delivery failed when <see cref="Ok"/> is false, e.g.
+    /// <c>lookup_failed</c> or <c>webhook missing or disabled</c>.
+    /// </summary>
+    [JsonPropertyName("error")]
+    public string? Error { get; set; }
+
+    /// <summary>Any result field newer than this SDK version.</summary>
     [JsonExtensionData]
     public Dictionary<string, JsonElement>? Extra { get; set; }
 }

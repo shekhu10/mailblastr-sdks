@@ -5,18 +5,12 @@ namespace Mailblastr;
 public partial class MailblastrClient
 {
     // ---- API keys ----
+    //
+    // Listing is the whole surface: creating, re-scoping and revoking a key are
+    // dashboard-only operations (see IMailblastr.Account.cs).
 
-    public Task<ApiKeyCreated> ApiKeyCreateAsync(ApiKeyCreateOptions options, CancellationToken cancellationToken = default)
-    {
-        ArgumentNullException.ThrowIfNull(options);
-        return RequestAsync<ApiKeyCreated>(HttpMethod.Post, "/api-keys", options, null, cancellationToken);
-    }
-
-    public Task<ListResponse<ApiKey>> ApiKeyListAsync(CancellationToken cancellationToken = default)
-        => RequestAsync<ListResponse<ApiKey>>(HttpMethod.Get, "/api-keys", null, null, cancellationToken);
-
-    public Task<RemovedResponse> ApiKeyDeleteAsync(string apiKeyId, CancellationToken cancellationToken = default)
-        => RequestAsync<RemovedResponse>(HttpMethod.Delete, $"/api-keys/{E(apiKeyId)}", null, null, cancellationToken);
+    public Task<ListResponse<ApiKey>> ApiKeyListAsync(PaginationOptions? pagination = null, CancellationToken cancellationToken = default)
+        => RequestAsync<ListResponse<ApiKey>>(HttpMethod.Get, "/api-keys" + Paginate(pagination), null, null, cancellationToken);
 
     // ---- Logs ----
 

@@ -3,10 +3,12 @@ package com.mailblastr.resources;
 import com.mailblastr.ListParams;
 import com.mailblastr.MailblastrResponse;
 import com.mailblastr.http.ApiClient;
+import com.mailblastr.http.Query;
 import com.mailblastr.requests.ClaimDomainRequest;
 import com.mailblastr.requests.CreateDomainRequest;
 import com.mailblastr.requests.UpdateDomainRequest;
 
+import java.nio.charset.StandardCharsets;
 import java.util.LinkedHashMap;
 import java.util.Map;
 
@@ -24,11 +26,35 @@ public final class Domains extends Resource {
         return api.request("GET", "/domains/" + enc(id));
     }
 
-    /** {@code GET /domains} */
+    /**
+     * List domains. With no pagination params the route returns ALL of them
+     * and {@code has_more:false}. Rows still awaiting a DNS-TXT ownership
+     * claim ({@code status: "claim"}) are excluded — reach those through
+     * {@link #getClaim(String)}. {@code GET /domains}
+     */
     public MailblastrResponse list() { return list(null); }
 
     public MailblastrResponse list(ListParams params) {
         return api.request("GET", "/domains" + paginate(params));
+    }
+
+    /**
+     * Check a domain's live MX records before enabling inbound.
+     * Returns {@code { has_mx, ours, records }}; DNS failures fail open with
+     * {@code has_mx:false}. {@code GET /domains/mx-check?name=}
+     */
+    public MailblastrResponse mxCheck(String name) {
+        Query q = new Query().add("name", name);
+        return api.request("GET", "/domains/mx-check" + q);
+    }
+
+    /**
+     * Download the domain's DNS records as CSV text (the route returns
+     * {@code text/csv}, not JSON). {@code GET /domains/:id/records.csv}
+     */
+    public String recordsCsv(String id) {
+        byte[] bytes = api.requestRaw("GET", "/domains/" + enc(id) + "/records.csv");
+        return new String(bytes, StandardCharsets.UTF_8);
     }
 
     /** Returns the slim ack {@code { object: 'domain', id }}. {@code PATCH /domains/:id} */

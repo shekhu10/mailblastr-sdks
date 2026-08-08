@@ -8,17 +8,35 @@ module Mailblastr
       # Send a custom event. POST /events/send
       #   Mailblastr::Events.send({ event: "signup.completed", domain: "yourdomain.com",
       #                             email: "user@example.com", payload: { plan: "pro" } })
-      # Identify the contact by `contact_id` OR `email`. Pass
-      # { idempotency_key: "..." } as the second argument to retry safely.
+      # Identify the contact by `contact_id` OR `email`. Event names cannot
+      # start with the reserved "mailblastr:" prefix.
+      #
+      # NOTE: only POST /emails and POST /emails/batch honour `Idempotency-Key`.
+      # An `idempotency_key` passed here is still forwarded, but the server
+      # ignores it, so a retry ingests a SECOND event and can enroll the contact
+      # twice — de-duplicate on your side instead.
       def send(params, options = {})
         Client.require_domain!(params, "Events.send")
         Client.request(:post, "/events/send", body: params, options: options)
       end
 
-      # Create a custom-event definition (name + optional payload schema). POST /events
+      # Create a custom-event definition (name + optional payload schema).
+      # Schema values are one of "string", "number", "boolean", "date".
+      # POST /events
       #   Mailblastr::Events.create({ name: "signup.completed", schema: { plan: "string" } })
+      #
+      # NOTE: `options[:idempotency_key]` carries no guarantee here — see
+      # `send`. A duplicate event name is already a 422 validation_error.
       def create(params, options = {})
         Client.request(:post, "/events", body: params, options: options)
+      end
+
+      # Update a definition's payload schema. PATCH /events/:id
+      # The event NAME is immutable (automations reference it) — passing `name`
+      # is a 422; pass `schema: nil` to clear the schema.
+      #   Mailblastr::Events.update("evt_1", { schema: { plan: "string" } })
+      def update(event_id, params)
+        Client.request(:patch, "/events/#{Client.path_escape(event_id)}", body: params)
       end
 
       # List custom-event definitions. GET /events

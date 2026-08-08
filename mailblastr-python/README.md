@@ -85,7 +85,33 @@ Requests time out after 30 seconds by default. A `429` (rate limited) or `503`
 (service unavailable) response is retried up to `max_retries` times, honoring the
 `Retry-After` header (otherwise exponential backoff). Only those two statuses are
 retried — never other errors, network failures, or timeouts — so a non-idempotent
-request (like sending an email) is never duplicated by a retry.
+request (like sending an email) is never duplicated by a retry. A batch send that
+failed *part way through* is never retried either: that response names the emails
+that already went out, and re-sending them would duplicate them.
+
+### Errors
+
+`MailblastrError` carries the `{statusCode, name, message}` envelope. Match on
+`name` and read `status_code` — messages are scrubbed server-side and a few
+handlers override the status a name usually maps to, so neither is safe to
+hard-code. Extra fields ride along on the exception:
+
+```python
+try:
+    mailblastr.Emails.send(params)
+except mailblastr.MailblastrError as e:
+    if e.name == "daily_quota_exceeded":
+        print(e.limit["used"], e.limit["limit"], e.limit["next_plan"])
+    if e.retry_after:
+        time.sleep(e.retry_after)
+    print(e.body)          # the full parsed error body
+
+try:
+    mailblastr.Batch.send(payloads, options={"idempotency_key": "batch-1"})
+except mailblastr.MailblastrError as e:
+    already_sent = e.sent          # [{"id": ...}, ...] — do NOT resend these
+    print(e.sent_count)
+```
 
 ## The domain-first model
 
@@ -109,20 +135,23 @@ Each resource is a class with methods following a consistent
 `Emails` (with nested `Emails.Attachments` and `Emails.Receiving`), `Batch`,
 `Domains`, `Audiences`, `Contacts`, `ContactProperties`, `Campaigns`,
 `Segments`, `Topics`, `Templates`, `Automations`, `Webhooks`, `Events`,
-`ApiKeys`, `Logs`, `Polls`.
+`ApiKeys` (list only — see below), `Logs`, `Polls`.
 
 ```python
 # Emails
 mailblastr.Emails.send(params)
 mailblastr.Emails.list({"limit": 20, "after": cursor})   # cursor pagination
+mailblastr.Emails.list({"status": "bounced", "search": "acme.com"})  # filters
 mailblastr.Emails.get(email_id)
 mailblastr.Emails.update(email_id, {"scheduled_at": "2026-08-01T09:00:00Z"})  # reschedule
 mailblastr.Emails.cancel(email_id)
+mailblastr.Emails.sources()                # per-campaign/automation send metrics
 mailblastr.Emails.Attachments.list(email_id)
 mailblastr.Emails.Attachments.get(email_id, attachment_id)
 
 # Inbound email
 mailblastr.Emails.Receiving.list()
+mailblastr.Emails.Receiving.addresses()    # per-address inbound stats
 mailblastr.Emails.Receiving.get(email_id)
 mailblastr.Emails.Receiving.attachments(email_id)
 mailblastr.Emails.Receiving.get_attachment(email_id, attachment_id)  # -> bytes
@@ -138,6 +167,8 @@ mailblastr.Domains.claim({"name": "yourdomain.com"})
 mailblastr.Domains.verify_claim(domain_id)
 mailblastr.Domains.detect_dns(domain_id)
 mailblastr.Domains.apply_cloudflare_dns(domain_id, {"token": cf_token})
+mailblastr.Domains.mx_check("yourdomain.com")   # live MX lookup
+mailblastr.Domains.records_csv(domain_id)       # -> bytes (text/csv)
 
 # Contacts (domain-first)
 mailblastr.Contacts.create({"domain": "yourdomain.com", "email": "user@example.com", "first_name": "Ada"})
@@ -148,6 +179,7 @@ mailblastr.Contacts.update({"id": contact_id, "unsubscribed": True})
 mailblastr.Contacts.remove({"id": contact_id})
 mailblastr.Contacts.batch({"audience_id": aud_id, "contacts": [{"email": "a@b.com"}]})
 mailblastr.Contacts.import_csv({"audience_id": aud_id, "csv": "email,company\na@b.com,Acme"})
+mailblastr.Contacts.import_upload({"audience_id": aud_id, "filename": "big.csv", "size": 90_000_000})
 mailblastr.Contacts.add_to_segment(contact_id, segment_id)
 mailblastr.Contacts.list_segments(contact_id)
 mailblastr.Contacts.update_topics(contact_id, {"topics": [{"id": topic_id, "subscription": "opt_in"}]})
@@ -159,6 +191,7 @@ mailblastr.ContactProperties.create({"key": "plan", "type": "string"})
 mailblastr.Campaigns.create({"domain": "yourdomain.com", "from": sender, "subject": subject, "html": html})
 mailblastr.Campaigns.send(campaign_id, {"scheduled_at": "tomorrow at 9am"})
 mailblastr.Campaigns.stats(campaign_id)
+mailblastr.Campaigns.engagement(campaign_id)   # who opened / clicked / replied
 mailblastr.Campaigns.ab(campaign_id)
 mailblastr.Segments.create({"domain": "yourdomain.com", "name": "VIP", "filter": {"status": "subscribed"}})
 mailblastr.Segments.list({"domain": "yourdomain.com"})
@@ -178,10 +211,8 @@ mailblastr.Emails.send({"from": sender, "to": to, "template_id": tmpl_id, "varia
 mailblastr.Audiences.list()
 mailblastr.Audiences.import_sheet(audience_id, {"url": sheet_url})
 
-# API keys
-mailblastr.ApiKeys.create({"name": "CI", "permission": "sending_access"})
+# API keys (listing only — creating, re-scoping and revoking is dashboard-only)
 mailblastr.ApiKeys.list()
-mailblastr.ApiKeys.remove(key_id)
 
 # Logs & Polls
 mailblastr.Logs.list({"limit": 100, "method": "POST", "status": 429})
@@ -189,6 +220,17 @@ mailblastr.Logs.get(log_id)
 mailblastr.Polls.list()
 mailblastr.Polls.get(email_id)
 ```
+
+### API keys are managed in the dashboard
+
+`ApiKeys.list()` is the whole surface: the SDK deliberately exposes no method to
+create, re-scope or revoke a key. Key lifecycle belongs to a signed-in dashboard
+session, and the API enforces it — `POST /api-keys`, `PATCH /api-keys/:id` and
+`DELETE /api-keys/:id` answer `403 dashboard_only` to any API-key caller,
+whatever its permission. That is the point: a key that leaks cannot mint itself
+a replacement, widen its own access, or revoke the keys you would use to shut it
+off. Create and revoke keys at
+[mailblastr.com](https://www.mailblastr.com) instead.
 
 ### Automations & Events
 
@@ -215,19 +257,30 @@ mailblastr.Events.send({
     "email": "user@example.com",
     "payload": {"plan": "pro"},
 })
+mailblastr.Events.create({"name": "signup.completed", "schema": {"plan": "string"}})
+mailblastr.Events.update(event_id, {"schema": {"plan": "string", "seats": "number"}})
 
 # Inspect execution
-runs = mailblastr.Automations.runs(automation["id"], {"limit": 25})
+runs = mailblastr.Automations.runs(automation["id"], {"limit": 25, "status": "failed"})
 mailblastr.Automations.get_run(automation["id"], runs["data"][0]["id"])
 mailblastr.Automations.stop(automation["id"])
+```
+
+The step graph is edited while the automation is **disabled** —
+`add_step` / `update_step` / `delete_step` (and changing `domain`, `trigger` or
+`connections`) all 422 on an enabled automation. `Automations.ai` builds or
+extends the graph from a prompt:
+
+```python
+mailblastr.Automations.ai(automation["id"], {"prompt": "Wait 2 days, then send the welcome email"})
 ```
 
 ### Webhooks
 
 ```python
 hook = mailblastr.Webhooks.create({
-    "endpoint": "https://yourapp.com/hooks/mailblastr",
-    "events": ["email.delivered", "email.bounced", "contact.unsubscribed"],
+    "endpoint": "https://yourapp.com/hooks/mailblastr",   # must be https://
+    "events": ["email.delivered", "email.bounced", "email.unsubscribed"],
 })
 signing_secret = hook["signing_secret"]   # shown ONCE, only here
 
@@ -248,19 +301,48 @@ if not result["valid"]:
 
 ### Pagination
 
-`list()` methods accept optional cursor pagination — `{"limit", "after", "before"}`:
+`list()` methods accept optional cursor pagination — `{"limit", "after", "before"}`.
+`limit` is an integer 1–100 (default 20); `after` and `before` are item ids and
+cannot be combined. Responses are `{"object": "list", "has_more": bool, "data": [...]}` —
+there is no `total` and no `next_cursor`, so page forward with the last
+`data[-1]["id"]`:
 
 ```python
-mailblastr.Campaigns.list({"limit": 25, "after": "cursor_abc"})
+page = mailblastr.Campaigns.list({"limit": 25})
+while page["has_more"]:
+    page = mailblastr.Campaigns.list({"limit": 25, "after": page["data"][-1]["id"]})
 ```
+
+Called with **no** pagination params, most list endpoints return the whole
+collection (`Campaigns`, `Contacts`, `Segments`, `ContactProperties`,
+`Domains`, `ApiKeys`, `Topics`, `Polls`, and the nested contact/segment/topic
+lists). `Audiences`, `Automations`, `Automations.runs`, `Templates`, `Webhooks`
+and `Events` cap at 20 instead — pass `limit` explicitly when it matters.
+An unknown cursor is not an error: it returns an empty page with
+`has_more: False`.
 
 ### Idempotency
 
-Pass an idempotency key to safely retry a create (24h window):
+Pass an idempotency key to safely retry a send — replaying the same key returns
+the original response instead of sending twice:
 
 ```python
 mailblastr.Emails.send(params, options={"idempotency_key": "order-123"})
+mailblastr.Batch.send(payloads, options={"idempotency_key": "orders-2026-08-08"})
 ```
+
+- The key must be **1 to 255 characters** — measured after the server trims it,
+  so 255, not 256 (`mailblastr.IDEMPOTENCY_KEY_MAX_LENGTH`). The SDK sends the
+  key verbatim and lets the **server** be the authority: an out-of-range key
+  comes back as a `MailblastrError` with `name == "invalid_idempotency_key"`
+  (400).
+- **Only `Emails.send` and `Batch.send` honour it.** Every other endpoint —
+  including `Events.send` — accepts and forwards the header but the API ignores
+  it, so a retry there creates a second resource. De-duplicate on your side
+  instead.
+- Reusing a key with a *different* body raises `invalid_idempotent_request`
+  (409); reusing it while the first request is still running raises
+  `concurrent_idempotent_requests` (409).
 
 ## Documentation
 

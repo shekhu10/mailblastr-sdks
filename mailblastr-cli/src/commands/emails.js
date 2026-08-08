@@ -3,14 +3,64 @@
 const fs = require('node:fs');
 const path = require('node:path');
 
-const { CliError, collect, parseJson, clean, withPagination, pagination } = require('../helpers');
+const { CliError, collect, append, parseJson, clean, withPagination, pagination, saveFile } = require('../helpers');
 
-/** Write a binary API result to disk and return a printable summary. */
-function saveBinary(filePath, arrayBuffer) {
-  const abs = path.resolve(filePath);
-  const buf = Buffer.from(arrayBuffer);
-  fs.writeFileSync(abs, buf);
-  return { data: { object: 'file', path: abs, bytes: buf.length } };
+/** Server-side attachment caps (decoded bytes) — mirrored so we fail before uploading. */
+const MAX_ATTACHMENT_BYTES = 25 * 1024 * 1024;
+const MAX_ATTACHMENTS_TOTAL = 40 * 1024 * 1024;
+
+/**
+ * Accepted `Idempotency-Key` length, 1-<max> characters measured after the
+ * server trims the value (the storage column is VARCHAR(255)) — not 256.
+ * Mirrored from `IDEMPOTENCY_KEY_MAX_LENGTH` in the mailblastr SDK so the
+ * `--idempotency-key` help text cannot drift from the documented rule.
+ *
+ * Unlike the attachment caps above this is NOT pre-checked: the key is sent as
+ * given and the server is the authority (400 invalid_idempotency_key). Only
+ * `emails send` and `emails batch` honour the header at all.
+ */
+const IDEMPOTENCY_KEY_MAX_LENGTH = 255;
+const IDEMPOTENCY_KEY_HELP = `idempotency key for safe retries (1-${IDEMPOTENCY_KEY_MAX_LENGTH} characters)`;
+
+/**
+ * Build the `attachments` array from `--attachment <path>` (read + base64) and
+ * `--attachment-url <url>` (fetched server-side). Local files are size-checked
+ * against the same caps the API enforces so an oversized send fails instantly.
+ */
+function readAttachments(opts) {
+  const files = opts.attachment || [];
+  const urls = opts.attachmentUrl || [];
+  if (!files.length && !urls.length) return undefined;
+
+  let total = 0;
+  const attachments = files.map((filePath) => {
+    let buf;
+    try {
+      buf = fs.readFileSync(filePath);
+    } catch (err) {
+      throw new CliError(`Cannot read --attachment ${filePath}: ${err.message}`);
+    }
+    if (buf.length > MAX_ATTACHMENT_BYTES) {
+      throw new CliError(
+        `Attachment ${path.basename(filePath)} is ${buf.length} bytes; the limit is 25 MB per file.`,
+      );
+    }
+    total += buf.length;
+    return { filename: path.basename(filePath), content: buf.toString('base64') };
+  });
+  if (total > MAX_ATTACHMENTS_TOTAL) {
+    throw new CliError(`Attachments total ${total} bytes; the limit is 40 MB per message.`);
+  }
+  for (const url of urls) {
+    let parsed;
+    try {
+      parsed = new URL(url);
+    } catch {
+      throw new CliError(`Invalid URL for --attachment-url: ${url}`);
+    }
+    attachments.push({ filename: path.basename(parsed.pathname) || 'attachment', path: url });
+  }
+  return attachments;
 }
 
 /** Resolve the batch payload array from --file or --data, with friendly errors. */
@@ -54,13 +104,20 @@ function register({ group, leaf, act }) {
       .option('--reply-to <address>', 'reply-to address (repeatable or comma-separated)', collect)
       .option('--preview-text <text>', 'inbox preview text (preheader)')
       .option('--template-id <id>', 'send using a saved template')
+      .option('--template-alias <alias>', "send using a saved template by its alias")
       .option('--variables <json>', 'template variables as a JSON object')
       .option('--headers <json>', 'custom headers as a JSON object')
-      .option('--scheduled-at <iso>', 'ISO 8601 timestamp to schedule the send')
+      .option('--attachment <path>', 'file to attach (repeatable; max 25 MB each, 40 MB total)', append)
+      .option('--attachment-url <url>', 'hosted file to attach by URL (repeatable)', append)
+      .option('--scheduled-at <when>', "ISO 8601 timestamp, or a phrase like 'in 1 min' (max 30 days ahead)")
       .option('--topic-id <id>', 'drop recipients unsubscribed from this topic')
-      .option('--idempotency-key <key>', 'idempotency key for safe retries'),
-    ({ client, opts }) =>
-      client.emails.send(
+      .option('--idempotency-key <key>', IDEMPOTENCY_KEY_HELP),
+    ({ client, opts }) => {
+      if (opts.templateId && opts.templateAlias) {
+        throw new CliError('Provide only one of --template-id or --template-alias.');
+      }
+      const variables = parseJson(opts.variables, '--variables');
+      return client.emails.send(
         clean({
           from: opts.from,
           to: opts.to,
@@ -72,20 +129,27 @@ function register({ group, leaf, act }) {
           reply_to: opts.replyTo,
           preview_text: opts.previewText,
           template_id: opts.templateId,
-          variables: parseJson(opts.variables, '--variables'),
+          // An alias goes through the nested `template` form, which carries its
+          // own variables; the flat form keeps them top-level.
+          template: opts.templateAlias
+            ? clean({ alias: opts.templateAlias, variables })
+            : undefined,
+          variables: opts.templateAlias ? undefined : variables,
           headers: parseJson(opts.headers, '--headers'),
+          attachments: readAttachments(opts),
           scheduled_at: opts.scheduledAt,
           topic_id: opts.topicId,
         }),
         opts.idempotencyKey ? { idempotencyKey: opts.idempotencyKey } : undefined,
-      ),
+      );
+    },
   );
 
   act(
     leaf(emails, 'batch', 'Send up to 100 emails in one request')
       .option('--file <path>', 'path to a JSON file containing an array of send payloads')
       .option('--data <json>', 'inline JSON array of send payloads')
-      .option('--idempotency-key <key>', 'idempotency key for safe retries'),
+      .option('--idempotency-key <key>', IDEMPOTENCY_KEY_HELP),
     ({ client, opts }) =>
       client.batch.send(
         readBatchPayloads(opts),
@@ -102,7 +166,9 @@ function register({ group, leaf, act }) {
       .option('--campaign-id <id>', 'only emails sent by this campaign')
       .option('--automation-id <id>', 'only emails sent by this automation')
       .option('--source <source>', "'individual' restricts to one-off API sends")
-      .option('--domain-id <id>', 'only emails sent from this sending domain'),
+      .option('--domain-id <id>', 'only emails sent from this sending domain')
+      .option('--status <status>', "only emails whose last event matches, e.g. 'delivered'")
+      .option('--search <text>', 'match recipients, subject or sender'),
     ({ client, opts }) =>
       client.emails.list(
         clean({
@@ -111,20 +177,27 @@ function register({ group, leaf, act }) {
           automation_id: opts.automationId,
           source: opts.source,
           domain_id: opts.domainId,
+          status: opts.status,
+          search: opts.search,
         }),
       ),
   );
 
   act(
     leaf(emails, 'update <id>', 'Reschedule a scheduled email').requiredOption(
-      '--scheduled-at <iso>',
-      'new ISO 8601 send time',
+      '--scheduled-at <when>',
+      "new send time: ISO 8601 or a phrase like 'in 1 min' (max 30 days ahead)",
     ),
     ({ client, opts, args: [id] }) => client.emails.update(id, { scheduled_at: opts.scheduledAt }),
   );
 
   act(leaf(emails, 'cancel <id>', 'Cancel a scheduled email'), ({ client, args: [id] }) =>
     client.emails.cancel(id),
+  );
+
+  act(
+    leaf(emails, 'sources', 'Per-source send metrics: one row per campaign and automation, plus an individual-sends roll-up'),
+    ({ client }) => client.emails.sources(),
   );
 
   act(
@@ -152,13 +225,18 @@ function register({ group, leaf, act }) {
       ),
   );
 
+  act(
+    leaf(receiving, 'addresses', 'Per-address inbound stats: one row per address you receive mail for'),
+    ({ client }) => client.emails.receiving.addresses(),
+  );
+
   act(leaf(receiving, 'get <id>', 'Retrieve a received email'), ({ client, args: [id] }) =>
     client.emails.receiving.get(id),
   );
 
   act(
-    leaf(receiving, 'attachments <id>', "List a received email's attachments"),
-    ({ client, args: [id] }) => client.emails.receiving.listAttachments(id),
+    withPagination(leaf(receiving, 'attachments <id>', "List a received email's attachments")),
+    ({ client, opts, args: [id] }) => client.emails.receiving.listAttachments(id, pagination(opts)),
   );
 
   act(
@@ -170,7 +248,7 @@ function register({ group, leaf, act }) {
     async ({ client, opts, args: [id, attachmentId] }) => {
       const result = await client.emails.receiving.getAttachment(id, attachmentId);
       if (result.error) return result;
-      return saveBinary(opts.output || attachmentId, result.data);
+      return saveFile(opts.output || attachmentId, result.data);
     },
   );
 
@@ -182,7 +260,7 @@ function register({ group, leaf, act }) {
     async ({ client, opts, args: [id] }) => {
       const result = await client.emails.receiving.getRaw(id);
       if (result.error) return result;
-      return saveBinary(opts.output || `${id}.eml`, result.data);
+      return saveFile(opts.output || `${id}.eml`, result.data);
     },
   );
 

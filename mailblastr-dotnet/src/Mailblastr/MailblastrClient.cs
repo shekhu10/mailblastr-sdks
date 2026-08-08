@@ -18,9 +18,31 @@ public partial class MailblastrClient : IMailblastr, IDisposable
     public const string DefaultBaseUrl = "https://www.mailblastr.com/api";
 
     /// <summary>SDK version. Keep in sync with the csproj &lt;Version&gt;.</summary>
-    public const string Version = "1.3.0";
+    public const string Version = "2.0.0";
 
+    /// <summary>
+    /// Sent as <c>User-Agent</c> on every request. The API rejects a request with
+    /// a missing or blank User-Agent with HTTP 403 <c>validation_error</c>, so
+    /// this header is never optional.
+    /// </summary>
     private const string UserAgent = "mailblastr-dotnet/" + Version;
+
+    /// <summary>
+    /// Maximum accepted <c>Idempotency-Key</c> length, measured after the server
+    /// trims the value (<c>api_idempotency.key</c> is VARCHAR(255)) — 255, not
+    /// 256. A key outside 1–255 is rejected by the API with
+    /// 400 <c>invalid_idempotency_key</c>.
+    /// <para>
+    /// The header is honoured by <c>POST /emails</c> and <c>POST /emails/batch</c>
+    /// ONLY; every other endpoint ignores it, so a retry there creates a second
+    /// resource.
+    /// </para>
+    /// <para>
+    /// This client does not check the length itself — the server is the
+    /// authority. The constant is exposed so the rule is discoverable.
+    /// </para>
+    /// </summary>
+    public const int MaxIdempotencyKeyLength = 255;
 
     /// <summary>Retryable HTTP statuses: only 429 and 503 are guaranteed not applied.</summary>
     private static readonly TimeSpan MaxRetryWait = TimeSpan.FromSeconds(30);
@@ -83,7 +105,11 @@ public partial class MailblastrClient : IMailblastr, IDisposable
         var request = new HttpRequestMessage(method, _baseUrl + path);
         request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", _apiKey);
         request.Headers.TryAddWithoutValidation("User-Agent", UserAgent);
-        if (idempotencyKey is not null)
+        // Sent verbatim: the server trims the value and owns the 1–255 bound
+        // (see MaxIdempotencyKeyLength), answering an out-of-range key with
+        // 400 invalid_idempotency_key. Validating here would only risk drifting
+        // from the server. A null or empty key means "no idempotency".
+        if (!string.IsNullOrEmpty(idempotencyKey))
         {
             request.Headers.TryAddWithoutValidation("Idempotency-Key", idempotencyKey);
         }
@@ -132,6 +158,21 @@ public partial class MailblastrClient : IMailblastr, IDisposable
             throw CreateError((int)response.StatusCode, text);
         }
         return await response.Content.ReadAsByteArrayAsync(cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>For endpoints that return a non-JSON text document (e.g. the DNS records CSV).</summary>
+    private async Task<string> RequestTextAsync(HttpMethod method, string path, CancellationToken cancellationToken)
+    {
+        using var response = await SendWithRetriesAsync(
+            () => BuildRequest(method, path, body: null, idempotencyKey: null), cancellationToken).ConfigureAwait(false);
+
+        var text = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
+        if (!response.IsSuccessStatusCode)
+        {
+            // Errors on these routes still use the JSON envelope, not the document type.
+            throw CreateError((int)response.StatusCode, text);
+        }
+        return text;
     }
 
     /// <summary>
@@ -228,6 +269,7 @@ public partial class MailblastrClient : IMailblastr, IDisposable
         var status = httpStatus;
         var name = "application_error";
         var message = $"Request failed with status {httpStatus}.";
+        Dictionary<string, JsonElement>? extra = null;
         if (!string.IsNullOrEmpty(body))
         {
             try
@@ -238,6 +280,9 @@ public partial class MailblastrClient : IMailblastr, IDisposable
                     if (parsed.StatusCode is int sc && sc > 0) status = sc;
                     if (!string.IsNullOrEmpty(parsed.Name)) name = parsed.Name;
                     if (!string.IsNullOrEmpty(parsed.Message)) message = parsed.Message;
+                    // Plan/quota (`limit`), reputation gates (`reputation`) and a
+                    // partial batch failure (`sent` / `sent_count`) ride along here.
+                    extra = parsed.Extra;
                 }
             }
             catch (JsonException)
@@ -245,7 +290,7 @@ public partial class MailblastrClient : IMailblastr, IDisposable
                 // Non-JSON error body; keep the defaults.
             }
         }
-        return new MailblastrException(status, name, message);
+        return new MailblastrException(status, name, message, extra);
     }
 
     // ---- URL helpers ----

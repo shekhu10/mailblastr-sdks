@@ -39,7 +39,19 @@ public final class Batch extends Resource {
         return api.request("POST", "/emails/batch", requests);
     }
 
-    /** Like {@link #sendEmails(List)}, with an Idempotency-Key (24h retry window). */
+    /**
+     * Like {@link #sendEmails(List)}, with an {@code Idempotency-Key} so a
+     * retry replays the first response instead of re-sending.
+     *
+     * <p>The key must be <strong>1–255 characters</strong> after trimming
+     * (anything else is a {@code 400 invalid_idempotency_key}) and is bound to
+     * the request body.
+     *
+     * <p>When a batch fails partway <em>and</em> a key was supplied, the error
+     * body additionally carries {@code sent} (the ids already sent) and
+     * {@code sent_count}; read them from
+     * {@link com.mailblastr.MailblastrException#getBody()}.
+     */
     public MailblastrResponse sendEmails(List<BatchEmailRequest> requests, String idempotencyKey) {
         return api.request("POST", "/emails/batch", requests, idempotencyKey);
     }

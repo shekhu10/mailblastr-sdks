@@ -19,6 +19,13 @@ jobs:
         with: { node-version: '22' }
       - run: npm install
       - run: npm run build
+      # `npm test` runs through tsx, which strips types without checking them,
+      # and tsconfig.json covers `src` only — so the test suite's
+      # `@ts-expect-error` assertions (apiKeys.create/update/remove must not
+      # exist; emails.list rows must not have `status`) are inert without this
+      # step. It is what makes those absences a build error, not just a
+      # runtime assertion.
+      - run: npm run typecheck:test
       - run: npm test
 
   cli:
@@ -29,7 +36,8 @@ jobs:
         with: { node-version: '22' }
       # The CLI depends on the published `mailblastr` package, but CI must test
       # against THIS commit's SDK — build it and install it from the local
-      # folder (--no-save keeps package.json's ^1.0.0 range intact).
+      # folder (--no-save leaves the declared `mailblastr` range in
+      # mailblastr-cli/package.json untouched).
       - name: Build the npm SDK dependency
         run: npm install && npm run build
         working-directory: mailblastr-npm

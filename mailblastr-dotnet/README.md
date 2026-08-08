@@ -28,7 +28,8 @@ var sent = await mailblastr.EmailSendAsync(new EmailMessage
 Console.WriteLine($"sent {sent.Id}");
 ```
 
-Non-2xx API responses throw `MailblastrException` with the parsed error shape:
+Non-2xx API responses throw `MailblastrException` carrying the API's
+`{ statusCode, name, message }` error envelope:
 
 ```csharp
 try
@@ -40,6 +41,46 @@ catch (MailblastrException ex)
     Console.Error.WriteLine($"{ex.StatusCode} {ex.Name}: {ex.Message}");
 }
 ```
+
+Branch on `ex.Name` (e.g. `validation_error`, `not_found`,
+`daily_quota_exceeded`), and read the real HTTP status from `ex.StatusCode` —
+a handler may return a name with a status other than its usual one. Never
+pattern-match `ex.Message`: the API scrubs provider identifiers out of it.
+
+Some errors carry more than the envelope. Those extras are typed on the
+exception and are `null` on an ordinary error:
+
+```csharp
+catch (MailblastrException ex)
+{
+    // WHICH quota ran out, and what would clear it.
+    if (ex.Limit is { } limit)
+    {
+        Console.Error.WriteLine($"{limit.Kind}: {limit.Used}/{limit.Limit} used" +
+                                $" over {limit.Period}, upgrade to {limit.NextPlan?.Name}");
+    }
+
+    // Reputation gates: whether waiting helps, and until when.
+    if (ex.Reputation is { } rep && rep.Retryable)
+    {
+        Console.Error.WriteLine($"paused on {rep.Scope} until {rep.RetryAt}");
+    }
+
+    // A batch that failed part way through — do NOT resend these.
+    if (ex.Sent is { } sent)
+    {
+        Console.Error.WriteLine($"{ex.SentCount} already went out: {string.Join(", ", sent.Select(e => e.Id))}");
+    }
+}
+```
+
+`ex.Extra` holds every additive field unparsed, so a field newer than this SDK
+version is still reachable.
+
+Every request carries `Authorization: Bearer <your key>` and a non-empty
+`User-Agent` (`mailblastr-dotnet/<version>`). The API rejects a request with a
+missing User-Agent with HTTP 403 `validation_error`, so the header is not
+configurable.
 
 ### Attachments
 
@@ -87,6 +128,11 @@ events, api keys, logs, polls.
 await mailblastr.EmailSendAsync(message);
 await mailblastr.EmailBatchAsync(messages);                    // up to 100 per request
 await mailblastr.EmailListAsync(new PaginationOptions { Limit = 20 });
+await mailblastr.EmailListAsync(new EmailListOptions            // server-side filters
+{
+    Status = "bounced", Search = "invoice", DomainId = domainId,
+});
+await mailblastr.EmailListSourcesAsync();                       // per-origin send counters
 await mailblastr.EmailRetrieveAsync(id);
 await mailblastr.EmailListAttachmentsAsync(id);
 await mailblastr.EmailRescheduleAsync(id, "2026-08-01T09:00:00Z");
@@ -94,6 +140,7 @@ await mailblastr.EmailCancelAsync(id);
 
 // Inbound email
 await mailblastr.ReceivedEmailListAsync();
+await mailblastr.ReceivedEmailListAddressesAsync();             // per-address inbound stats
 await mailblastr.ReceivedEmailRetrieveAsync(id);
 byte[] file = await mailblastr.ReceivedEmailDownloadAttachmentAsync(id, attachmentId);
 await mailblastr.ReceivedEmailForwardAsync(id, new ReceivedEmailForwardOptions
@@ -108,6 +155,8 @@ await mailblastr.DomainClaimAsync(new DomainClaimOptions { Name = "example.com" 
 await mailblastr.DomainVerifyClaimAsync(domain.Id);
 await mailblastr.DomainDetectDnsAsync(domain.Id);              // one-click DNS options
 await mailblastr.DomainApplyCloudflareDnsAsync(domain.Id, cloudflareToken);
+await mailblastr.DomainCheckMxAsync("example.com");            // MX preflight for inbound
+string csv = await mailblastr.DomainRetrieveRecordsCsvAsync(domain.Id);
 ```
 
 ### Contacts are DOMAIN-FIRST
@@ -156,6 +205,7 @@ var campaign = await mailblastr.CampaignCreateAsync(new CampaignCreateOptions
 });
 await mailblastr.CampaignSendAsync(campaign.Id);                  // or scheduledAt: "2026-08-01T09:00:00Z"
 await mailblastr.CampaignRetrieveStatsAsync(campaign.Id);
+await mailblastr.CampaignRetrieveEngagementAsync(campaign.Id);    // who opened/clicked/replied
 
 var segment = await mailblastr.SegmentCreateAsync(new SegmentCreateOptions
 {
@@ -218,8 +268,11 @@ await mailblastr.EventSendAsync(new EventSendOptions
     Data = new() { ["plan"] = "pro" },
 });
 
-// Inspect execution
-var runs = await mailblastr.AutomationListRunsAsync(automation.Id, new PaginationOptions { Limit = 25 });
+// Inspect execution (optionally filtered by run status)
+var runs = await mailblastr.AutomationListRunsAsync(automation.Id, new AutomationRunListOptions
+{
+    Limit = 25, Status = new[] { "failed", "running" },
+});
 await mailblastr.AutomationRetrieveRunAsync(automation.Id, runs.Data[0].Id);
 ```
 
@@ -229,9 +282,29 @@ await mailblastr.AutomationRetrieveRunAsync(automation.Id, runs.Data[0].Id);
 var hook = await mailblastr.WebhookCreateAsync(new WebhookCreateOptions
 {
     Endpoint = "https://yourapp.com/hooks/mailblastr",
-    Events = { "email.delivered", "email.bounced", "contact.unsubscribed" },
+    Events = { "email.delivered", "email.bounced", "email.unsubscribed" },
 });
 // hook.SigningSecret is shown ONCE — store it now.
+```
+
+Endpoints must be `https://` and must not resolve to a private address. Event
+names come from a fixed vocabulary — `email.sent`, `email.delivered`,
+`email.delivery_delayed`, `email.bounced`, `email.complained`, `email.opened`,
+`email.clicked`, `email.failed`, `email.scheduled`, `email.suppressed`,
+`email.received`, `email.replied`, `email.unsubscribed`, `contact.created`,
+`contact.updated`, `contact.deleted`, `domain.created`, `domain.updated`,
+`domain.deleted` — anything else is a 422.
+
+`WebhookTestAsync` returns HTTP 200 even when the delivery failed — it does not
+throw. The outcome is `result.Ok`, with `result.Status` (your endpoint's HTTP
+status, when it responded) and `result.Error` (e.g. `lookup_failed`):
+
+```csharp
+var test = await mailblastr.WebhookTestAsync(webhookId);
+if (!test.Ok)
+{
+    Console.Error.WriteLine($"test delivery failed: {test.Error} (status {test.Status})");
+}
 ```
 
 Verify a delivery in your endpoint (pure local HMAC-SHA256; pass the EXACT raw
@@ -254,10 +327,20 @@ if (!result.Valid) return Unauthorized(result.Reason);
 
 ```csharp
 await mailblastr.LogListAsync(new LogListOptions { Limit = 100, Method = "POST", Status = 429 });
-await mailblastr.ApiKeyCreateAsync(new ApiKeyCreateOptions { Name = "CI", Permission = "sending_access" });
+await mailblastr.ApiKeyListAsync();
 await mailblastr.PollListAsync();
 await mailblastr.PollRetrieveAsync(emailId);
 ```
+
+**API keys are created, re-scoped and revoked in the dashboard**, at
+[mailblastr.com/app/api-keys](https://www.mailblastr.com/app/api-keys). Those
+routes accept a signed-in dashboard session only, so `ApiKeyListAsync` is the
+entire API-key surface of this SDK. That is the point: a key that leaks cannot
+mint itself a replacement, widen its own permission, or revoke the keys around
+it — the blast radius stays whatever the leaked key could already do.
+
+An API key's `Token` is only ever the 8-character display prefix (e.g.
+`mb_ab12`); the full secret is shown once, in the dashboard, at creation.
 
 ### Pagination
 
@@ -267,13 +350,35 @@ await mailblastr.PollRetrieveAsync(emailId);
 await mailblastr.CampaignListAsync(new PaginationOptions { Limit = 25, After = "cursor_abc" });
 ```
 
+`limit` is an integer 1–100 (default 20); `After` and `Before` are item ids and
+are mutually exclusive. Responses are `{ object: "list", has_more, data }` —
+there is no total and no next-cursor: page forward with the last row's `Id`.
+Note that several list endpoints (domains, api keys, topics, campaigns,
+contacts, segments, contact properties, polls) return **everything** when you
+pass no pagination options at all, while templates, webhooks, audiences,
+automations, automation runs and events cap at 20.
+
 ### Idempotency
 
-Pass an idempotency key to safely retry a create (24h window):
+`EmailSendAsync` and `EmailBatchAsync` accept an idempotency key so a retry
+cannot send twice:
 
 ```csharp
 await mailblastr.EmailSendAsync(message, idempotencyKey: "order-123");
 ```
+
+- The key is **1–255 characters**, measured after the server trims it — 255, not
+  256. `MailblastrClient.MaxIdempotencyKeyLength` carries that number. The client
+  sends the key verbatim and lets the **server** be the authority: an
+  out-of-range key comes back as 400 `invalid_idempotency_key`
+  (a `MailblastrException`), not a local `ArgumentException`.
+- Replaying a completed key returns the original response. Reusing it with a
+  different payload is 409 `invalid_idempotent_request`; while the first request
+  is still in flight it is 409 `concurrent_idempotent_requests`.
+- **Only `POST /emails` and `POST /emails/batch` honour the header.** The
+  `idempotencyKey` parameter on `EventSendAsync` / `EventCreateAsync` is sent but
+  ignored by the API — retrying those creates a second record. De-duplicate on
+  your side instead.
 
 ## Documentation
 

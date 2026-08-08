@@ -45,10 +45,12 @@ class ListParams(TypedDict, total=False):
     limit: int
     after: str
     before: str
-    campaign_id: str  # only emails sent by this campaign
-    automation_id: str  # only emails sent by this automation
+    campaign_id: str  # only emails sent by this campaign (incl. its follow-ups)
+    automation_id: str  # only emails sent by this automation (ignored with campaign_id)
     source: str  # 'individual' restricts to one-off API sends
     domain_id: str  # only emails sent from this sending domain (domain id)
+    status: str  # match the value reads expose as `last_event`, e.g. 'delivered'
+    search: str  # substring match over recipients, subject and sender
 
 
 class ReceivingListParams(TypedDict, total=False):
@@ -56,6 +58,12 @@ class ReceivingListParams(TypedDict, total=False):
     after: str
     before: str
     received_for: str  # only messages received for this address
+
+
+class AttachmentListParams(TypedDict, total=False):
+    limit: int
+    after: str
+    before: str
 
 ForwardParams = TypedDict(
     "ForwardParams",
@@ -92,7 +100,8 @@ class Emails:
 
         @classmethod
         def list(cls, email_id):
-            """List a sent email's attachments. GET /emails/:id/attachments"""
+            """List a sent email's attachments (not paginated — every
+            attachment is returned). GET /emails/:id/attachments"""
             return http_client.request("GET", f"/emails/{_e(email_id)}/attachments")
 
         @classmethod
@@ -109,11 +118,15 @@ class Emails:
         ForwardParams = ForwardParams
         ReplyParams = ReplyParams
         ListParams = ReceivingListParams
+        AttachmentListParams = AttachmentListParams
 
         @classmethod
         def list(cls, params=None):
             """List received emails, optionally filtered by ``received_for``
-            (only messages received for that address). GET /emails/receiving"""
+            (only messages received for that address). GET /emails/receiving
+
+            Called with no ``limit`` and no cursor this returns up to 1000
+            messages in one response; pass ``limit`` for normal 1-100 paging."""
             params = params or {}
             qs = build_query(
                 {
@@ -126,14 +139,27 @@ class Emails:
             return http_client.request("GET", f"/emails/receiving{qs}")
 
         @classmethod
+        def addresses(cls):
+            """Per-address inbound stats (total, replies, interested and the
+            last received time for each receiving address). Not paginated.
+            GET /emails/receiving/addresses"""
+            return http_client.request("GET", "/emails/receiving/addresses")
+
+        @classmethod
         def get(cls, email_id):
             """Retrieve a received email. GET /emails/receiving/:id"""
             return http_client.request("GET", f"/emails/receiving/{_e(email_id)}")
 
         @classmethod
-        def attachments(cls, email_id):
-            """List a received email's attachments. GET /emails/receiving/:id/attachments"""
-            return http_client.request("GET", f"/emails/receiving/{_e(email_id)}/attachments")
+        def attachments(cls, email_id, params=None):
+            """List a received email's attachments.
+            GET /emails/receiving/:id/attachments
+
+            With no ``limit`` and no ``after`` cursor every attachment is
+            returned; supplying either applies normal paging."""
+            return http_client.request(
+                "GET", f"/emails/receiving/{_e(email_id)}/attachments{paginate(params)}"
+            )
 
         @classmethod
         def get_attachment(cls, email_id, attachment_id):
@@ -171,7 +197,12 @@ class Emails:
     def send(cls, params, options=None):
         """Send a single email. POST /emails
 
-        Pass ``options={"idempotency_key": "..."}`` to safely retry."""
+        Pass ``options={"idempotency_key": "..."}`` to safely retry: replaying
+        the key returns the original response instead of sending twice. The key
+        must be 1-255 characters after the server trims it
+        (:data:`~mailblastr.IDEMPOTENCY_KEY_MAX_LENGTH`); the server, not this
+        SDK, rejects anything else with 400 ``invalid_idempotency_key``.
+        ``tags`` is not a supported field — sending it is a 422."""
         return http_client.request("POST", "/emails", params, options)
 
     @classmethod
@@ -180,14 +211,20 @@ class Emails:
         (alias of ``mailblastr.Batch.send``).
 
         Batch items reject ``attachments`` and ``scheduled_at`` — send those
-        individually via :meth:`send`."""
+        individually via :meth:`send`. ``options={"idempotency_key": "..."}``
+        is honoured here too (same 1-255 rule as :meth:`send`); with a key set, a failure part
+        way through reports the emails that already went out on the raised
+        error's ``sent`` / ``sent_count``."""
         return http_client.request("POST", "/emails/batch", params, options)
 
     @classmethod
     def list(cls, params=None):
-        """List sent emails (trimmed list items — no status/html/text/events).
+        """List sent emails (trimmed list items — no status/html/text/events,
+        and unset cc/bcc/reply_to come back as ``None`` rather than ``[]``).
         Optional filters: ``campaign_id``, ``automation_id``,
-        ``source='individual'``, and ``domain_id``. GET /emails"""
+        ``source='individual'``, ``domain_id``, ``status`` (matched against the
+        value reads expose as ``last_event``) and ``search`` (recipients,
+        subject, sender). GET /emails"""
         params = params or {}
         qs = build_query(
             {
@@ -198,9 +235,18 @@ class Emails:
                 "automation_id": params.get("automation_id"),
                 "source": params.get("source"),
                 "domain_id": params.get("domain_id"),
+                "status": params.get("status"),
+                "search": params.get("search"),
             }
         )
         return http_client.request("GET", f"/emails{qs}")
+
+    @classmethod
+    def sources(cls):
+        """Per-source send metrics — one row per campaign, automation and
+        individual sending, with delivered/opened/clicked counts. Not
+        paginated. GET /emails/sources"""
+        return http_client.request("GET", "/emails/sources")
 
     @classmethod
     def get(cls, email_id):

@@ -58,6 +58,27 @@ $mb->contacts->import([
 check_same('contacts.import: strict-mode query', '/audiences/aud_1/contacts/import?create_properties=false', $t->lastPath());
 check_same('contacts.import: csv body', ['csv' => "email,company\na@b.com,Acme"], $t->lastJson());
 
+// segment_id rides on the query string alongside on_conflict
+$mb->contacts->import([
+    'audienceId' => 'aud_1',
+    'csv' => 'email\na@b.com',
+    'file_name' => 'leads.csv',
+    'on_conflict' => 'skip',
+    'segment_id' => 'seg_1',
+]);
+check_same('contacts.import: segment_id query', '/audiences/aud_1/contacts/import?on_conflict=skip&segment_id=seg_1', $t->lastPath());
+check_same('contacts.import: file_name body', ['csv' => 'email\na@b.com', 'file_name' => 'leads.csv'], $t->lastJson());
+
+// pre-uploaded file mode sends storage_key instead of csv
+$mb->contacts->import(['audienceId' => 'aud_1', 'storage_key' => 'imports/abc.csv']);
+check_same('contacts.import: storage_key body', ['storage_key' => 'imports/abc.csv'], $t->lastJson());
+
+// ---- presigned direct upload ----
+$mb->contacts->uploadUrl(['audienceId' => 'aud_1', 'filename' => 'leads.csv', 'size' => 2048]);
+check_same('contacts.uploadUrl: method', 'POST', $t->last()['method']);
+check_same('contacts.uploadUrl: path', '/audiences/aud_1/contacts/import/upload', $t->lastPath());
+check_same('contacts.uploadUrl: body', ['filename' => 'leads.csv', 'size' => 2048], $t->lastJson());
+
 // ---- update: flat by email keeps domain in body ----
 $mb->contacts->update([
     'id' => 'user@example.com',
@@ -86,9 +107,13 @@ check_same('contacts.removeFromSegment: method', 'DELETE', $t->last()['method'])
 
 $mb->contacts->listSegments('cont_1');
 check_same('contacts.listSegments: path', '/contacts/cont_1/segments', $t->lastPath());
+$mb->contacts->listSegments('cont_1', ['limit' => 5]);
+check_same('contacts.listSegments: pagination', '/contacts/cont_1/segments?limit=5', $t->lastPath());
 
 $mb->contacts->getTopics('cont_1');
 check_same('contacts.getTopics: path', '/contacts/cont_1/topics', $t->lastPath());
+$mb->contacts->getTopics('cont_1', ['limit' => 5]);
+check_same('contacts.getTopics: pagination', '/contacts/cont_1/topics?limit=5', $t->lastPath());
 
 $mb->contacts->updateTopics('cont_1', ['topics' => [['id' => 'top_1', 'subscription' => 'opt_in']]]);
 check_same('contacts.updateTopics: method', 'PATCH', $t->last()['method']);

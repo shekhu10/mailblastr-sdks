@@ -30,6 +30,26 @@ class WebhooksTest < Minitest::Test
     assert_request :delete, "/webhooks/wh_1"
   end
 
+  # A failed test delivery is still HTTP 200 — the real outcome is "ok", so the
+  # call must not raise and the caller must not read success from the status.
+  def test_failed_test_delivery_is_reported_in_ok_not_by_raising
+    stub_response!(200, { "object" => "webhook_test", "id" => "wh_1",
+                          "ok" => false, "error" => "lookup_failed" })
+    result = Mailblastr::Webhooks.test("wh_1")
+    assert_request :post, "/webhooks/wh_1/test"
+    assert_equal false, result["ok"]
+    assert_equal "lookup_failed", result["error"]
+    assert_nil result["status"]
+  end
+
+  def test_successful_test_delivery_carries_the_endpoint_status
+    stub_response!(200, { "object" => "webhook_test", "id" => "wh_1", "ok" => true, "status" => 200 })
+    result = Mailblastr::Webhooks.test("wh_1")
+    assert_equal true, result["ok"]
+    assert_equal 200, result["status"]
+    assert_nil result["error"]
+  end
+
   # --- verify_signature (pure local HMAC; no HTTP) ---
 
   SECRET_BYTES = "super-secret-signing-key"

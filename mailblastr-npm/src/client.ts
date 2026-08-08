@@ -3,8 +3,15 @@ import type { MailBlastrError, Result, RequestOptions } from './types';
 export const DEFAULT_BASE_URL = 'https://www.mailblastr.com/api';
 
 /** Keep in sync with package.json "version". */
-export const VERSION = '1.3.0';
+export const VERSION = '2.0.0';
 export const USER_AGENT = `mailblastr-node/${VERSION}`;
+
+/**
+ * Max length of an `Idempotency-Key` accepted by the API (1–255 characters
+ * after trimming — the storage column width). A longer or empty key is
+ * rejected with `400 invalid_idempotency_key`.
+ */
+export const IDEMPOTENCY_KEY_MAX_LENGTH = 255;
 
 export interface ClientConfig {
   baseUrl?: string;
@@ -37,6 +44,42 @@ function retryAfterMs(header: string | null): number | null {
   const when = Date.parse(header);
   if (!Number.isNaN(when)) return Math.min(Math.max(0, when - Date.now()), 30_000);
   return null;
+}
+
+/** Decode a response body as JSON, falling back to the raw text. */
+function parseBody(text: string): unknown {
+  if (!text) return null;
+  try { return JSON.parse(text); } catch { return text; }
+}
+
+/**
+ * Normalize an error response into {@link MailBlastrError}.
+ *
+ * The API's envelope is `{ statusCode, name, message }`, but some errors carry
+ * additive fields — `limit` on plan/quota rejections, `reputation` on
+ * reputation gates, `sent`/`sent_count` on a partial batch failure — which are
+ * preserved verbatim. Two non-envelope shapes also exist (`{"error":
+ * "csrf_failed"}` and `{"error":"rate_limited"}`); their `error` string is
+ * lifted into `name` so callers can still branch on it.
+ *
+ * `sent_count` falls back to `sent.length` when the body names the emails that
+ * went out but omits the count, so a caller deciding what NOT to resend never
+ * has to compute it. It stays absent on errors that carry no `sent` list.
+ */
+function toError(parsed: unknown, status: number): MailBlastrError {
+  const body = (parsed && typeof parsed === 'object' ? parsed : {}) as Record<string, unknown>;
+  const { statusCode, name, message, error, ...rest } = body;
+  const sent = rest.sent;
+  if (Array.isArray(sent) && typeof rest.sent_count !== 'number') {
+    rest.sent_count = sent.length;
+  }
+  return {
+    ...rest,
+    // Trust the transport status; `statusCode` in the body always mirrors it.
+    statusCode: typeof statusCode === 'number' ? statusCode : status,
+    name: typeof name === 'string' ? name : typeof error === 'string' ? error : 'application_error',
+    message: typeof message === 'string' ? message : `Request failed with status ${status}`,
+  };
 }
 
 export class HttpClient {
@@ -91,24 +134,31 @@ export class HttpClient {
       return { data: null, error: { statusCode: 0, name: 'network_error', message: (err as Error).message } };
     }
 
-    let parsed: unknown = null;
-    const textBody = await res.text();
-    if (textBody) {
-      try { parsed = JSON.parse(textBody); } catch { parsed = textBody; }
+    const parsed = parseBody(await res.text());
+    if (!res.ok) return { data: null, error: toError(parsed, res.status) };
+    return { data: parsed as T, error: null };
+  }
+
+  /**
+   * Like `request`, but for endpoints that return plain text rather than JSON
+   * (e.g. a domain's DNS records as CSV). Errors are still the JSON envelope.
+   */
+  async requestText(method: string, path: string): Promise<Result<string>> {
+    const headers: Record<string, string> = {
+      Authorization: `Bearer ${this.apiKey}`,
+      'User-Agent': USER_AGENT,
+    };
+
+    let res: Response;
+    try {
+      res = await this.send(`${this.baseUrl}${path}`, { method, headers });
+    } catch (err) {
+      return { data: null, error: { statusCode: 0, name: 'network_error', message: (err as Error).message } };
     }
 
-    if (!res.ok) {
-      const e = (parsed && typeof parsed === 'object' ? parsed : {}) as Partial<MailBlastrError>;
-      return {
-        data: null,
-        error: {
-          statusCode: e.statusCode ?? res.status,
-          name: e.name ?? 'application_error',
-          message: e.message ?? `Request failed with status ${res.status}`,
-        },
-      };
-    }
-    return { data: parsed as T, error: null };
+    const text = await res.text();
+    if (!res.ok) return { data: null, error: toError(parseBody(text), res.status) };
+    return { data: text, error: null };
   }
 
   /**
@@ -130,22 +180,7 @@ export class HttpClient {
       return { data: null, error: { statusCode: 0, name: 'network_error', message: (err as Error).message } };
     }
 
-    if (!res.ok) {
-      let parsed: unknown = null;
-      const textBody = await res.text();
-      if (textBody) {
-        try { parsed = JSON.parse(textBody); } catch { parsed = textBody; }
-      }
-      const e = (parsed && typeof parsed === 'object' ? parsed : {}) as Partial<MailBlastrError>;
-      return {
-        data: null,
-        error: {
-          statusCode: e.statusCode ?? res.status,
-          name: e.name ?? 'application_error',
-          message: e.message ?? `Request failed with status ${res.status}`,
-        },
-      };
-    }
+    if (!res.ok) return { data: null, error: toError(parseBody(await res.text()), res.status) };
 
     const buf = await res.arrayBuffer();
     return { data: buf, error: null };

@@ -114,8 +114,16 @@ class ResourcesTest < Minitest::Test
     assert_request :post, "/automations/auto_1/steps"
     assert_equal "send_email", last_body["type"]
 
+    Mailblastr::Automations.update_step("auto_1", "step_1", { config: { subject: "Hi" } })
+    assert_request :patch, "/automations/auto_1/steps/step_1"
+    assert_equal({ "subject" => "Hi" }, last_body["config"])
+
     Mailblastr::Automations.delete_step("auto_1", "step_1")
     assert_request :delete, "/automations/auto_1/steps/step_1"
+
+    Mailblastr::Automations.create_with_ai("auto_1", { prompt: "Wait 2 days then send the welcome email" })
+    assert_request :post, "/automations/auto_1/ai"
+    assert_equal "Wait 2 days then send the welcome email", last_body["prompt"]
 
     Mailblastr::Automations.runs("auto_1", { limit: 25 })
     assert_request :get, "/automations/auto_1/runs?limit=25"
@@ -147,19 +155,28 @@ class ResourcesTest < Minitest::Test
     Mailblastr::Events.list
     assert_request :get, "/events"
 
+    Mailblastr::Events.update("evt_1", { schema: { plan: "string", seats: "number" } })
+    assert_request :patch, "/events/evt_1"
+    assert_equal({ "plan" => "string", "seats" => "number" }, last_body["schema"])
+
     Mailblastr::Events.delete("evt_1")
     assert_request :delete, "/events/evt_1"
   end
 
   def test_api_keys
-    Mailblastr::ApiKeys.create({ name: "CI", permission: "sending_access" })
-    assert_request :post, "/api-keys"
-
     Mailblastr::ApiKeys.list
     assert_request :get, "/api-keys"
 
-    Mailblastr::ApiKeys.delete("key_1")
-    assert_request :delete, "/api-keys/key_1"
+    Mailblastr::ApiKeys.list({ limit: 10 })
+    assert_request :get, "/api-keys?limit=10"
+  end
+
+  # Key lifecycle is dashboard-only, so the SDK exposes nothing that would
+  # reach POST /api-keys, PATCH /api-keys/:id or DELETE /api-keys/:id.
+  def test_api_key_lifecycle_methods_are_absent
+    %i[create update delete remove revoke].each do |name|
+      refute_respond_to Mailblastr::ApiKeys, name, "Mailblastr::ApiKeys.#{name} must not exist"
+    end
   end
 
   def test_logs_with_filters
@@ -168,6 +185,15 @@ class ResourcesTest < Minitest::Test
 
     Mailblastr::Logs.get("log_1")
     assert_request :get, "/logs/log_1"
+  end
+
+  def test_automation_runs_status_filter_accepts_a_string_or_an_array
+    Mailblastr::Automations.runs("auto_1", { status: "failed" })
+    assert_request :get, "/automations/auto_1/runs?status=failed"
+
+    # The server takes a comma-separated list; an Array is joined for you.
+    Mailblastr::Automations.runs("auto_1", { limit: 5, status: %w[failed skipped] })
+    assert_request :get, "/automations/auto_1/runs?limit=5&status=failed%2Cskipped"
   end
 
   def test_polls

@@ -21,6 +21,20 @@ public partial interface IMailblastr
     /// <summary>Trigger DNS verification of a domain. POST /domains/:id/verify</summary>
     Task<ObjectRef> DomainVerifyAsync(string domainId, CancellationToken cancellationToken = default);
 
+    /// <summary>
+    /// Check the MX records currently published for a domain name before
+    /// enabling inbound. Fails open — a lookup failure is a 200 with
+    /// <c>HasMx = false</c>. GET /domains/mx-check
+    /// </summary>
+    Task<MxCheckResult> DomainCheckMxAsync(string domainName, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Download a domain's DNS records as CSV text (CRLF-terminated, header row
+    /// <c>Type,Host,Full name,Value,Priority,TTL,Purpose,Status</c>).
+    /// GET /domains/:id/records.csv
+    /// </summary>
+    Task<string> DomainRetrieveRecordsCsvAsync(string domainId, CancellationToken cancellationToken = default);
+
     /// <summary>Claim a domain already verified by another account. POST /domains/claim</summary>
     Task<DomainClaim> DomainClaimAsync(DomainClaimOptions options, CancellationToken cancellationToken = default);
 

@@ -11,7 +11,7 @@ specific audience via the nested API.
 from typing import Dict, List, TypedDict, Union
 
 from . import http_client
-from .http_client import build_query, path_escape as _e
+from .http_client import build_query, paginate, path_escape as _e
 
 
 class CreateParams(TypedDict, total=False):
@@ -46,6 +46,22 @@ class UpdateTopicsParams(TypedDict):
     topics: List[Dict[str, str]]  # [{"id": ..., "subscription": "opt_in" | "opt_out"}]
 
 
+class ImportCsvParams(TypedDict, total=False):
+    audience_id: str  # required
+    csv: str  # inline CSV text (max 5 MB, 10,000 rows) — or pass storage_key
+    storage_key: str  # key from import_upload(), for files too big to inline
+    file_name: str  # archived name for inline CSV; defaults to contacts.csv
+    on_conflict: str  # 'upsert' (default) | 'skip'
+    create_properties: bool  # False -> don't auto-register unseen columns
+    segment_id: str  # add every imported email to this segment
+
+
+class ImportUploadParams(TypedDict, total=False):
+    audience_id: str  # required
+    filename: str  # required, must end in .csv
+    size: int  # required, bytes; max 256 MB
+
+
 class Contacts:
     """``mailblastr.Contacts`` — the /contacts (+ nested audience) endpoints."""
 
@@ -53,6 +69,8 @@ class Contacts:
     UpdateParams = UpdateParams
     ContactInput = ContactInput
     UpdateTopicsParams = UpdateTopicsParams
+    ImportCsvParams = ImportCsvParams
+    ImportUploadParams = ImportUploadParams
 
     @classmethod
     def create(cls, params):
@@ -105,6 +123,10 @@ class Contacts:
         """Bulk-import contacts from a list — ``{"audience_id", "contacts",
         "on_conflict"?}``. Upserts by email; max 10,000 per call.
         ``on_conflict='skip'`` leaves existing contacts untouched.
+
+        Rows without a valid ``email`` are counted as ``skipped`` rather than
+        failing the request, and ``properties`` are NOT checked against the
+        contact-property registry here (unlike the single-contact writes).
         POST /audiences/:id/contacts/batch"""
         qs = build_query({"on_conflict": params.get("on_conflict")})
         return http_client.request(
@@ -115,23 +137,42 @@ class Contacts:
 
     @classmethod
     def import_csv(cls, params):
-        """Bulk-import contacts from CSV text — ``{"audience_id", "csv",
-        "on_conflict"?, "create_properties"?}``. Upserts by email. By default
-        every non-builtin CSV column is auto-registered as a custom property;
-        pass ``create_properties=False`` for strict mode.
-        POST /audiences/:id/contacts/import"""
+        """Bulk-import contacts from CSV. Upserts by email. By default every
+        non-builtin CSV column is auto-registered as a custom property; pass
+        ``create_properties=False`` for strict mode. ``segment_id`` adds every
+        imported email to that segment. POST /audiences/:id/contacts/import
+
+        Pass ``csv`` for inline text (max 5 MB and 10,000 rows), or a
+        ``storage_key`` from :meth:`import_upload` for anything larger."""
         qs = build_query(
             {
                 "on_conflict": params.get("on_conflict"),
                 "create_properties": (
                     "false" if params.get("create_properties") is False else None
                 ),
+                "segment_id": params.get("segment_id"),
             }
         )
+        body = {}
+        for key in ("csv", "storage_key", "file_name"):
+            if params.get(key) is not None:
+                body[key] = params[key]
+        return http_client.request(
+            "POST", f"/audiences/{_e(params['audience_id'])}/contacts/import{qs}", body
+        )
+
+    @classmethod
+    def import_upload(cls, params):
+        """Mint a presigned direct-upload URL for a CSV too large to inline
+        (up to 256 MB) — ``{"audience_id", "filename", "size"}``. PUT the file
+        to the returned ``upload_url``, then pass the returned ``storage_key``
+        to :meth:`import_csv`. POST /audiences/:id/contacts/import/upload
+
+        The ``upload_url`` is a bearer credential — do not log it."""
         return http_client.request(
             "POST",
-            f"/audiences/{_e(params['audience_id'])}/contacts/import{qs}",
-            {"csv": params["csv"]},
+            f"/audiences/{_e(params['audience_id'])}/contacts/import/upload",
+            {"filename": params["filename"], "size": params["size"]},
         )
 
     @classmethod
@@ -176,14 +217,22 @@ class Contacts:
         )
 
     @classmethod
-    def list_segments(cls, contact_id):
-        """List the segments a contact belongs to. GET /contacts/:id/segments"""
-        return http_client.request("GET", f"/contacts/{_e(contact_id)}/segments")
+    def list_segments(cls, contact_id, params=None):
+        """List the segments a contact belongs to (``id``/``name``/
+        ``created_at`` only, not full segment objects). Called with no
+        pagination params every segment is returned.
+        GET /contacts/:id/segments"""
+        return http_client.request(
+            "GET", f"/contacts/{_e(contact_id)}/segments{paginate(params)}"
+        )
 
     @classmethod
-    def get_topics(cls, contact_id):
-        """Get a contact's topic subscriptions. GET /contacts/:id/topics"""
-        return http_client.request("GET", f"/contacts/{_e(contact_id)}/topics")
+    def get_topics(cls, contact_id, params=None):
+        """Get a contact's topic subscriptions. Called with no pagination
+        params every topic is returned. GET /contacts/:id/topics"""
+        return http_client.request(
+            "GET", f"/contacts/{_e(contact_id)}/topics{paginate(params)}"
+        )
 
     @classmethod
     def update_topics(cls, contact_id, params):

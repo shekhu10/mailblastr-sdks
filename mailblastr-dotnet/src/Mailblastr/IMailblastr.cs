@@ -21,7 +21,15 @@ public partial interface IMailblastr
 
     /// <summary>Send a single email. POST /emails</summary>
     /// <param name="message">The email to send.</param>
-    /// <param name="idempotencyKey">Optional Idempotency-Key for safely retrying the create (24h window).</param>
+    /// <param name="idempotencyKey">
+    /// Optional <c>Idempotency-Key</c> for safely retrying the send. Must be
+    /// 1–255 characters after the server trims it
+    /// (<see cref="MailblastrClient.MaxIdempotencyKeyLength"/>); the server —
+    /// not this client — rejects anything outside that range with
+    /// 400 <c>invalid_idempotency_key</c>. Replaying the key returns the
+    /// original result; reusing it with a different payload is a
+    /// 409 <c>invalid_idempotent_request</c>.
+    /// </param>
     /// <param name="cancellationToken">Token to cancel the request.</param>
     Task<EmailCreated> EmailSendAsync(EmailMessage message, string? idempotencyKey = null, CancellationToken cancellationToken = default);
 
@@ -32,7 +40,9 @@ public partial interface IMailblastr
     /// <summary>
     /// Send up to 100 emails in one request. Batch items reject
     /// <c>attachments</c> and <c>scheduled_at</c> — send those individually via
-    /// <see cref="EmailSendAsync"/>. POST /emails/batch
+    /// <see cref="EmailSendAsync"/>. <paramref name="idempotencyKey"/> follows the
+    /// same 1–255 character rule as <see cref="EmailSendAsync"/>.
+    /// POST /emails/batch
     /// </summary>
     Task<List<EmailCreated>> EmailBatchAsync(IEnumerable<BatchEmailMessage> messages, string? idempotencyKey = null, CancellationToken cancellationToken = default);
 
@@ -41,9 +51,16 @@ public partial interface IMailblastr
 
     /// <summary>
     /// List sent emails with optional server-side <c>campaign_id</c> /
-    /// <c>automation_id</c> / <c>source</c> / <c>domain_id</c> filters. GET /emails
+    /// <c>automation_id</c> / <c>source</c> / <c>domain_id</c> / <c>status</c> /
+    /// <c>search</c> filters. GET /emails
     /// </summary>
     Task<ListResponse<SentEmailListItem>> EmailListAsync(EmailListOptions options, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Send counters rolled up per origin (campaign / automation / individual).
+    /// Not paginated. GET /emails/sources
+    /// </summary>
+    Task<ListResponse<EmailSource>> EmailListSourcesAsync(CancellationToken cancellationToken = default);
 
     /// <summary>Retrieve a sent email and its events. GET /emails/:id</summary>
     Task<Email> EmailRetrieveAsync(string emailId, CancellationToken cancellationToken = default);
@@ -74,11 +91,22 @@ public partial interface IMailblastr
     /// </summary>
     Task<ListResponse<ReceivedEmail>> ReceivedEmailListAsync(ReceivedEmailListOptions options, CancellationToken cancellationToken = default);
 
+    /// <summary>
+    /// Inbound counters per receiving address. Not paginated.
+    /// GET /emails/receiving/addresses
+    /// </summary>
+    Task<ListResponse<ReceivedEmailAddressStats>> ReceivedEmailListAddressesAsync(CancellationToken cancellationToken = default);
+
     /// <summary>Retrieve a received email. GET /emails/receiving/:id</summary>
     Task<ReceivedEmail> ReceivedEmailRetrieveAsync(string receivedEmailId, CancellationToken cancellationToken = default);
 
-    /// <summary>List a received email's attachments. GET /emails/receiving/:id/attachments</summary>
-    Task<ListResponse<ReceivedAttachment>> ReceivedEmailListAttachmentsAsync(string receivedEmailId, CancellationToken cancellationToken = default);
+    /// <summary>
+    /// List a received email's attachments. Pass <paramref name="pagination"/> to
+    /// page; with no <c>Limit</c> and no <c>After</c> cursor the route returns ALL
+    /// attachments with <c>HasMore = false</c>.
+    /// GET /emails/receiving/:id/attachments
+    /// </summary>
+    Task<ListResponse<ReceivedAttachment>> ReceivedEmailListAttachmentsAsync(string receivedEmailId, PaginationOptions? pagination = null, CancellationToken cancellationToken = default);
 
     /// <summary>Download one attachment of a received email as raw bytes. GET /emails/receiving/:id/attachments/:attachmentId</summary>
     Task<byte[]> ReceivedEmailDownloadAttachmentAsync(string receivedEmailId, string attachmentId, CancellationToken cancellationToken = default);

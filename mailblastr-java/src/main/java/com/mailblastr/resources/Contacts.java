@@ -1,5 +1,6 @@
 package com.mailblastr.resources;
 
+import com.mailblastr.ListParams;
 import com.mailblastr.MailblastrResponse;
 import com.mailblastr.http.ApiClient;
 import com.mailblastr.http.Query;
@@ -33,7 +34,10 @@ public final class Contacts extends Resource {
             return api.request("POST", "/audiences/" + enc(request.getAudienceId()) + "/contacts", request.toMap());
         }
         Map<String, Object> body = new LinkedHashMap<>(request.toMap());
-        body.put("domain", request.getDomain());
+        // Only send `domain` when it is set: an explicit null would be reported
+        // as "`domain` (null) is not one of your domains" instead of the
+        // clearer "`domain` is required" the server emits for an absent one.
+        if (request.getDomain() != null) body.put("domain", request.getDomain());
         return api.request("POST", "/contacts", body);
     }
 
@@ -91,16 +95,43 @@ public final class Contacts extends Resource {
     }
 
     /**
-     * Bulk-import contacts from CSV text (upsert by email; non-builtin columns
-     * auto-registered as custom properties unless {@code createProperties(false)}).
+     * Bulk-import contacts from inline CSV text, or from a file already sent
+     * to the presigned URL from {@link #createImportUpload(String, String, long)}
+     * (upsert by email; non-builtin columns auto-registered as custom
+     * properties unless {@code createProperties(false)}).
      * {@code POST /audiences/:id/contacts/import}
      */
     public MailblastrResponse importCsv(ImportContactsRequest request) {
-        Query q = new Query().add("on_conflict", request.getOnConflict());
+        Query q = new Query().add("on_conflict", request.getOnConflict())
+                             .add("segment_id", request.getSegmentId());
         if (Boolean.FALSE.equals(request.getCreateProperties())) q.add("create_properties", "false");
         Map<String, Object> body = new LinkedHashMap<>();
-        body.put("csv", request.getCsv());
+        if (request.getStorageKey() != null) {
+            body.put("storage_key", request.getStorageKey());
+        } else {
+            body.put("csv", request.getCsv());
+            if (request.getFileName() != null) body.put("file_name", request.getFileName());
+        }
         return api.request("POST", "/audiences/" + enc(request.getAudienceId()) + "/contacts/import" + q, body);
+    }
+
+    /**
+     * Mint a presigned direct-upload URL for a CSV too large to inline
+     * (max 256 MB). PUT the file to the returned {@code upload_url}, then pass
+     * the returned {@code storage_key} to
+     * {@link #importCsv(ImportContactsRequest)}.
+     *
+     * <p>The {@code upload_url} is itself a credential — do not log it.
+     * {@code POST /audiences/:id/contacts/import/upload}
+     *
+     * @param filename must end in {@code .csv}
+     * @param size     the file size in bytes; must be greater than zero
+     */
+    public MailblastrResponse createImportUpload(String audienceId, String filename, long size) {
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("filename", filename);
+        body.put("size", size);
+        return api.request("POST", "/audiences/" + enc(audienceId) + "/contacts/import/upload", body);
     }
 
     /**
@@ -144,14 +175,23 @@ public final class Contacts extends Resource {
         return api.request("DELETE", "/contacts/" + enc(id) + "/segments/" + enc(segmentId));
     }
 
-    /** List the segments a contact belongs to. {@code GET /contacts/:id/segments} */
-    public MailblastrResponse listSegments(String id) {
-        return api.request("GET", "/contacts/" + enc(id) + "/segments");
+    /**
+     * List the segments a contact belongs to. Items carry only
+     * {@code id} / {@code name} / {@code created_at}, not the full segment
+     * object. With no pagination params ALL of them are returned.
+     * {@code GET /contacts/:id/segments}
+     */
+    public MailblastrResponse listSegments(String id) { return listSegments(id, null); }
+
+    public MailblastrResponse listSegments(String id, ListParams params) {
+        return api.request("GET", "/contacts/" + enc(id) + "/segments" + paginate(params));
     }
 
     /** Get a contact's topic subscriptions. {@code GET /contacts/:id/topics} */
-    public MailblastrResponse getTopics(String id) {
-        return api.request("GET", "/contacts/" + enc(id) + "/topics");
+    public MailblastrResponse getTopics(String id) { return getTopics(id, null); }
+
+    public MailblastrResponse getTopics(String id, ListParams params) {
+        return api.request("GET", "/contacts/" + enc(id) + "/topics" + paginate(params));
     }
 
     /** Update a contact's topic subscriptions. {@code PATCH /contacts/:id/topics} */

@@ -3,6 +3,7 @@ package mailblastr
 import (
 	"context"
 	"net/http"
+	"strings"
 	"testing"
 )
 
@@ -68,6 +69,32 @@ func TestEmailsSendWithOptionsIdempotencyKey(t *testing.T) {
 	}
 }
 
+// The documented bound is 1-255 characters, measured AFTER the server trims
+// the value (api_idempotency.key is VARCHAR(255)) — 255, not 256. The constant
+// is exported so the rule is discoverable; the key itself is sent verbatim and
+// the SERVER answers an out-of-range one with 400 invalid_idempotency_key, so
+// this package never pre-checks it.
+func TestIdempotencyKeyIsSentVerbatimAndBoundedByTheServer(t *testing.T) {
+	if IdempotencyKeyMaxLen != 255 {
+		t.Fatalf("IdempotencyKeyMaxLen = %d, want 255", IdempotencyKeyMaxLen)
+	}
+
+	tooLong := strings.Repeat("k", IdempotencyKeyMaxLen+1)
+	client := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		if got := r.Header.Get("Idempotency-Key"); got != tooLong {
+			t.Errorf("Idempotency-Key length = %d, want %d (sent verbatim)", len(got), len(tooLong))
+		}
+		w.Write([]byte(`{"id":"em_1"}`))
+	})
+
+	_, err := client.Emails.SendWithOptions(context.Background(),
+		&SendEmailRequest{From: "a@b.com", To: []string{"c@d.com"}, Subject: "s", Text: "t"},
+		&RequestOptions{IdempotencyKey: tooLong})
+	if err != nil {
+		t.Fatalf("the SDK must not reject the key locally: %v", err)
+	}
+}
+
 func TestEmailsListPagination(t *testing.T) {
 	client := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
@@ -89,6 +116,71 @@ func TestEmailsListPagination(t *testing.T) {
 	}
 	if !list.HasMore || len(list.Data) != 1 || list.Data[0].Id != "em_10" {
 		t.Errorf("unexpected list: %+v", list)
+	}
+}
+
+func TestEmailsListFilteredStatusAndSearch(t *testing.T) {
+	client := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		q := r.URL.Query()
+		if q.Get("status") != "bounced" {
+			t.Errorf("status = %q, want bounced", q.Get("status"))
+		}
+		if q.Get("search") != "invoice" {
+			t.Errorf("search = %q, want invoice", q.Get("search"))
+		}
+		if q.Get("domain_id") != "dom_1" || q.Get("campaign_id") != "cmp_1" {
+			t.Errorf("query = %v", q)
+		}
+		w.Write([]byte(`{"object":"list","has_more":false,"data":[{"object":"email","id":"em_1","domain_id":"dom_1","campaign_id":"cmp_1","automation_id":null,"last_event":"bounced","to":["a@b.com"],"from":"c@d.com","subject":"invoice","created_at":"2026-08-08T00:00:00Z"}]}`))
+	})
+
+	list, err := client.Emails.ListFiltered(&ListEmailsRequest{
+		Status:     "bounced",
+		Search:     "invoice",
+		DomainId:   "dom_1",
+		CampaignId: "cmp_1",
+	})
+	if err != nil {
+		t.Fatalf("ListFiltered: %v", err)
+	}
+	got := list.Data[0]
+	if got.DomainId != "dom_1" || got.CampaignId != "cmp_1" {
+		t.Errorf("origin fields not decoded: %+v", got)
+	}
+}
+
+func TestEmailsSources(t *testing.T) {
+	client := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/emails/sources" {
+			t.Errorf("%s %s, want GET /emails/sources", r.Method, r.URL.Path)
+		}
+		w.Write([]byte(`{"object":"list","has_more":false,"data":[{"kind":"campaign","id":"cmp_1","name":"Launch","subject":"Hi","status":"sent","total":10,"sent":10,"delivered":9,"opened":4,"clicked":1,"replied":0,"failed":0,"last_sent_at":"2026-08-08T10:00:00.000Z"}]}`))
+	})
+
+	list, err := client.Emails.Sources()
+	if err != nil {
+		t.Fatalf("Sources: %v", err)
+	}
+	src := list.Data[0]
+	if src.Kind != "campaign" || src.Delivered != 9 || src.LastSentAt == "" {
+		t.Errorf("unexpected source row: %+v", src)
+	}
+}
+
+func TestReceivingListAddresses(t *testing.T) {
+	client := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/emails/receiving/addresses" {
+			t.Errorf("path = %s, want /emails/receiving/addresses", r.URL.Path)
+		}
+		w.Write([]byte(`{"object":"list","has_more":false,"data":[{"address":"hi@x.com","total":12,"replies":3,"interested":1,"last_received_at":"2026-08-08T10:00:00.000Z"}]}`))
+	})
+
+	list, err := client.Emails.Receiving.ListAddresses()
+	if err != nil {
+		t.Fatalf("ListAddresses: %v", err)
+	}
+	if list.Data[0].Address != "hi@x.com" || list.Data[0].Total != 12 {
+		t.Errorf("unexpected row: %+v", list.Data[0])
 	}
 }
 

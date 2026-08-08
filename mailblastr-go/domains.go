@@ -3,6 +3,7 @@ package mailblastr
 import (
 	"context"
 	"net/http"
+	"net/url"
 )
 
 // DomainRecord is one DNS record MailBlastr asks you to create.
@@ -31,8 +32,9 @@ type Domain struct {
 	Id     string `json:"id"`
 	Name   string `json:"name"`
 	// Status is the aggregated verification status: not_started, pending,
-	// verified, partially_verified, partially_failed, failed,
-	// temporary_failure, or revoked.
+	// verified, partially_verified, temporary_failure, failed, or revoked.
+	// (Pending ownership claims carry the internal status "claim" and are
+	// excluded from Domains.List — read them via Domains.GetClaim.)
 	Status string `json:"status"`
 	Region string `json:"region"`
 	// Zone is the DNS zone the registrar manages (e.g. "acme.com" when Name
@@ -52,7 +54,21 @@ type Domain struct {
 	Capabilities     *DomainCapabilities `json:"capabilities,omitempty"`
 	TrackingDomain   string              `json:"tracking_domain,omitempty"`
 	TrackingVerified bool                `json:"tracking_verified,omitempty"`
+	// AwsLastCheckedAt is when the mail service last re-checked this domain's
+	// identity; empty when it never has.
+	AwsLastCheckedAt string `json:"aws_last_checked_at,omitempty"`
+	// AwsCheckError is the last identity-check failure, if any.
+	AwsCheckError string `json:"aws_check_error,omitempty"`
 }
+
+// Domain regions. AvailableDomainRegions may be passed to Domains.Create and
+// Domains.Claim; ComingSoonDomainRegions are recognised but rejected with a
+// 422 validation_error. Any other value silently falls back to the server
+// default (us-east-1).
+var (
+	AvailableDomainRegions  = []string{"us-east-1", "ap-south-1"}
+	ComingSoonDomainRegions = []string{"eu-west-1", "sa-east-1", "ap-northeast-1"}
+)
 
 // CreateDomainRequest is the payload for POST /domains.
 type CreateDomainRequest struct {
@@ -63,11 +79,31 @@ type CreateDomainRequest struct {
 	OpenTracking     *bool  `json:"open_tracking,omitempty"`
 	ClickTracking    *bool  `json:"click_tracking,omitempty"`
 	// TrackingSubdomain is a custom tracking host label, e.g. "email" => email.<domain>.
+	// Supplying it implies CustomTracking = true.
 	TrackingSubdomain string `json:"tracking_subdomain,omitempty"`
+	// CustomTracking serves open/click tracking from your own subdomain
+	// instead of the shared host. Defaults to false.
+	CustomTracking *bool `json:"custom_tracking,omitempty"`
 	// Tls is the outbound TLS policy: "opportunistic" | "enforced".
 	Tls string `json:"tls,omitempty"`
 	// Capabilities to enable, e.g. &DomainCapabilitiesInput{Receiving: "enabled"}.
 	Capabilities *DomainCapabilitiesInput `json:"capabilities,omitempty"`
+}
+
+// MxCheckRecord is one MX host reported by Domains.MxCheck.
+type MxCheckRecord struct {
+	Exchange string `json:"exchange"`
+	Priority int    `json:"priority"`
+}
+
+// MxCheckResponse reports a domain's live MX records. The endpoint fails open:
+// a DNS failure yields HasMx=false, Ours=false and no records.
+type MxCheckResponse struct {
+	HasMx bool `json:"has_mx"`
+	// Ours is true only when every MX host points at MailBlastr.
+	Ours bool `json:"ours"`
+	// Records are sorted by ascending Priority.
+	Records []MxCheckRecord `json:"records"`
 }
 
 // DomainCapabilitiesInput selects capabilities on create/update.
@@ -226,6 +262,30 @@ func (s *DomainsService) VerifyClaim(id string) (*DomainClaim, error) {
 // VerifyClaimWithContext verifies a domain claim. POST /domains/:id/claim/verify
 func (s *DomainsService) VerifyClaimWithContext(ctx context.Context, id string) (*DomainClaim, error) {
 	return request[DomainClaim](ctx, s.client, http.MethodPost, "/domains/"+esc(id)+"/claim/verify", nil, nil)
+}
+
+// MxCheck reports the live MX records for a domain name (not an id) and
+// whether they already point at MailBlastr. GET /domains/mx-check?name=...
+func (s *DomainsService) MxCheck(name string) (*MxCheckResponse, error) {
+	return s.MxCheckWithContext(context.Background(), name)
+}
+
+// MxCheckWithContext reports the live MX records for a domain name.
+// GET /domains/mx-check?name=...
+func (s *DomainsService) MxCheckWithContext(ctx context.Context, name string) (*MxCheckResponse, error) {
+	return request[MxCheckResponse](ctx, s.client, http.MethodGet, "/domains/mx-check?name="+url.QueryEscape(name), nil, nil)
+}
+
+// RecordsCSV downloads the domain's DNS records as CSV bytes (the route
+// streams text/csv, not JSON). GET /domains/:id/records.csv
+func (s *DomainsService) RecordsCSV(id string) ([]byte, error) {
+	return s.RecordsCSVWithContext(context.Background(), id)
+}
+
+// RecordsCSVWithContext downloads the domain's DNS records as CSV bytes.
+// GET /domains/:id/records.csv
+func (s *DomainsService) RecordsCSVWithContext(ctx context.Context, id string) ([]byte, error) {
+	return requestRaw(ctx, s.client, http.MethodGet, "/domains/"+esc(id)+"/records.csv")
 }
 
 // DetectDns detects a domain's DNS provider and the one-click apply methods

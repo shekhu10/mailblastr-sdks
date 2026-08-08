@@ -27,7 +27,10 @@ public final class Campaigns extends Resource {
         return api.request("GET", "/campaigns/" + enc(id));
     }
 
-    /** {@code GET /campaigns} */
+    /**
+     * List campaigns. With no pagination params the route returns ALL of them
+     * and {@code has_more:false}. {@code GET /campaigns}
+     */
     public MailblastrResponse list() { return list(null); }
 
     public MailblastrResponse list(ListParams params) {
@@ -74,7 +77,21 @@ public final class Campaigns extends Resource {
         return api.request("GET", "/campaigns/" + enc(id) + "/stats");
     }
 
-    /** A/B winner evaluation for an A/B campaign. {@code GET /campaigns/:id/ab} */
+    /**
+     * Who opened / clicked / replied, per contact. Each of the three lists is
+     * hard-capped at 500 rows and this route is not paginated.
+     * {@code GET /campaigns/:id/engagement}
+     */
+    public MailblastrResponse engagement(String id) {
+        return api.request("GET", "/campaigns/" + enc(id) + "/engagement");
+    }
+
+    /**
+     * A/B winner evaluation for an A/B campaign. A campaign that is not an A/B
+     * test answers {@code 422 validation_error}. Note the deliberately
+     * camelCase {@code zScore} / {@code pValue} fields in the result.
+     * {@code GET /campaigns/:id/ab}
+     */
     public MailblastrResponse ab(String id) {
         return api.request("GET", "/campaigns/" + enc(id) + "/ab");
     }

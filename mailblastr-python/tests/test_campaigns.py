@@ -45,6 +45,10 @@ class TestCampaigns(RecordingTestCase):
         mailblastr.Campaigns.stats("cmp_1")
         self.assertCall("GET", "/campaigns/cmp_1/stats")
 
+    def test_engagement(self):
+        mailblastr.Campaigns.engagement("cmp_1")
+        self.assertCall("GET", "/campaigns/cmp_1/engagement")
+
     def test_ab(self):
         mailblastr.Campaigns.ab("cmp_1")
         self.assertCall("GET", "/campaigns/cmp_1/ab")

@@ -18,7 +18,7 @@ pub struct Contact {
     pub unsubscribed: bool,
     /// Custom contact properties (own values merged over registered fallbacks).
     pub properties: Option<HashMap<String, Value>>,
-    pub created_at: String,
+    pub created_at: Option<String>,
 }
 
 /// Options for `contacts.create`. Pass `domain` (flat `/contacts` API —
@@ -246,14 +246,23 @@ impl OnConflict {
     }
 }
 
-/// Options for the CSV import.
-#[derive(Debug, Clone, Copy, Default)]
+/// Options for the CSV import. Inline CSV is capped at 5 MB / 10,000 rows —
+/// for bigger files mint a direct upload with
+/// [`ContactsSvc::create_import_upload`](crate::services::contacts::ContactsSvc::create_import_upload)
+/// and import by `storage_key`.
+#[derive(Debug, Clone, Default)]
 pub struct ImportCsvOptions {
     pub on_conflict: Option<OnConflict>,
     /// Default (`None`/`Some(true)`): every non-builtin CSV column is
     /// auto-registered as a custom property. `Some(false)` = strict mode
     /// (unregistered columns are dropped and reported).
     pub create_properties: Option<bool>,
+    /// Also add every imported email to this segment. It must be one of your
+    /// segments AND belong to the target audience.
+    pub segment_id: Option<String>,
+    /// File name recorded on the archived source file (default
+    /// `contacts.csv`).
+    pub file_name: Option<String>,
 }
 
 impl ImportCsvOptions {
@@ -270,9 +279,22 @@ impl ImportCsvOptions {
         self.create_properties = Some(create_properties);
         self
     }
+
+    /// Add every imported email to this segment as well.
+    pub fn with_segment_id(mut self, segment_id: impl Into<String>) -> Self {
+        self.segment_id = Some(segment_id.into());
+        self
+    }
+
+    pub fn with_file_name(mut self, file_name: impl Into<String>) -> Self {
+        self.file_name = Some(file_name.into());
+        self
+    }
 }
 
-/// Result of a batch / CSV contact import.
+/// Result of a batch / CSV contact import. The `imported`/`updated`/
+/// `skipped`/`total` counters are always present; the remaining fields are
+/// returned by the CSV import only.
 #[derive(Debug, Clone, Deserialize)]
 pub struct ImportContactsResponse {
     pub object: String,
@@ -284,6 +306,38 @@ pub struct ImportContactsResponse {
     pub skipped: u64,
     /// Distinct contacts processed.
     pub total: u64,
+    /// CSV import only: rows without a usable email.
+    pub invalid_rows: Option<u64>,
+    /// CSV import only: rows dropped because the plan's contact cap was hit.
+    pub limit_skipped: Option<u64>,
+    /// CSV import only: rows skipped by the importer itself.
+    pub system_skipped: Option<u64>,
+    /// CSV import only: header columns that were not imported.
+    pub ignored_columns: Option<Vec<String>>,
+    /// CSV import only: the archived source file.
+    pub source_file: Option<Value>,
+    /// CSV import only: contact-cap accounting for this import.
+    pub contact_limit: Option<Value>,
+    /// CSV import only, and only when `segment_id` was supplied.
+    pub segment_added: Option<u64>,
+}
+
+/// Presigned direct-to-S3 upload slot for a large contact CSV
+/// (`POST /audiences/:id/contacts/import/upload`). `upload_url` is a bearer
+/// credential — PUT the file to it and never log it.
+#[derive(Debug, Clone, Deserialize)]
+pub struct ContactImportUpload {
+    pub object: String,
+    /// Feed this to
+    /// [`ContactsSvc::import_from_storage_key`](crate::services::contacts::ContactsSvc::import_from_storage_key)
+    /// once the upload finishes.
+    pub storage_key: String,
+    pub upload_url: String,
+    pub content_type: String,
+    /// Seconds the presigned URL stays valid.
+    pub expires_in: u64,
+    /// Upload size ceiling in bytes (256 MB).
+    pub max_bytes: u64,
 }
 
 /// Cursor paging + filters for listing contacts. On the flat `/contacts`
@@ -341,13 +395,23 @@ impl ListContactsParams {
     }
 }
 
-/// `{ object: 'contact', contact, deleted }` returned by `contacts.remove`.
+/// `{ object: 'contact', id, deleted }` returned by `contacts.remove`.
 #[derive(Debug, Clone, Deserialize)]
 pub struct DeletedContactResponse {
     pub object: String,
     /// The deleted contact's id.
-    pub contact: String,
+    pub id: String,
     pub deleted: bool,
+}
+
+/// A segment reference as returned by `contacts.list_segments()` — the route
+/// returns only `id`/`name`/`created_at`, not the full
+/// [`Segment`](crate::services::segments::Segment).
+#[derive(Debug, Clone, Deserialize)]
+pub struct ContactSegmentRef {
+    pub id: String,
+    pub name: String,
+    pub created_at: Option<String>,
 }
 
 /// `{ id, audienceId, deleted }` returned by `contacts.remove_from_segment`.

@@ -61,9 +61,32 @@ public partial interface IMailblastr
     /// Bulk-import contacts from CSV text (header row optional). Upserts by email.
     /// By default every non-builtin CSV column is auto-registered as a custom
     /// property; pass <paramref name="createProperties"/> false for strict mode.
+    /// <paramref name="segmentId"/> also adds every imported email to that segment
+    /// (it must belong to this audience) and populates <c>SegmentAdded</c> on the
+    /// response. <paramref name="fileName"/> is the name recorded for the archived
+    /// copy (defaults to <c>contacts.csv</c>).
     /// POST /audiences/:id/contacts/import
     /// </summary>
-    Task<ImportContactsResponse> ContactImportAsync(string audienceId, string csv, string? onConflict = null, bool? createProperties = null, CancellationToken cancellationToken = default);
+    Task<ImportContactsResponse> ContactImportAsync(string audienceId, string csv, string? onConflict = null, bool? createProperties = null, string? segmentId = null, string? fileName = null, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Mint a presigned direct-upload slot for a contact CSV too large for the
+    /// inline 5 MB / 10,000-row path (max 256 MB). PUT the file to the returned
+    /// <c>UploadUrl</c>, then call <see cref="ContactImportStorageKeyAsync"/>.
+    /// POST /audiences/:id/contacts/import/upload
+    /// </summary>
+    Task<ContactImportUpload> ContactImportCreateUploadAsync(string audienceId, string fileName, long sizeBytes, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Import a CSV that was uploaded via
+    /// <see cref="ContactImportCreateUploadAsync"/>. Contacts beyond the plan's
+    /// remaining capacity are reported as <c>LimitSkipped</c> rather than failing
+    /// the request. <paramref name="segmentId"/> also adds every imported email to
+    /// that segment (it must belong to this audience) and populates
+    /// <c>SegmentAdded</c> on the response.
+    /// POST /audiences/:id/contacts/import
+    /// </summary>
+    Task<ImportContactsResponse> ContactImportStorageKeyAsync(string audienceId, string storageKey, string? onConflict = null, bool? createProperties = null, string? segmentId = null, CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Update a contact. On the flat API, set <c>options.Domain</c> when
@@ -84,8 +107,12 @@ public partial interface IMailblastr
     /// <summary>Remove a contact from a segment. DELETE /contacts/:id/segments/:segmentId</summary>
     Task<SegmentMembershipRemoved> ContactRemoveFromSegmentAsync(string contactId, string segmentId, CancellationToken cancellationToken = default);
 
-    /// <summary>List the segments a contact belongs to. GET /contacts/:id/segments</summary>
-    Task<ListResponse<Segment>> ContactListSegmentsAsync(string contactId, CancellationToken cancellationToken = default);
+    /// <summary>
+    /// List the segments a contact belongs to. Rows carry only id/name/created_at
+    /// (see <see cref="ContactSegmentRef"/>), not the full segment.
+    /// GET /contacts/:id/segments
+    /// </summary>
+    Task<ListResponse<ContactSegmentRef>> ContactListSegmentsAsync(string contactId, PaginationOptions? pagination = null, CancellationToken cancellationToken = default);
 
     /// <summary>Get a contact's topic subscriptions. GET /contacts/:id/topics</summary>
     Task<ContactTopics> ContactRetrieveTopicsAsync(string contactId, CancellationToken cancellationToken = default);

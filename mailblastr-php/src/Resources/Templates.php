@@ -8,6 +8,8 @@ use Mailblastr\Client;
 
 /**
  * Email templates (draft/publish lifecycle, {{ variables }}, aliases).
+ *
+ * Every `/templates/:id` route accepts either the template id or its `alias`.
  */
 class Templates extends Resource
 {
@@ -15,9 +17,14 @@ class Templates extends Resource
      * Create a template. POST /templates
      * Returns the slim ack ['object' => 'template', 'id' => …].
      *
-     * @param array $payload name (required), alias, subject, from, reply_to,
-     *                       html, text, variables ([['key' => …, 'type' => …,
-     *                       'fallback_value' => …], …]).
+     * @param array $payload name (required, max 255), alias (max 255, unique
+     *                       per account), subject (max 998), from (max 320),
+     *                       reply_to (max 320), html, text, variables (max 50;
+     *                       [['key' => …, 'type' => 'string'|'number',
+     *                       'fallback_value' => …], …]). At least one of
+     *                       html/text is required. New templates start as
+     *                       drafts — sends use the published snapshot, so call
+     *                       {@see publish()} before sending.
      */
     public function create(array $payload): array
     {

@@ -30,10 +30,12 @@ type ReceivedEmailRaw struct {
 
 // ReceivedEmail is an inbound email as returned by GET /emails/receiving/:id.
 type ReceivedEmail struct {
-	Object      string   `json:"object"`
-	Id          string   `json:"id"`
-	From        string   `json:"from"`
-	To          []string `json:"to"`
+	Object string   `json:"object"`
+	Id     string   `json:"id"`
+	From   string   `json:"from"`
+	To     []string `json:"to"`
+	// DomainId is the receiving domain the message arrived on.
+	DomainId    string   `json:"domain_id"`
 	Cc          []string `json:"cc,omitempty"`
 	Bcc         []string `json:"bcc,omitempty"`
 	ReceivedFor []string `json:"received_for,omitempty"`
@@ -86,6 +88,17 @@ type ListReceivedEmailsRequest struct {
 	ReceivedFor string
 }
 
+// ReceivedAddressStats is one row of Receiving.ListAddresses: inbound volume
+// per receiving address.
+type ReceivedAddressStats struct {
+	Address string `json:"address"`
+	Total   int    `json:"total"`
+	Replies int    `json:"replies"`
+	// Interested counts replies the AI classifier tagged "interested".
+	Interested     int    `json:"interested"`
+	LastReceivedAt string `json:"last_received_at"`
+}
+
 // ReceivingService handles inbound (received) email — client.Emails.Receiving.
 type ReceivingService struct {
 	client *Client
@@ -133,6 +146,18 @@ func (s *ReceivingService) ListFilteredWithContext(ctx context.Context, params *
 	return request[ListResponse[ReceivedEmail]](ctx, s.client, http.MethodGet, path, nil, nil)
 }
 
+// ListAddresses reports inbound volume per receiving address. Not paginated —
+// HasMore is always false. GET /emails/receiving/addresses
+func (s *ReceivingService) ListAddresses() (*ListResponse[ReceivedAddressStats], error) {
+	return s.ListAddressesWithContext(context.Background())
+}
+
+// ListAddressesWithContext reports inbound volume per receiving address.
+// GET /emails/receiving/addresses
+func (s *ReceivingService) ListAddressesWithContext(ctx context.Context) (*ListResponse[ReceivedAddressStats], error) {
+	return request[ListResponse[ReceivedAddressStats]](ctx, s.client, http.MethodGet, "/emails/receiving/addresses", nil, nil)
+}
+
 // Get retrieves a received email. GET /emails/receiving/:id
 func (s *ReceivingService) Get(id string) (*ReceivedEmail, error) {
 	return s.GetWithContext(context.Background(), id)
@@ -143,15 +168,16 @@ func (s *ReceivingService) GetWithContext(ctx context.Context, id string) (*Rece
 	return request[ReceivedEmail](ctx, s.client, http.MethodGet, "/emails/receiving/"+esc(id), nil, nil)
 }
 
-// ListAttachments lists a received email's attachments.
-// GET /emails/receiving/:id/attachments
-func (s *ReceivingService) ListAttachments(id string) (*ListResponse[ReceivedAttachment], error) {
-	return s.ListAttachmentsWithContext(context.Background(), id)
+// ListAttachments lists a received email's attachments. Passing nil params
+// returns every attachment: this endpoint only pages when you supply
+// pagination params. GET /emails/receiving/:id/attachments
+func (s *ReceivingService) ListAttachments(id string, params *ListParams) (*ListResponse[ReceivedAttachment], error) {
+	return s.ListAttachmentsWithContext(context.Background(), id, params)
 }
 
 // ListAttachmentsWithContext lists a received email's attachments.
-func (s *ReceivingService) ListAttachmentsWithContext(ctx context.Context, id string) (*ListResponse[ReceivedAttachment], error) {
-	return request[ListResponse[ReceivedAttachment]](ctx, s.client, http.MethodGet, "/emails/receiving/"+esc(id)+"/attachments", nil, nil)
+func (s *ReceivingService) ListAttachmentsWithContext(ctx context.Context, id string, params *ListParams) (*ListResponse[ReceivedAttachment], error) {
+	return request[ListResponse[ReceivedAttachment]](ctx, s.client, http.MethodGet, listPath("/emails/receiving/"+esc(id)+"/attachments", params), nil, nil)
 }
 
 // GetAttachment downloads one attachment of a received email as raw bytes

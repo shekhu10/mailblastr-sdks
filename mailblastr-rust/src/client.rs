@@ -8,9 +8,10 @@ use std::time::{Duration, SystemTime};
 use reqwest::header::HeaderMap;
 use reqwest::{Method, RequestBuilder};
 use serde::de::DeserializeOwned;
+use serde_json::{from_value, Value};
 
 use crate::services::*;
-use crate::types::{Error, PaginationParams, Result};
+use crate::types::{ApiError, Error, IdResponse, PaginationParams, Result};
 
 /// The production MailBlastr API host.
 pub const DEFAULT_BASE_URL: &str = "https://www.mailblastr.com/api";
@@ -34,6 +35,20 @@ pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 /// `User-Agent` header sent with every request.
 pub const USER_AGENT: &str = concat!("mailblastr-rust/", env!("CARGO_PKG_VERSION"));
+
+/// Longest `Idempotency-Key` the API accepts. The accepted range is
+/// **1–255** characters measured after the server trims the value (the
+/// storage column is `VARCHAR(255)`) — not 256. Anything outside it is a
+/// `400 invalid_idempotency_key`.
+///
+/// The header is honoured by `POST /emails` and `POST /emails/batch` ONLY
+/// (`emails.send_with_idempotency_key`, `batch.send_emails_with_idempotency_key`).
+/// Every other endpoint ignores it, so a retry there creates a second
+/// resource.
+///
+/// This crate does not check the length itself — the server is the
+/// authority. The constant is exported so the rule is discoverable.
+pub const IDEMPOTENCY_KEY_MAX_LEN: usize = 255;
 
 /// Shared request configuration handed to every service (cheap `Arc` clone).
 pub(crate) struct Config {
@@ -164,24 +179,47 @@ fn backoff_delay(attempt: u32) -> Duration {
 
 /// Parse the standard `{ statusCode, name, message }` error body, falling
 /// back to the HTTP status when the body is absent or malformed.
+///
+/// Some errors are a superset of the envelope; the additive `limit`,
+/// `reputation` and `sent`/`sent_count` fields are parsed here too, and the
+/// raw body is retained so extras this version does not model stay reachable.
 fn api_error(status: u16, body: &[u8]) -> Error {
-    #[derive(Default, serde::Deserialize)]
-    struct ErrorBody {
-        #[serde(rename = "statusCode")]
-        status_code: Option<u16>,
-        name: Option<String>,
-        message: Option<String>,
+    let parsed: Option<Value> = serde_json::from_slice(body).ok();
+    // Read field by field: an additive field in a shape this SDK version does
+    // not expect must never cost the caller the envelope itself.
+    let obj = parsed.as_ref().and_then(Value::as_object);
+    let field = |key: &str| obj.and_then(|o| o.get(key));
+    /// Decode one additive field, yielding `None` when it is absent or has a
+    /// shape this version does not understand.
+    fn detail<T: DeserializeOwned>(v: Option<&Value>) -> Option<T> {
+        v.cloned().and_then(|v| from_value(v).ok())
     }
-    let parsed: ErrorBody = serde_json::from_slice(body).unwrap_or_default();
-    Error::Api {
-        status_code: parsed.status_code.unwrap_or(status),
-        name: parsed
-            .name
-            .unwrap_or_else(|| "application_error".to_owned()),
-        message: parsed
-            .message
+
+    let sent: Vec<IdResponse> = detail(field("sent")).unwrap_or_default();
+    let sent_count = field("sent_count")
+        .and_then(Value::as_u64)
+        .map(|n| n as u32)
+        .unwrap_or(sent.len() as u32);
+
+    Error::Api(Box::new(ApiError {
+        status_code: field("statusCode")
+            .and_then(Value::as_u64)
+            .map(|n| n as u16)
+            .unwrap_or(status),
+        name: field("name")
+            .and_then(Value::as_str)
+            .unwrap_or("application_error")
+            .to_owned(),
+        message: field("message")
+            .and_then(Value::as_str)
+            .map(str::to_owned)
             .unwrap_or_else(|| format!("Request failed with status {status}")),
-    }
+        limit: detail(field("limit")),
+        reputation: detail(field("reputation")),
+        sent,
+        sent_count,
+        body: parsed,
+    }))
 }
 
 /// Percent-encode a single URL path segment (RFC 3986 unreserved characters
@@ -389,35 +427,157 @@ mod tests {
         assert_eq!(seg("a b"), "a%20b");
     }
 
+    /// Grab the `ApiError` out of an `Error`, failing the test otherwise.
+    fn expect_api(e: Error) -> ApiError {
+        match e {
+            Error::Api(api) => *api,
+            other => panic!("expected Api error, got {other:?}"),
+        }
+    }
+
     #[test]
     fn api_error_parses_standard_body_and_falls_back() {
-        let e = api_error(
+        let api = expect_api(api_error(
             422,
             br#"{"statusCode":422,"name":"validation_error","message":"domain is required"}"#,
-        );
-        match e {
-            Error::Api {
-                status_code,
-                name,
-                message,
-            } => {
-                assert_eq!(status_code, 422);
-                assert_eq!(name, "validation_error");
-                assert_eq!(message, "domain is required");
-            }
-            other => panic!("expected Api error, got {other:?}"),
-        }
+        ));
+        assert_eq!(api.status_code, 422);
+        assert_eq!(api.name, "validation_error");
+        assert_eq!(api.message, "domain is required");
+        // An ordinary error carries none of the additive fields.
+        assert!(api.limit.is_none());
+        assert!(api.reputation.is_none());
+        assert!(api.sent.is_empty());
+        assert_eq!(api.sent_count, 0);
 
-        let e = api_error(500, b"not json");
-        match e {
-            Error::Api {
-                status_code, name, ..
-            } => {
-                assert_eq!(status_code, 500);
-                assert_eq!(name, "application_error");
-            }
-            other => panic!("expected Api error, got {other:?}"),
-        }
+        let api = expect_api(api_error(500, b"not json"));
+        assert_eq!(api.status_code, 500);
+        assert_eq!(api.name, "application_error");
+        assert!(api.body.is_none(), "a non-JSON body has nothing to retain");
+    }
+
+    /// A plan/quota rejection is a superset of the envelope: without the
+    /// `limit` object a caller cannot tell WHICH quota was hit.
+    #[test]
+    fn api_error_parses_the_plan_limit_object() {
+        let api = expect_api(api_error(
+            429,
+            br#"{"statusCode":429,"name":"daily_quota_exceeded","message":"Daily send limit reached.",
+                 "limit":{"kind":"emails_daily","used":100,"limit":100,"requested":3,"remaining":0,
+                          "period":"24h","plan":{"id":"free","name":"Free"},
+                          "next_plan":{"id":"pro","name":"Pro","amount":1400,"currency":"USD",
+                                       "monthly_emails":50000,"daily_emails":2000,"domains":10,
+                                       "contacts":10000,"ai_credits":100,"automation_runs":10000},
+                          "credits":{"balance":0,"needed":1,"purchasable":true,"unit":1000,
+                                     "amount_per_unit_cents":100}}}"#,
+        ));
+        let limit = api.limit.expect("limit object on a quota error");
+        assert_eq!(limit.kind, "emails_daily");
+        assert_eq!((limit.used, limit.limit), (100, 100));
+        assert_eq!(limit.requested, Some(3));
+        assert_eq!(limit.remaining, Some(0));
+        assert_eq!(limit.period.as_deref(), Some("24h"));
+        assert_eq!(limit.plan.id, "free");
+        let next = limit.next_plan.expect("next_plan when one fits");
+        assert_eq!((next.id.as_str(), next.amount), ("pro", 1400));
+        let credits = limit.credits.expect("credits on an email-quota kind");
+        assert!(credits.purchasable);
+        assert_eq!(credits.unit, 1000);
+        assert!(api.reputation.is_none());
+    }
+
+    /// `next_plan` is JSON null when only Enterprise fits — that must read as
+    /// `None`, not a zero-priced upgrade.
+    #[test]
+    fn api_error_plan_limit_handles_null_next_plan() {
+        let api = expect_api(api_error(
+            402,
+            br#"{"statusCode":402,"name":"plan_limit_reached","message":"Domain limit reached.",
+                 "limit":{"kind":"domains","used":1,"limit":1,"requested":2,"remaining":0,
+                          "plan":{"id":"free","name":"Free"},"next_plan":null}}"#,
+        ));
+        let limit = api.limit.expect("limit object on a plan error");
+        assert_eq!(limit.kind, "domains");
+        assert!(limit.next_plan.is_none());
+        // Not an email-quota kind: no credits block, no rolling window.
+        assert!(limit.credits.is_none());
+        assert!(limit.period.is_none());
+    }
+
+    #[test]
+    fn api_error_parses_the_reputation_object() {
+        let api = expect_api(api_error(
+            429,
+            br#"{"statusCode":429,"name":"reputation_limit_exceeded","message":"Warm-up capacity reached.",
+                 "reputation":{"retryable":true,"scope":"domain","status":"warming",
+                               "scope_key":"example.com","hourly_limit":50,"daily_limit":500,
+                               "hourly_used":50,"daily_used":120,
+                               "retry_at":"2026-08-08T10:00:00.000Z",
+                               "support_email":"support@mailblastr.com"}}"#,
+        ));
+        let rep = api.reputation.expect("reputation object on a gate error");
+        assert!(rep.retryable);
+        assert_eq!(rep.scope, "domain");
+        assert_eq!(rep.scope_key.as_deref(), Some("example.com"));
+        assert_eq!(rep.hourly_limit, Some(50));
+        assert_eq!(rep.daily_used, Some(120));
+        assert!(rep.retry_at.is_some());
+        assert!(api.limit.is_none());
+    }
+
+    /// A batch that dies part way through names the emails that DID go out.
+    #[test]
+    fn api_error_parses_partial_batch_sent() {
+        let api = expect_api(api_error(
+            429,
+            br#"{"statusCode":429,"name":"daily_quota_exceeded","message":"Daily send limit reached.",
+                 "limit":{"kind":"emails_daily","used":100,"limit":100,
+                          "plan":{"id":"free","name":"Free"}},
+                 "sent":[{"id":"em_1"},{"id":"em_2"}],"sent_count":2}"#,
+        ));
+        assert_eq!(api.sent_count, 2);
+        let ids: Vec<&str> = api.sent.iter().map(|e| e.id.as_str()).collect();
+        assert_eq!(ids, vec!["em_1", "em_2"]);
+        assert_eq!(api.limit.expect("limit").kind, "emails_daily");
+    }
+
+    /// `sent_count` is derived from `sent` when the server omits it, so it can
+    /// always be trusted.
+    #[test]
+    fn api_error_derives_sent_count_when_absent() {
+        let api = expect_api(api_error(
+            422,
+            br#"{"statusCode":422,"name":"validation_error","message":"bad item",
+                 "sent":[{"id":"em_1"}]}"#,
+        ));
+        assert_eq!(api.sent_count, 1);
+    }
+
+    /// Fields this version does not model stay reachable through `body`.
+    #[test]
+    fn api_error_retains_the_raw_body() {
+        let api = expect_api(api_error(
+            404,
+            br#"{"statusCode":404,"name":"not_found","message":"Email not found.","future_field":"kept"}"#,
+        ));
+        let body = api.body.expect("JSON body retained");
+        assert_eq!(body["future_field"], "kept");
+    }
+
+    /// An additive field in a shape this version does not expect must cost the
+    /// caller that field only — never the envelope, never the other extras.
+    #[test]
+    fn api_error_unexpected_extra_shape_keeps_the_envelope() {
+        let api = expect_api(api_error(
+            422,
+            br#"{"statusCode":422,"name":"validation_error","message":"bad item",
+                 "limit":"not-an-object","sent":[{"id":"em_1"}]}"#,
+        ));
+        assert_eq!(api.status_code, 422);
+        assert_eq!(api.name, "validation_error");
+        assert_eq!(api.message, "bad item");
+        assert!(api.limit.is_none(), "an unparseable limit reads as absent");
+        assert_eq!(api.sent_count, 1, "a bad `limit` must not drop `sent`");
     }
 
     #[test]

@@ -179,7 +179,7 @@ public class ContactInput
 public class ImportContactsResponse
 {
     [JsonPropertyName("object")]
-    public string Object { get; set; } = "list";
+    public string Object { get; set; } = "contact_import";
 
     /// <summary>Newly inserted.</summary>
     [JsonPropertyName("imported")]
@@ -196,6 +196,66 @@ public class ImportContactsResponse
     /// <summary>Distinct contacts processed.</summary>
     [JsonPropertyName("total")]
     public int Total { get; set; }
+
+    /// <summary>CSV import only: rows without a usable email.</summary>
+    [JsonPropertyName("invalid_rows")]
+    public int? InvalidRows { get; set; }
+
+    /// <summary>CSV import only: rows dropped because the plan's contact cap was reached.</summary>
+    [JsonPropertyName("limit_skipped")]
+    public int? LimitSkipped { get; set; }
+
+    /// <summary>CSV import only: rows the importer itself rejected (suppressed/system addresses).</summary>
+    [JsonPropertyName("system_skipped")]
+    public int? SystemSkipped { get; set; }
+
+    /// <summary>CSV import only: header columns that were not imported.</summary>
+    [JsonPropertyName("ignored_columns")]
+    public List<string>? IgnoredColumns { get; set; }
+
+    /// <summary>CSV import only: emails added to <c>segment_id</c> when one was supplied.</summary>
+    [JsonPropertyName("segment_added")]
+    public int? SegmentAdded { get; set; }
+
+    /// <summary>CSV import only: the archived source file (<c>file_name</c>, <c>storage_key</c>, <c>archived</c>).</summary>
+    [JsonPropertyName("source_file")]
+    public JsonElement? SourceFile { get; set; }
+
+    /// <summary>CSV import only: plan/contact-cap accounting for the import.</summary>
+    [JsonPropertyName("contact_limit")]
+    public JsonElement? ContactLimit { get; set; }
+}
+
+/// <summary>
+/// A presigned direct-to-storage slot for a large contact CSV
+/// (POST /audiences/:id/contacts/import/upload). PUT the file to
+/// <see cref="UploadUrl"/> with <c>Content-Type: </c><see cref="ContentType"/>,
+/// then pass <see cref="StorageKey"/> to ContactImportStorageKeyAsync.
+/// </summary>
+public class ContactImportUpload
+{
+    [JsonPropertyName("object")]
+    public string Object { get; set; } = "contact_import_upload";
+
+    /// <summary>Hand this back to the import endpoint once the upload finished.</summary>
+    [JsonPropertyName("storage_key")]
+    public string StorageKey { get; set; } = null!;
+
+    /// <summary>A bearer credential in URL form — never log it.</summary>
+    [JsonPropertyName("upload_url")]
+    public string UploadUrl { get; set; } = null!;
+
+    /// <summary>The Content-Type the presigned URL was signed for.</summary>
+    [JsonPropertyName("content_type")]
+    public string? ContentType { get; set; }
+
+    /// <summary>Seconds until <see cref="UploadUrl"/> expires.</summary>
+    [JsonPropertyName("expires_in")]
+    public int ExpiresIn { get; set; }
+
+    /// <summary>Upload size ceiling in bytes (256 MB).</summary>
+    [JsonPropertyName("max_bytes")]
+    public long MaxBytes { get; set; }
 }
 
 /// <summary>Options for listing contacts (limit ≤ 100).</summary>
@@ -214,15 +274,20 @@ public class ContactListOptions : PaginationOptions
     public string? SegmentId { get; set; }
 }
 
-/// <summary>Delete acknowledgement for a contact: <c>{ object: 'contact', contact, deleted }</c>.</summary>
+/// <summary>Delete acknowledgement for a contact: <c>{ object: 'contact', id, deleted }</c>.</summary>
 public class ContactDeleted
 {
     [JsonPropertyName("object")]
     public string Object { get; set; } = "contact";
 
     /// <summary>The deleted contact's id.</summary>
-    [JsonPropertyName("contact")]
-    public string Contact { get; set; } = null!;
+    [JsonPropertyName("id")]
+    public string Id { get; set; } = null!;
+
+    /// <summary>The deleted contact's id.</summary>
+    [Obsolete("The API returns the id under `id`, never `contact`. Use Id instead; this alias will be removed in 2.0.")]
+    [JsonIgnore]
+    public string Contact => Id;
 
     [JsonPropertyName("deleted")]
     public bool Deleted { get; set; }

@@ -54,6 +54,36 @@ rescue Mailblastr::Error => e
 end
 ```
 
+Branch on `e.name`, never on `e.message` — messages are sanitized server-side and may change. The same `name` can arrive with different HTTP statuses depending on the endpoint, so read `e.status_code` rather than assuming one. Common names: `missing_api_key` (401), `restricted_api_key` (401, the key lacks the scope), `invalid_api_key` (403), `validation_error` (422), `not_found` (404), `plan_limit_reached` (402), `daily_quota_exceeded` / `monthly_quota_exceeded` / `rate_limit_exceeded` (429).
+
+Some errors carry more than that envelope. The extras are readers on the error and are `nil` on an ordinary one:
+
+```ruby
+rescue Mailblastr::Error => e
+  # WHICH quota ran out, and what would clear it.
+  if (cap = e.limit)
+    cap["kind"]                    # => "emails_daily"
+    cap["used"], cap["limit"]      # => 100, 100
+    cap["period"]                  # => "24h"
+    cap.dig("next_plan", "name")   # => "Pro"
+  end
+
+  # Reputation gates: whether waiting helps, and until when.
+  if (rep = e.reputation)
+    rep["retryable"], rep["scope"], rep["retry_at"]
+  end
+
+  # A batch that failed part way through — do NOT resend these.
+  if (sent = e.sent)
+    puts "#{e.sent_count} already went out: #{sent.map { |s| s['id'] }.join(', ')}"
+  end
+end
+```
+
+`e.body` is the whole parsed error body, so a field newer than this SDK version is still reachable.
+
+Every request carries a `User-Agent` automatically — the API rejects requests without one with a 403 `validation_error`.
+
 ## Domain-first model
 
 MailBlastr is **domain-first**: each sending domain has its own pool of contacts. The same email address on two domains is two records with separate consent, so unsubscribes on one product never leak into another.
@@ -71,6 +101,8 @@ That means `domain` (the sending domain, e.g. `"yourdomain.com"` — one of your
 ```ruby
 Mailblastr::Emails.send({ from: from, to: to, subject: subject, html: html })
 Mailblastr::Emails.list({ limit: 20, after: cursor })   # cursor pagination
+Mailblastr::Emails.list({ status: "bounced", search: "acme.com" }) # filters
+Mailblastr::Emails.sources                              # per-campaign/automation send metrics
 Mailblastr::Emails.get(email_id)
 Mailblastr::Emails.list_attachments(email_id)
 Mailblastr::Emails.get_attachment(email_id, attachment_id)
@@ -97,6 +129,7 @@ Mailblastr::Emails.send({
 
 ```ruby
 Mailblastr::Emails::Receiving.list
+Mailblastr::Emails::Receiving.addresses # per-address inbound stats
 Mailblastr::Emails::Receiving.get(id)
 Mailblastr::Emails::Receiving.list_attachments(id)
 Mailblastr::Emails::Receiving.get_attachment(id, attachment_id) # => raw bytes (String)
@@ -114,6 +147,8 @@ Mailblastr::Domains.get(id)
 Mailblastr::Domains.list
 Mailblastr::Domains.update(id, { click_tracking: true })
 Mailblastr::Domains.verify(id)
+Mailblastr::Domains.mx_check("yourdomain.com") # inspect live MX before enabling receiving
+Mailblastr::Domains.records_csv(id)            # => CSV text (String)
 Mailblastr::Domains.delete(id)
 
 # Claim a domain verified in another account
@@ -145,6 +180,11 @@ Mailblastr::Contacts.list({ audience_id: aud_id, segment_id: seg_id })
 # Bulk import
 Mailblastr::Contacts.batch({ audience_id: aud_id, contacts: [{ email: "a@b.com" }], on_conflict: "skip" })
 Mailblastr::Contacts.import({ audience_id: aud_id, csv: "email,company\na@b.com,Acme" })
+
+# CSV too big to inline (5 MB / 10,000 rows)? Upload it directly, then import by key.
+slot = Mailblastr::Contacts.import_upload({ audience_id: aud_id, filename: "list.csv", size: bytes })
+# PUT the file to slot["upload_url"], then:
+Mailblastr::Contacts.import({ audience_id: aud_id, storage_key: slot["storage_key"] })
 
 # Segments & topics per contact
 Mailblastr::Contacts.add_to_segment(contact_id, segment_id)
@@ -201,6 +241,7 @@ Mailblastr::Campaigns.send(campaign["id"])                                    # 
 Mailblastr::Campaigns.send(campaign["id"], { scheduled_at: "2026-08-01T09:00:00Z" }) # or schedule
 Mailblastr::Campaigns.cancel(campaign["id"])
 Mailblastr::Campaigns.stats(campaign["id"])
+Mailblastr::Campaigns.engagement(campaign["id"]) # who opened / clicked / replied
 Mailblastr::Campaigns.ab(campaign["id"]) # A/B winner evaluation
 Mailblastr::Campaigns.get(campaign["id"])
 Mailblastr::Campaigns.list({ limit: 25 })
@@ -233,7 +274,11 @@ automation = Mailblastr::Automations.create({
 })
 
 Mailblastr::Automations.add_step(automation["id"], { type: "send_email", config: { template_id: tmpl_id } })
+Mailblastr::Automations.update_step(automation["id"], step_id, { config: { subject: "New subject" } })
 Mailblastr::Automations.update(automation["id"], { status: "enabled" })
+
+# Or describe the flow and let the server build the steps (automation must be stopped)
+Mailblastr::Automations.create_with_ai(automation["id"], { prompt: "Wait 2 days, then send the onboarding email" })
 
 # Fire a custom event — only yourdomain.com's automations are triggered
 Mailblastr::Events.send({
@@ -243,13 +288,15 @@ Mailblastr::Events.send({
   payload: { plan: "pro" }
 })
 
-# Event definitions
+# Event definitions — schema types are "string", "number", "boolean" or "date".
+# Event names cannot start with the reserved "mailblastr:" prefix.
 Mailblastr::Events.create({ name: "signup.completed", schema: { plan: "string" } })
 Mailblastr::Events.list
+Mailblastr::Events.update(event_id, { schema: { plan: "string", seats: "number" } }) # name is immutable
 Mailblastr::Events.delete(event_id)
 
 # Inspect execution
-runs = Mailblastr::Automations.runs(automation["id"], { limit: 25 })
+runs = Mailblastr::Automations.runs(automation["id"], { limit: 25, status: ["failed"] })
 Mailblastr::Automations.get_run(automation["id"], runs["data"].first["id"])
 Mailblastr::Automations.delete_step(automation["id"], step_id)
 Mailblastr::Automations.stop(automation["id"])
@@ -261,7 +308,7 @@ Mailblastr::Automations.delete(automation["id"])
 ```ruby
 hook = Mailblastr::Webhooks.create({
   endpoint: "https://yourapp.com/hooks/mailblastr",
-  events: ["email.delivered", "email.bounced", "contact.unsubscribed"]
+  events: ["email.delivered", "email.bounced", "email.unsubscribed"]
 })
 hook["signing_secret"] # shown ONCE — store it
 
@@ -270,6 +317,15 @@ Mailblastr::Webhooks.update(hook["id"], { status: "disabled" })
 Mailblastr::Webhooks.rotate(hook["id"]) # new secret returned once
 Mailblastr::Webhooks.test(hook["id"])
 Mailblastr::Webhooks.delete(hook["id"])
+```
+
+Endpoints must be `https://` and must not resolve to a private address. Valid event names are `email.sent`, `email.delivered`, `email.delivery_delayed`, `email.bounced`, `email.complained`, `email.opened`, `email.clicked`, `email.failed`, `email.scheduled`, `email.suppressed`, `email.received`, `email.replied`, `email.unsubscribed`, `contact.created`, `contact.updated`, `contact.deleted`, `domain.created`, `domain.updated` and `domain.deleted`. Anything else is a 422.
+
+`Webhooks.test` returns HTTP 200 even when the delivery failed — it does not raise. The outcome is `result["ok"]`, with `result["status"]` (your endpoint's HTTP status, when it responded) and `result["error"]` (e.g. `"lookup_failed"`):
+
+```ruby
+result = Mailblastr::Webhooks.test(hook["id"])
+warn "test delivery failed: #{result['error']}" unless result["ok"]
 ```
 
 ### Verifying deliveries
@@ -296,9 +352,7 @@ Pass `tolerance: 0` to skip the timestamp freshness check (default 300 seconds).
 ## API keys, Logs & Polls
 
 ```ruby
-Mailblastr::ApiKeys.create({ name: "CI", permission: "sending_access" })
-Mailblastr::ApiKeys.list
-Mailblastr::ApiKeys.delete(key_id)
+Mailblastr::ApiKeys.list # `token` is the 8-character display prefix, never the secret
 
 Mailblastr::Logs.list({ limit: 100, method: "POST", status: 429 })
 Mailblastr::Logs.get(log_id)
@@ -307,21 +361,48 @@ Mailblastr::Polls.list
 Mailblastr::Polls.get(email_id) # aggregated answer breakdown
 ```
 
+`Mailblastr::ApiKeys.list` is the whole API-key surface: the SDK deliberately
+exposes no method to create, re-scope or revoke a key. Key lifecycle belongs to
+a signed-in dashboard session, and the API enforces it — `POST /api-keys`,
+`PATCH /api-keys/:id` and `DELETE /api-keys/:id` answer `403 dashboard_only` to
+any API-key caller, whatever its permission. That is the point: a key that leaks
+cannot mint itself a replacement, widen its own access, or revoke the keys you
+would use to shut it off. Create and revoke keys at
+[mailblastr.com](https://www.mailblastr.com).
+
 ## Pagination
 
 `list` methods accept cursor pagination — `{ limit:, after:, before: }` — appended as a query string:
 
 ```ruby
-Mailblastr::Campaigns.list({ limit: 25, after: "cursor_abc" })
+page = Mailblastr::Campaigns.list({ limit: 25, after: "cursor_abc" })
+page["object"]   # => "list"
+page["has_more"] # => true when more rows exist beyond this page
+page["data"]     # => [...]
 ```
+
+`limit` is an integer between 1 and 100 (default 20); `after` and `before` are item ids and cannot be combined. An unknown cursor returns an empty page, not an error. There is no `total` and no `next_cursor` — page forward with the last `data` entry's `id` as `after`.
+
+Defaults differ per endpoint. `GET /templates`, `/webhooks`, `/audiences`, `/automations`, `/events` and `/automations/:id/runs` cap an unpaginated call at 20 rows, while `/domains`, `/api-keys`, `/topics`, `/campaigns`, `/contacts`, `/contact-properties`, `/segments` and `/polls` return the whole collection when you pass neither `limit` nor a cursor. Always pass `limit` if you depend on page size.
 
 ## Idempotency
 
-Pass an idempotency key to safely retry a create (24h window):
+Pass an idempotency key to safely retry a send.
 
 ```ruby
 Mailblastr::Emails.send(payload, { idempotency_key: "order-123" })
+Mailblastr::Batch.send(payloads, { idempotency_key: "orders-2026-08-08" })
 ```
+
+The key must be **1–255 characters**, measured after the server trims it — 255, not 256. `Mailblastr::Client::IDEMPOTENCY_KEY_MAX_LENGTH` carries that number. The SDK sends the key verbatim and lets the **server** be the authority: an out-of-range key comes back as `400 invalid_idempotency_key` (a `Mailblastr::Error` with `name == "invalid_idempotency_key"`).
+
+Reusing a key replays the original response; reusing it with a *different* body is a 409 (`invalid_idempotent_request`), and a second request while the first is still in flight is a 409 (`concurrent_idempotent_requests`).
+
+Only `Emails.send` and `Batch.send` honour the header. Every other endpoint — including `Events.send` — accepts and forwards it but the API ignores it, so a retry there creates a second record. De-duplicate on your side instead.
+
+## Rate limits
+
+Only the `/emails` routes are rate-limited: **30 requests per minute per IP**, covering reads as well as sends. Those responses carry `RateLimit-Limit`, `RateLimit-Remaining` and `RateLimit-Reset` headers (on successes too) so you can throttle before being rejected. The SDK retries a 429 or 503 automatically — up to `Mailblastr.max_retries` times (default 2), honouring `Retry-After`.
 
 ## Documentation
 

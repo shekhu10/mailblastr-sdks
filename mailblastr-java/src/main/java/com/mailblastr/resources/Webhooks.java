@@ -28,7 +28,11 @@ public final class Webhooks extends Resource {
         return api.request("GET", "/webhooks/" + enc(id));
     }
 
-    /** {@code GET /webhooks} */
+    /**
+     * List webhooks. Unlike domains/api-keys/topics this route always applies a
+     * limit — with no pagination params you get the first 20.
+     * {@code GET /webhooks}
+     */
     public MailblastrResponse list() { return list(null); }
 
     public MailblastrResponse list(ListParams params) {
@@ -49,7 +53,15 @@ public final class Webhooks extends Resource {
         return api.request("POST", "/webhooks/" + enc(id) + "/rotate");
     }
 
-    /** Send a synchronous test delivery and return the endpoint's live result. {@code POST /webhooks/:id/test} */
+    /**
+     * Send a synchronous, single-attempt test delivery and return the
+     * endpoint's live result.
+     *
+     * <p><strong>A failed delivery is still HTTP 200</strong> — this method
+     * does not throw for one. Inspect {@code ok} on the response
+     * ({@code res.getBoolean("ok")}) and read {@code error} when it is false.
+     * {@code POST /webhooks/:id/test}
+     */
     public MailblastrResponse test(String id) {
         return api.request("POST", "/webhooks/" + enc(id) + "/test");
     }

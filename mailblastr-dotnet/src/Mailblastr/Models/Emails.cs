@@ -162,7 +162,7 @@ public class BatchEmailMessage
 /// <summary>
 /// Options for listing sent emails (GET /emails): cursor pagination plus
 /// optional server-side <c>campaign_id</c> / <c>automation_id</c> /
-/// <c>source</c> / <c>domain_id</c> filters.
+/// <c>source</c> / <c>domain_id</c> / <c>status</c> / <c>search</c> filters.
 /// </summary>
 public class EmailListOptions
 {
@@ -186,6 +186,16 @@ public class EmailListOptions
 
     /// <summary>Only emails sent from this sending domain (domain id); composes with the source filters.</summary>
     public string? DomainId { get; set; }
+
+    /// <summary>
+    /// Only emails whose latest state matches, case-insensitively — the same
+    /// value reads expose as <c>last_event</c> (e.g. <c>delivered</c>,
+    /// <c>bounced</c>, <c>scheduled</c>, <c>failed</c>).
+    /// </summary>
+    public string? Status { get; set; }
+
+    /// <summary>Substring match over recipients, subject and sender.</summary>
+    public string? Search { get; set; }
 }
 
 /// <summary>Response of a send: <c>{ id }</c>.</summary>
@@ -223,6 +233,10 @@ public class Email
 
     [JsonPropertyName("to")]
     public List<string> To { get; set; } = new();
+
+    /// <summary>Id of the sending domain the message went out on; null for legacy rows.</summary>
+    [JsonPropertyName("domain_id")]
+    public string? DomainId { get; set; }
 
     [JsonPropertyName("cc")]
     public List<string>? Cc { get; set; }
@@ -306,6 +320,69 @@ public class SentEmailListItem
 
     [JsonPropertyName("created_at")]
     public string CreatedAt { get; set; } = null!;
+
+    /// <summary>Id of the sending domain the message went out on; null for legacy rows.</summary>
+    [JsonPropertyName("domain_id")]
+    public string? DomainId { get; set; }
+
+    /// <summary>Set when the send originated from a campaign (follow-ups included).</summary>
+    [JsonPropertyName("campaign_id")]
+    public string? CampaignId { get; set; }
+
+    /// <summary>Set when the send originated from an automation step.</summary>
+    [JsonPropertyName("automation_id")]
+    public string? AutomationId { get; set; }
+}
+
+/// <summary>
+/// One row of EmailListSourcesAsync (GET /emails/sources) — send counters
+/// rolled up per origin. Not paginated; <c>has_more</c> is always false.
+/// </summary>
+public class EmailSource
+{
+    /// <summary><c>campaign</c> | <c>automation</c> | <c>individual</c>.</summary>
+    [JsonPropertyName("kind")]
+    public string Kind { get; set; } = null!;
+
+    /// <summary>Campaign/automation id; null on the <c>individual</c> roll-up row.</summary>
+    [JsonPropertyName("id")]
+    public string? Id { get; set; }
+
+    /// <summary>Null on the <c>individual</c> roll-up row.</summary>
+    [JsonPropertyName("name")]
+    public string? Name { get; set; }
+
+    /// <summary>Only populated for <c>campaign</c> rows.</summary>
+    [JsonPropertyName("subject")]
+    public string? Subject { get; set; }
+
+    /// <summary>Only populated for <c>campaign</c> rows.</summary>
+    [JsonPropertyName("status")]
+    public string? Status { get; set; }
+
+    [JsonPropertyName("total")]
+    public int Total { get; set; }
+
+    [JsonPropertyName("sent")]
+    public int Sent { get; set; }
+
+    [JsonPropertyName("delivered")]
+    public int Delivered { get; set; }
+
+    [JsonPropertyName("opened")]
+    public int Opened { get; set; }
+
+    [JsonPropertyName("clicked")]
+    public int Clicked { get; set; }
+
+    [JsonPropertyName("replied")]
+    public int Replied { get; set; }
+
+    [JsonPropertyName("failed")]
+    public int Failed { get; set; }
+
+    [JsonPropertyName("last_sent_at")]
+    public string? LastSentAt { get; set; }
 }
 
 /// <summary>Metadata for an attachment of a SENT email (GET /emails/:id/attachments).</summary>

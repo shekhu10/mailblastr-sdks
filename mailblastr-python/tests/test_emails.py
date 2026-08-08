@@ -33,6 +33,18 @@ class TestEmails(RecordingTestCase):
         mailblastr.Emails.list()
         self.assertCall("GET", "/emails")
 
+    def test_list_with_status_and_search_filters(self):
+        mailblastr.Emails.list({"status": "bounced", "search": "acme.com"})
+        self.assertCall("GET", "/emails?status=bounced&search=acme.com")
+
+    def test_list_with_source_filters(self):
+        mailblastr.Emails.list({"campaign_id": "cmp_1", "domain_id": "dom_1"})
+        self.assertCall("GET", "/emails?campaign_id=cmp_1&domain_id=dom_1")
+
+    def test_sources(self):
+        mailblastr.Emails.sources()
+        self.assertCall("GET", "/emails/sources")
+
     def test_get(self):
         mailblastr.Emails.get("em_123")
         self.assertCall("GET", "/emails/em_123")
@@ -79,9 +91,21 @@ class TestReceiving(RecordingTestCase):
         mailblastr.Emails.Receiving.get("rcv_1")
         self.assertCall("GET", "/emails/receiving/rcv_1")
 
+    def test_addresses(self):
+        mailblastr.Emails.Receiving.addresses()
+        self.assertCall("GET", "/emails/receiving/addresses")
+
+    def test_list_filtered_by_received_for(self):
+        mailblastr.Emails.Receiving.list({"received_for": "hi@acme.com"})
+        self.assertCall("GET", "/emails/receiving?received_for=hi%40acme.com")
+
     def test_attachments(self):
         mailblastr.Emails.Receiving.attachments("rcv_1")
         self.assertCall("GET", "/emails/receiving/rcv_1/attachments")
+
+    def test_attachments_paginated(self):
+        mailblastr.Emails.Receiving.attachments("rcv_1", {"limit": 10, "after": "2"})
+        self.assertCall("GET", "/emails/receiving/rcv_1/attachments?limit=10&after=2")
 
     def test_get_attachment_is_binary(self):
         data = mailblastr.Emails.Receiving.get_attachment("rcv_1", "att_9")

@@ -20,12 +20,18 @@ type ContactProperty struct {
 
 // CreateContactPropertyRequest registers a custom contact property. Provide
 // Key (canonical merge-tag key) or Name (accepted as an alias).
+//
+// Registering a key that already exists is a 409 (with name
+// validation_error — read the status, not the name).
 type CreateContactPropertyRequest struct {
+	// Key must match ^\w{1,50}$ — letters, digits and underscores only.
 	Key  string `json:"key,omitempty"`
 	Name string `json:"name,omitempty"`
-	// Type is "string" | "number".
-	Type          string `json:"type"`
-	FallbackValue any    `json:"fallback_value,omitempty"`
+	// Type is "string" (default) | "number".
+	Type string `json:"type"`
+	// FallbackValue must parse as a finite number when Type is "number";
+	// string fallbacks are truncated to 1000 characters.
+	FallbackValue any `json:"fallback_value,omitempty"`
 }
 
 // UpdateContactPropertyRequest updates a property. Only FallbackValue is

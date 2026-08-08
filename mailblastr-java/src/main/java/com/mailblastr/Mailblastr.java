@@ -41,11 +41,30 @@ import java.time.Duration;
  *
  * <p>Every method returns a {@link MailblastrResponse} (binary downloads
  * return {@code byte[]}); non-2xx responses throw {@link MailblastrException}.
+ *
+ * <p>Every request carries {@code Authorization: Bearer <your mb_ key>} and a
+ * non-empty {@code User-Agent} — the API rejects a request without the latter
+ * with HTTP 403 {@code validation_error}, before it even authenticates.
  */
 public class Mailblastr {
     public static final String DEFAULT_BASE_URL = "https://www.mailblastr.com/api";
-    public static final String VERSION = "1.3.0";
+    public static final String VERSION = "2.0.0";
     public static final String USER_AGENT = "mailblastr-java/" + VERSION;
+
+    /**
+     * Longest {@code Idempotency-Key} the API accepts. The accepted range is
+     * <strong>1&ndash;255</strong> characters measured after the server trims the
+     * value (the storage column is {@code VARCHAR(255)}) — not 256. Anything
+     * outside it is a {@code 400 invalid_idempotency_key}.
+     *
+     * <p>The header is honoured by {@code POST /emails} and
+     * {@code POST /emails/batch} ONLY. Every other endpoint ignores it, so a
+     * retry there creates a second resource.
+     *
+     * <p>This SDK does not check the length itself — the server is the
+     * authority. The constant is exported so the rule is discoverable.
+     */
+    public static final int IDEMPOTENCY_KEY_MAX_LENGTH = 255;
 
     private final Emails emails;
     private final Batch batch;

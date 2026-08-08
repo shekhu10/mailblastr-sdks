@@ -12,8 +12,18 @@ from .exceptions import MailblastrError
 DEFAULT_BASE_URL = "https://www.mailblastr.com/api"
 
 # Keep in sync with pyproject.toml "version".
-VERSION = "1.3.0"
+VERSION = "2.0.0"
 USER_AGENT = f"mailblastr-python/{VERSION}"
+
+# The API accepts an Idempotency-Key of 1-255 characters (measured after the
+# server trims the value -- the storage column is VARCHAR(255), so 255, not
+# 256) and rejects anything else with `invalid_idempotency_key` (400). Only
+# POST /emails and POST /emails/batch read the header at all; every other
+# endpoint ignores it, so a retry there creates a second resource.
+#
+# Exported for discoverability only -- the SDK sends the key as given and lets
+# the server be the authority.
+IDEMPOTENCY_KEY_MAX_LENGTH = 255
 
 # Defaults for the timeout + retry policy. Override per client via the
 # module-level `mailblastr.timeout` (seconds) and `mailblastr.max_retries`.
@@ -72,46 +82,80 @@ def _config():
     return api_key, base_url, timeout, max_retries
 
 
-def _retry_after_seconds(header):
-    """Parse a Retry-After header (delta-seconds or HTTP-date) → seconds, capped
-    at 30s. Returns None when absent/unparseable."""
+def _parse_retry_after(header):
+    """Parse a Retry-After header (delta-seconds or HTTP-date) → seconds.
+    Returns None when absent/unparseable. Not capped — this is the value
+    reported on the raised error, and a quota error can legitimately ask you to
+    wait an hour."""
     if not header:
         return None
     try:
-        return min(max(0.0, float(header)), 30.0)
+        return max(0.0, float(header))
     except (TypeError, ValueError):
         pass
     parsed = email.utils.parsedate_to_datetime(header)
     if parsed is not None:
-        delta = parsed.timestamp() - time.time()
-        return min(max(0.0, delta), 30.0)
+        return max(0.0, parsed.timestamp() - time.time())
     return None
 
 
+def _retry_after_seconds(header):
+    """The Retry-After delay to actually sleep for, capped at 30s so a long
+    server-suggested wait can't stall the caller."""
+    seconds = _parse_retry_after(header)
+    return None if seconds is None else min(seconds, 30.0)
+
+
 def _headers(api_key, json_body, options):
+    # A non-empty User-Agent is MANDATORY: the API gates every /api/* resource
+    # on it and answers a missing one with 403 validation_error, before auth.
     headers = {
         "Authorization": f"Bearer {api_key}",
         "User-Agent": USER_AGENT,
     }
     if json_body:
         headers["Content-Type"] = "application/json"
+    # Sent verbatim: the server trims the value and owns the 1-255 bound
+    # (IDEMPOTENCY_KEY_MAX_LENGTH), answering an out-of-range key with
+    # 400 invalid_idempotency_key. Validating here would only risk drifting
+    # from the server. A falsy value means "no idempotency", not an error.
     if options and options.get("idempotency_key"):
-        headers["Idempotency-Key"] = options["idempotency_key"]
+        headers["Idempotency-Key"] = str(options["idempotency_key"])
     return headers
 
 
-def _error_from(status, raw):
-    parsed = None
-    if raw:
-        try:
-            parsed = json.loads(raw)
-        except (ValueError, UnicodeDecodeError):
-            parsed = None
-    body = parsed if isinstance(parsed, dict) else {}
+def _parse_body(raw):
+    """Parse a JSON response body into a dict, or ``{}`` when it isn't one."""
+    if not raw:
+        return {}
+    try:
+        parsed = json.loads(raw)
+    except (ValueError, UnicodeDecodeError):
+        return {}
+    return parsed if isinstance(parsed, dict) else {}
+
+
+def _sent_count(body):
+    """How many emails a partial-failure body reports as already sent.
+
+    ``POST /emails/batch`` answers a mid-batch failure with the error envelope
+    plus ``sent`` / ``sent_count`` when some emails already went out."""
+    count = body.get("sent_count")
+    if isinstance(count, int) and not isinstance(count, bool) and count > 0:
+        return count
+    sent = body.get("sent")
+    return len(sent) if isinstance(sent, list) else 0
+
+
+def _error_from(status, raw, headers=None):
+    body = _parse_body(raw)
+    retry_after = _parse_retry_after(headers.get("Retry-After") if headers else None)
     return MailblastrError(
         body.get("statusCode", status),
         body.get("name", "application_error"),
         body.get("message", f"Request failed with status {status}"),
+        body=body,
+        retry_after=retry_after,
     )
 
 
@@ -151,23 +195,31 @@ def _send(req, timeout, max_retries):
             with urllib.request.urlopen(req, timeout=timeout) as res:
                 return res.read()
         except urllib.error.HTTPError as err:
-            should_retry = err.code in _RETRYABLE_STATUS and attempt < max_retries
-            retry_after = None
             raw = b""
+            headers = err.headers
             try:
-                if should_retry:
-                    retry_after = _retry_after_seconds(err.headers.get("Retry-After") if err.headers else None)
-                else:
-                    raw = err.read()
+                raw = err.read()
             finally:
                 # HTTPError is also a file-like response. Leaving it open leaks
                 # its socket/file descriptor on every 4xx/5xx and each retry.
                 err.close()
+            # A batch send that failed PART WAY THROUGH answers 429 (quota,
+            # reputation) with `sent`/`sent_count` naming the emails that
+            # already went out. Retrying that would send them a second time,
+            # so a partial-success body is never retried.
+            should_retry = (
+                err.code in _RETRYABLE_STATUS
+                and attempt < max_retries
+                and _sent_count(_parse_body(raw)) == 0
+            )
             if should_retry:
+                retry_after = _retry_after_seconds(
+                    headers.get("Retry-After") if headers else None
+                )
                 time.sleep(retry_after if retry_after is not None else min(30.0, 0.5 * (2 ** attempt)))
                 attempt += 1
                 continue
-            raise _error_from(err.code, raw) from None
+            raise _error_from(err.code, raw, headers) from None
         except urllib.error.URLError as err:
             # Includes socket.timeout (raised as URLError.reason on timeout).
             raise MailblastrError(0, "network_error", str(getattr(err, "reason", err))) from None

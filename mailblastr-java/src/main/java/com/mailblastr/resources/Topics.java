@@ -21,7 +21,10 @@ public final class Topics extends Resource {
         return api.request("GET", "/topics/" + enc(id));
     }
 
-    /** List a domain's topics. {@code GET /topics?domain=} */
+    /**
+     * List a domain's topics. With no pagination params ALL of the pool's
+     * topics are returned and {@code has_more:false}. {@code GET /topics?domain=}
+     */
     public MailblastrResponse list(String domain) { return list(domain, null); }
 
     public MailblastrResponse list(String domain, ListParams params) {

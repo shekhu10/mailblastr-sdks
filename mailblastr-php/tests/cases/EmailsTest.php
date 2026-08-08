@@ -23,6 +23,16 @@ check_auth('emails.send', $t->last());
 check('emails.send: idempotency header', in_array('Idempotency-Key: order-123', $t->last()['headers'], true));
 check_same('emails.send: response', ['id' => 'em_1'], $res);
 
+// The documented bound is 1-255 characters measured AFTER the server trims the
+// value (VARCHAR(255)) — 255, not 256. The constant is exported so the rule is
+// discoverable; the key itself is sent verbatim and the server is the authority
+// (400 invalid_idempotency_key), so an over-long key is NOT rejected here.
+check_same('client: idempotency key max length', 255, \Mailblastr\Client::IDEMPOTENCY_KEY_MAX_LENGTH);
+$t->queue(200, ['id' => 'em_2']);
+$over = str_repeat('k', \Mailblastr\Client::IDEMPOTENCY_KEY_MAX_LENGTH + 1);
+$mb->emails->send(['from' => 'a@x.com', 'to' => 'u@e.com', 'subject' => 's', 'text' => 'b'], ['idempotencyKey' => $over]);
+check('emails.send: over-long idempotency key is left to the server', in_array('Idempotency-Key: ' . $over, $t->last()['headers'], true));
+
 // ---- batch->send (JSON list body) ----
 [$mb, $t] = make_client();
 $t->queue(200, ['data' => [['id' => 'em_1'], ['id' => 'em_2']]]);
@@ -44,6 +54,15 @@ $mb->emails->list(['limit' => 2, 'after' => 'em_1']);
 check_same('emails.list: method', 'GET', $t->last()['method']);
 check_same('emails.list: path', '/emails?limit=2&after=em_1', $t->lastPath());
 check_same('emails.list: no body on GET', null, $t->last()['body']);
+
+// status/search filters are server-side
+$mb->emails->list(['status' => 'bounced', 'search' => 'ada@', 'domain_id' => 'dom_1']);
+check_same('emails.list: status/search filters', '/emails?status=bounced&search=ada%40&domain_id=dom_1', $t->lastPath());
+
+// ---- sources (per-source send metrics, not paginated) ----
+$mb->emails->sources();
+check_same('emails.sources: method', 'GET', $t->last()['method']);
+check_same('emails.sources: path', '/emails/sources', $t->lastPath());
 
 // ---- get with a path-traversal id is escaped ----
 $mb->emails->get('../api-keys');
@@ -74,8 +93,14 @@ check_same('receiving.list: path', '/emails/receiving?limit=5', $t->lastPath());
 $mb->emails->receiving->get('rcv_1');
 check_same('receiving.get: path', '/emails/receiving/rcv_1', $t->lastPath());
 
+$mb->emails->receiving->addresses();
+check_same('receiving.addresses: path', '/emails/receiving/addresses', $t->lastPath());
+
 $mb->emails->receiving->listAttachments('rcv_1');
 check_same('receiving.listAttachments: path', '/emails/receiving/rcv_1/attachments', $t->lastPath());
+
+$mb->emails->receiving->listAttachments('rcv_1', ['limit' => 10]);
+check_same('receiving.listAttachments: pagination', '/emails/receiving/rcv_1/attachments?limit=10', $t->lastPath());
 
 $t->queue(200, 'RAWBYTES');
 $bytes = $mb->emails->receiving->getAttachment('rcv_1', 'att_1');

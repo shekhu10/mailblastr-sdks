@@ -1,31 +1,15 @@
 'use strict';
 
-const { clean, collect } = require('../helpers');
+const { withPagination, pagination } = require('../helpers');
 
+// `list` is the whole group on purpose. Creating, re-scoping and revoking keys
+// happens in the dashboard, behind a signed-in session — so a key that leaks
+// cannot mint itself a replacement or widen its own access from the CLI.
 function register({ group, leaf, act }) {
-  const apiKeys = group('api-keys', 'Manage API keys');
+  const apiKeys = group('api-keys', 'Inspect API keys (create/revoke live in the dashboard)');
 
-  act(
-    leaf(apiKeys, 'create', 'Create an API key (the token is shown once)')
-      .requiredOption('--name <name>', 'key name')
-      .option('--permission <permission>', "'full_access' | 'sending_access'")
-      .option('--domain-id <id>', 'scope a sending_access key to one domain (legacy; prefer --domain-ids)')
-      .option('--domain-ids <id>', 'domains to scope the key to (repeatable or comma-separated)', collect),
-    ({ client, opts }) =>
-      client.apiKeys.create(
-        clean({
-          name: opts.name,
-          permission: opts.permission,
-          domain_id: opts.domainId,
-          domain_ids: opts.domainIds,
-        }),
-      ),
-  );
-
-  act(leaf(apiKeys, 'list', 'List API keys'), ({ client }) => client.apiKeys.list());
-
-  act(leaf(apiKeys, 'delete <id>', 'Delete (revoke) an API key'), ({ client, args: [id] }) =>
-    client.apiKeys.remove(id),
+  act(withPagination(leaf(apiKeys, 'list', 'List API keys')), ({ client, opts }) =>
+    client.apiKeys.list(pagination(opts)),
   );
 }
 

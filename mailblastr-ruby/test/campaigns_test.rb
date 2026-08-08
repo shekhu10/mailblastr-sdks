@@ -51,6 +51,9 @@ class CampaignsTest < Minitest::Test
     Mailblastr::Campaigns.stats("camp_1")
     assert_request :get, "/campaigns/camp_1/stats"
 
+    Mailblastr::Campaigns.engagement("camp_1")
+    assert_request :get, "/campaigns/camp_1/engagement"
+
     Mailblastr::Campaigns.ab("camp_1")
     assert_request :get, "/campaigns/camp_1/ab"
 

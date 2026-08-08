@@ -73,6 +73,32 @@ pub struct Domain {
     pub capabilities: Option<DomainCapabilities>,
     pub tracking_domain: Option<String>,
     pub tracking_verified: Option<bool>,
+    /// When the provider status was last refreshed.
+    pub aws_last_checked_at: Option<String>,
+    /// Why the last provider status check failed, when it did.
+    pub aws_check_error: Option<String>,
+}
+
+/// One MX record found by `domains.mx_check`.
+#[derive(Debug, Clone, Deserialize)]
+pub struct MxRecord {
+    pub exchange: String,
+    #[serde(default)]
+    pub priority: u32,
+}
+
+/// Result of `domains.mx_check` (`GET /domains/mx-check`). DNS failures fail
+/// OPEN: you get `has_mx: false` with an empty `records`, not an error.
+#[derive(Debug, Clone, Deserialize)]
+pub struct MxCheckResult {
+    #[serde(default)]
+    pub has_mx: bool,
+    /// True only when EVERY MX host is a MailBlastr host.
+    #[serde(default)]
+    pub ours: bool,
+    /// Sorted by ascending `priority`.
+    #[serde(default)]
+    pub records: Vec<MxRecord>,
 }
 
 /// Capabilities to enable on create/update, e.g. receiving.
@@ -320,7 +346,28 @@ impl DomainsSvc {
             .await
     }
 
-    /// List domains. `GET /domains`
+    /// Check whether a domain already publishes MX records, and whether they
+    /// point at MailBlastr. `GET /domains/mx-check?name=`
+    pub async fn mx_check(&self, name: &str) -> Result<MxCheckResult> {
+        let req = self
+            .config
+            .request(Method::GET, "/domains/mx-check")
+            .query(&[("name", name)]);
+        self.config.send(req).await
+    }
+
+    /// Download this domain's DNS records as CSV bytes (the route streams
+    /// `text/csv`, not JSON). `GET /domains/:id/records.csv`
+    pub async fn records_csv(&self, domain_id: &str) -> Result<Vec<u8>> {
+        let path = format!("/domains/{}/records.csv", seg(domain_id));
+        self.config
+            .send_raw(self.config.request(Method::GET, &path))
+            .await
+    }
+
+    /// List domains. Rows with a pending ownership CLAIM are excluded — reach
+    /// those through [`get_claim`](Self::get_claim). With no pagination params
+    /// the route returns EVERY domain with `has_more: false`. `GET /domains`
     pub async fn list(&self, params: Option<PaginationParams>) -> Result<ListResponse<Domain>> {
         let req = self
             .config

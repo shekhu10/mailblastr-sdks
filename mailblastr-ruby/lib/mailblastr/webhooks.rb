@@ -34,6 +34,22 @@ module Mailblastr
 
       # Send a synchronous test delivery and return the endpoint's live result.
       # POST /webhooks/:id/test
+      #
+      # A FAILED delivery is still HTTP 200, so this does NOT raise when your
+      # endpoint rejects the test. The outcome is the "ok" key:
+      #
+      #   { "object" => "webhook_test", "id" => "<id>",
+      #     "ok" => true,  "status" => 200 }          # endpoint accepted it
+      #   { "object" => "webhook_test", "id" => "<id>",
+      #     "ok" => false, "error" => "lookup_failed" } # it did not
+      #
+      #   result = Mailblastr::Webhooks.test(id)
+      #   warn "test delivery failed: #{result['error']}" unless result["ok"]
+      #
+      # "status" is your endpoint's HTTP status when it responded at all;
+      # "error" says why the delivery failed (e.g. "lookup_failed",
+      # "webhook missing or disabled"). It is a single attempt — no retries
+      # are scheduled.
       def test(webhook_id)
         Client.request(:post, "/webhooks/#{Client.path_escape(webhook_id)}/test")
       end

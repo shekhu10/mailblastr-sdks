@@ -52,6 +52,13 @@ module Mailblastr
         Client.request(:get, "/campaigns/#{Client.path_escape(campaign_id)}/stats")
       end
 
+      # Who opened, clicked and replied, contact by contact. Each list is
+      # capped at 500 rows and there is no pagination.
+      # GET /campaigns/:id/engagement
+      def engagement(campaign_id)
+        Client.request(:get, "/campaigns/#{Client.path_escape(campaign_id)}/engagement")
+      end
+
       # A/B winner evaluation for an A/B campaign. GET /campaigns/:id/ab
       def ab(campaign_id)
         Client.request(:get, "/campaigns/#{Client.path_escape(campaign_id)}/ab")

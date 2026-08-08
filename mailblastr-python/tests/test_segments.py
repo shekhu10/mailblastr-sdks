@@ -25,6 +25,10 @@ class TestSegments(RecordingTestCase):
         mailblastr.Segments.contacts("seg_1")
         self.assertCall("GET", "/segments/seg_1/contacts")
 
+    def test_contacts_preview_paginated(self):
+        mailblastr.Segments.contacts("seg_1", {"limit": 100, "after": "con_9"})
+        self.assertCall("GET", "/segments/seg_1/contacts?limit=100&after=con_9")
+
     def test_update(self):
         mailblastr.Segments.update("seg_1", {"name": "VIP+"})
         self.assertCall("PATCH", "/segments/seg_1", {"name": "VIP+"})

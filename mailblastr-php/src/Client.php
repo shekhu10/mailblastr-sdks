@@ -15,7 +15,8 @@ use Mailblastr\Transport\TransportInterface;
  * `emails` (with nested `emails->attachments` and `emails->receiving`),
  * `batch`, `domains`, `audiences`, `contacts`, `contactProperties`,
  * `campaigns`, `segments`, `topics`, `templates`, `automations`, `webhooks`,
- * `logs`, `events`, `apiKeys`, `polls`.
+ * `logs`, `events`, `apiKeys` (list only — key lifecycle is dashboard-only),
+ * `polls`.
  *
  * Successful calls return the decoded JSON response as an associative array.
  * Every non-2xx response throws {@see MailblastrException} carrying the API
@@ -25,6 +26,18 @@ class Client
 {
     public const DEFAULT_BASE_URL = 'https://www.mailblastr.com/api';
     public const USER_AGENT = 'mailblastr-php/' . Mailblastr::VERSION;
+
+    /**
+     * Longest `Idempotency-Key` the API accepts. The accepted range is
+     * 1-255 characters measured after the server trims the value (the storage
+     * column is VARCHAR(255)); anything outside it is a
+     * 400 `invalid_idempotency_key`. The header is honoured by
+     * `POST /emails` and `POST /emails/batch` ONLY — every other endpoint
+     * ignores it, so a retry there creates a second resource.
+     *
+     * The SDK does not check the length itself: the server is the authority.
+     */
+    public const IDEMPOTENCY_KEY_MAX_LENGTH = 255;
 
     private string $apiKey;
     private string $baseUrl;
@@ -97,7 +110,11 @@ class Client
      * @param string            $method  HTTP method.
      * @param string            $path    API path beginning with '/', already URL-encoded.
      * @param array|object|null $body    JSON body (null sends none; [] sends {}).
-     * @param array             $options 'idempotencyKey' (string) — sent as Idempotency-Key.
+     * @param array             $options 'idempotencyKey' (string) — sent verbatim as
+     *                                   Idempotency-Key. Honoured by POST /emails and
+     *                                   POST /emails/batch ONLY; 1-255 characters
+     *                                   ({@see self::IDEMPOTENCY_KEY_MAX_LENGTH}),
+     *                                   validated server-side.
      *
      * @return array The decoded JSON response.
      *

@@ -442,6 +442,10 @@ pub struct Email {
     pub message_id: Option<String>,
     pub from: String,
     pub to: Vec<String>,
+    /// Id of the sending domain the message went out on.
+    pub domain_id: Option<String>,
+    /// On the retrieve route these are ARRAYS (empty when unset), unlike the
+    /// list rows in [`SentEmailListItem`], where they are `null`.
     pub cc: Option<Vec<String>>,
     pub bcc: Option<Vec<String>>,
     pub reply_to: Option<Vec<String>>,
@@ -450,10 +454,12 @@ pub struct Email {
     pub text: Option<String>,
     pub status: String,
     pub last_event: Option<String>,
-    /// Plain-language failure reason; present only when the send failed.
+    /// Plain-language failure reason; non-null only when the row is `failed`
+    /// or `scheduled`.
     pub error: Option<String>,
     pub scheduled_at: Option<String>,
     pub created_at: String,
+    /// Oldest-first event timeline.
     pub events: Option<Vec<EmailEvent>>,
 }
 
@@ -466,6 +472,9 @@ pub struct SentEmailListItem {
     pub message_id: Option<String>,
     pub from: String,
     pub to: Vec<String>,
+    /// Id of the sending domain the message went out on.
+    pub domain_id: Option<String>,
+    /// `None` (JSON `null`) when unset — list rows never use `[]` here.
     pub cc: Option<Vec<String>>,
     pub bcc: Option<Vec<String>>,
     pub reply_to: Option<Vec<String>>,
@@ -473,20 +482,77 @@ pub struct SentEmailListItem {
     /// Latest recorded event/state, e.g. `sent`, `delivered`, `bounced`.
     pub last_event: String,
     pub scheduled_at: Option<String>,
+    /// The campaign this send belongs to (`None` for one-off API sends).
+    pub campaign_id: Option<String>,
+    /// The automation this send belongs to (`None` for one-off API sends).
+    pub automation_id: Option<String>,
     pub created_at: String,
 }
 
+/// One row of `emails.sources()` — aggregate send metrics per campaign /
+/// automation / one-off ("individual") origin.
+#[derive(Debug, Clone, Deserialize)]
+pub struct EmailSource {
+    /// `campaign` | `automation` | `individual`.
+    pub kind: String,
+    /// `None` for the `individual` row.
+    pub id: Option<String>,
+    pub name: Option<String>,
+    /// `None` for `automation` and `individual` rows.
+    pub subject: Option<String>,
+    pub status: Option<String>,
+    #[serde(default)]
+    pub total: u64,
+    #[serde(default)]
+    pub sent: u64,
+    #[serde(default)]
+    pub delivered: u64,
+    #[serde(default)]
+    pub opened: u64,
+    #[serde(default)]
+    pub clicked: u64,
+    #[serde(default)]
+    pub replied: u64,
+    #[serde(default)]
+    pub failed: u64,
+    pub last_sent_at: Option<String>,
+}
+
+/// One row of `emails.receiving.list_addresses()` — inbound volume per
+/// receiving address.
+#[derive(Debug, Clone, Deserialize)]
+pub struct ReceivingAddressStats {
+    pub address: String,
+    #[serde(default)]
+    pub total: u64,
+    #[serde(default)]
+    pub replies: u64,
+    #[serde(default)]
+    pub interested: u64,
+    pub last_received_at: Option<String>,
+}
+
 /// Metadata for one attachment of a SENT email.
+///
+/// Sent attachment bytes are not re-hosted, so `download_url` and
+/// `expires_at` are always `None` here — keep your own copy of anything you
+/// attach. (Received attachments DO stream: see
+/// [`ReceivingSvc::get_attachment`](crate::services::emails::ReceivingSvc::get_attachment).)
 #[derive(Debug, Clone, Deserialize)]
 pub struct AttachmentMeta {
     pub object: String,
+    /// The stored attachment id, or the array index as a string.
     pub id: String,
     pub filename: Option<String>,
     pub content_type: Option<String>,
+    /// `inline` when a `content_id` is set, else `attachment`.
     pub content_disposition: String,
     pub content_id: Option<String>,
+    /// Decoded byte length, when known.
     pub size: Option<u64>,
+    /// Always `None` for sent attachments.
     pub download_url: Option<String>,
+    /// Always `None` for sent attachments.
     pub expires_at: Option<String>,
 }
 
@@ -508,11 +574,12 @@ pub struct ReceivedAttachment {
     pub url: Option<String>,
 }
 
-/// Presigned raw (RFC822) download of a received email.
+/// Raw (RFC822) download pointer of a received email. Only `download_url` is
+/// guaranteed; `expires_at` is omitted by the API today.
 #[derive(Debug, Clone, Deserialize)]
 pub struct RawDownload {
     pub download_url: String,
-    pub expires_at: String,
+    pub expires_at: Option<String>,
 }
 
 /// An inbound email (`GET /emails/receiving/:id`).
@@ -522,6 +589,8 @@ pub struct ReceivedEmail {
     pub id: String,
     pub from: String,
     pub to: Vec<String>,
+    /// Id of the receiving domain (always present, may be `null`).
+    pub domain_id: Option<String>,
     pub cc: Option<Vec<String>>,
     pub bcc: Option<Vec<String>>,
     pub received_for: Option<Vec<String>>,

@@ -34,9 +34,17 @@ public final class Segments extends Resource {
         return api.request("GET", "/segments" + q);
     }
 
-    /** Preview the contacts a segment currently resolves to. {@code GET /segments/:id/contacts} */
-    public MailblastrResponse contacts(String id) {
-        return api.request("GET", "/segments/" + enc(id) + "/contacts");
+    /**
+     * Preview the contacts a segment currently resolves to (filter matches plus
+     * explicit memberships). Items use a reduced contact shape — no
+     * {@code object} key and no {@code properties}. With no pagination params
+     * the route returns EVERY match and {@code has_more:false}.
+     * {@code GET /segments/:id/contacts}
+     */
+    public MailblastrResponse contacts(String id) { return contacts(id, null); }
+
+    public MailblastrResponse contacts(String id, ListParams params) {
+        return api.request("GET", "/segments/" + enc(id) + "/contacts" + paginate(params));
     }
 
     /** {@code PATCH /segments/:id} */

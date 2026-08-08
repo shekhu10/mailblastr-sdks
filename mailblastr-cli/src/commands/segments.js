@@ -31,8 +31,8 @@ function register({ group, leaf, act }) {
   );
 
   act(
-    leaf(segments, 'contacts <id>', 'Preview the contacts a segment currently resolves to'),
-    ({ client, args: [id] }) => client.segments.contacts(id),
+    withPagination(leaf(segments, 'contacts <id>', 'Preview the contacts a segment currently resolves to')),
+    ({ client, opts, args: [id] }) => client.segments.contacts(id, pagination(opts)),
   );
 
   act(

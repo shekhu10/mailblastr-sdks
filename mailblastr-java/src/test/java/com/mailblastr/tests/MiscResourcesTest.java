@@ -5,7 +5,6 @@ import com.mailblastr.Mailblastr;
 import com.mailblastr.json.Json;
 import com.mailblastr.requests.AutomationConnection;
 import com.mailblastr.requests.AutomationStep;
-import com.mailblastr.requests.CreateApiKeyRequest;
 import com.mailblastr.requests.CreateAutomationRequest;
 import com.mailblastr.requests.CreateContactPropertyRequest;
 import com.mailblastr.requests.CreateEventRequest;
@@ -13,8 +12,13 @@ import com.mailblastr.requests.CreateTemplateRequest;
 import com.mailblastr.requests.ListLogsParams;
 import com.mailblastr.requests.TemplateVariable;
 import com.mailblastr.requests.UpdateAutomationRequest;
+import com.mailblastr.resources.ApiKeys;
 
+import java.lang.reflect.Method;
+import java.lang.reflect.Modifier;
 import java.util.Map;
+import java.util.Set;
+import java.util.TreeSet;
 
 /** Templates, automations, audiences, api keys, logs, polls, contact properties, events defs + JSON round-trip. */
 public final class MiscResourcesTest {
@@ -96,15 +100,19 @@ public final class MiscResourcesTest {
         mb.events().remove("evt_1");
         Check.eq("event def remove url", "https://api.test/events/evt_1", t.lastUrl);
 
-        // --- api keys ---
-        mb.apiKeys().create(CreateApiKeyRequest.builder()
-                .name("CI").permission("sending_access").domainId("dom_1").build());
-        Check.eq("apiKey create body",
-                "{\"name\":\"CI\",\"permission\":\"sending_access\",\"domain_id\":\"dom_1\"}", t.lastBody);
+        // --- api keys (listing only; lifecycle is dashboard-only) ---
         mb.apiKeys().list();
         Check.eq("apiKey list url", "https://api.test/api-keys", t.lastUrl);
-        mb.apiKeys().remove("key_1");
-        Check.eq("apiKey remove url", "https://api.test/api-keys/key_1", t.lastUrl);
+        Check.eq("apiKey list method", "GET", t.lastMethod);
+        // Minting, re-scoping and revoking keys are dashboard-only operations, so
+        // ApiKeys exposes list() and nothing else. In Java this is enforced at
+        // compile time — calling apiKeys().create(...) would not compile — and
+        // the reflection sweep below keeps the surface from growing back.
+        Set<String> apiKeyMethods = new TreeSet<>();
+        for (Method m : ApiKeys.class.getDeclaredMethods()) {
+            if (Modifier.isPublic(m.getModifiers())) apiKeyMethods.add(m.getName());
+        }
+        Check.eq("ApiKeys public surface is list() only", "[list]", apiKeyMethods.toString());
 
         // --- logs with filters ---
         mb.logs().list(ListLogsParams.builder().limit(100).method("POST").status(429).build());

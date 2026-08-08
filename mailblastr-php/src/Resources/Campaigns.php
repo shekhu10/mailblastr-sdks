@@ -76,10 +76,20 @@ class Campaigns extends Resource
         return $this->client->request('POST', '/campaigns/' . Client::e($id) . '/cancel');
     }
 
-    /** Per-campaign analytics (counts, engagement rates, top links). GET /campaigns/:id/stats */
+    /** Per-campaign analytics (counts, engagement rates, top 50 links). GET /campaigns/:id/stats */
     public function stats(string $id): array
     {
         return $this->client->request('GET', '/campaigns/' . Client::e($id) . '/stats');
+    }
+
+    /**
+     * Who opened, clicked and replied — the per-contact rows behind
+     * {@see stats()}. Not paginated; each list is capped at 500 rows.
+     * GET /campaigns/:id/engagement
+     */
+    public function engagement(string $id): array
+    {
+        return $this->client->request('GET', '/campaigns/' . Client::e($id) . '/engagement');
     }
 
     /** A/B winner evaluation for an A/B campaign. GET /campaigns/:id/ab */

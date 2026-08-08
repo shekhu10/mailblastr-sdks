@@ -1,7 +1,15 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createHmac } from 'node:crypto';
-import { MailBlastr, verifyWebhookSignature } from '../src/index';
+import { readFileSync } from 'node:fs';
+import {
+  MailBlastr,
+  verifyWebhookSignature,
+  VERSION,
+  USER_AGENT,
+  IDEMPOTENCY_KEY_MAX_LENGTH,
+  type ReputationDetail,
+} from '../src/index';
 
 interface Captured { url: string; method: string; headers: Record<string, string>; body: any }
 
@@ -34,6 +42,26 @@ test('constructor requires an API key', () => {
   assert.throws(() => new MailBlastr());
 });
 
+test('VERSION tracks package.json', () => {
+  const pkg = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
+  assert.equal(VERSION, pkg.version, 'client.ts VERSION must match the manifest');
+});
+
+test('every request carries a non-empty User-Agent and a Bearer token', async () => {
+  // A request without a User-Agent is rejected with 403 validation_error
+  // BEFORE authentication, masking every other error — so this is load-bearing.
+  const { fn, calls } = mockFetch(200, { object: 'list', has_more: false, data: [] });
+  const mb = new MailBlastr('mb_test', { baseUrl: 'https://api.test', fetch: fn });
+  await mb.domains.list();
+  await mb.emails.receiving.getRaw('r1');   // the raw-bytes path sets its own headers
+  await mb.domains.recordsCsv('d1');        // …and so does the text path
+  for (const call of calls) {
+    assert.equal(call.headers['User-Agent'], USER_AGENT);
+    assert.ok(call.headers['User-Agent'].trim().length > 0);
+    assert.equal(call.headers.Authorization, 'Bearer mb_test');
+  }
+});
+
 test('emails.send issues POST /emails with auth + body and returns { data }', async () => {
   const { fn, calls } = mockFetch(200, { id: 'e-1' });
   const mb = new MailBlastr('mb_test', { baseUrl: 'https://api.test', fetch: fn });
@@ -50,6 +78,37 @@ test('emails.send forwards the Idempotency-Key header', async () => {
   const mb = new MailBlastr('mb_test', { baseUrl: 'https://api.test', fetch: fn });
   await mb.emails.send({ from: 'a@x.com', to: 'b@y.com', subject: 'Hi', text: 't' }, { idempotencyKey: 'k1' });
   assert.equal(calls[0].headers['Idempotency-Key'], 'k1');
+});
+
+// The documented bound is 1-255 characters, measured AFTER the server trims the
+// value (api_idempotency.key is VARCHAR(255)) — 255, not 256. The constant is
+// exported so the rule is discoverable; the key itself goes out verbatim and the
+// SERVER answers an out-of-range one with 400 invalid_idempotency_key.
+test('the Idempotency-Key bound is exported, and the key is sent verbatim', async () => {
+  assert.equal(IDEMPOTENCY_KEY_MAX_LENGTH, 255);
+
+  const { fn, calls } = mockFetch(200, { id: 'e-3' });
+  const mb = new MailBlastr('mb_test', { baseUrl: 'https://api.test', fetch: fn });
+  const tooLong = 'k'.repeat(IDEMPOTENCY_KEY_MAX_LENGTH + 1);
+  const res = await mb.emails.send(
+    { from: 'a@x.com', to: 'b@y.com', subject: 'Hi', text: 't' },
+    { idempotencyKey: tooLong },
+  );
+  assert.equal(res.error, null);
+  assert.equal(calls[0].headers['Idempotency-Key'], tooLong);
+});
+
+// Only POST /emails and POST /emails/batch honour the header. events.send still
+// ACCEPTS and forwards a key (the options bag is shared), but the API ignores
+// it there — the method's doc comment says so.
+test('events.send still forwards an idempotency key the API will ignore', async () => {
+  const { fn, calls } = mockFetch(200, { object: 'event', id: 'ev-1' });
+  const mb = new MailBlastr('mb_test', { baseUrl: 'https://api.test', fetch: fn });
+  await mb.events.send(
+    { event: 'signup.completed', domain: 'yourdomain.com', email: 'a@b.com' },
+    { idempotencyKey: 'evt-1' },
+  );
+  assert.equal(calls[0].headers['Idempotency-Key'], 'evt-1');
 });
 
 test('retries a 429 (honoring Retry-After) then succeeds; a 422 is not retried', async () => {
@@ -96,6 +155,102 @@ test('a non-2xx returns { error } with the MailBlastr error shape', async () => 
   const res = await mb.emails.send({ from: 'a@x.com', to: 'b@y.com', subject: 'Hi', html: 'x' });
   assert.equal(res.data, null);
   assert.deepEqual(res.error, { statusCode: 422, name: 'validation_error', message: 'bad' });
+});
+
+test('a plan/quota error keeps its additive `limit` object', async () => {
+  // Limit rejections are a SUPERSET of the envelope; dropping `limit` would
+  // hide which quota was hit and what the next plan is.
+  const limit = {
+    kind: 'emails_daily', used: 100, limit: 100, requested: 3, remaining: 0,
+    period: '24h', plan: { id: 'free', name: 'Free' }, next_plan: null,
+  };
+  const { fn } = mockFetch(429, {
+    statusCode: 429, name: 'daily_quota_exceeded', message: 'over quota', limit,
+  });
+  const mb = new MailBlastr('mb_test', { baseUrl: 'https://api.test', fetch: fn, maxRetries: 0 });
+  const res = await mb.emails.send({ from: 'a@x.com', to: 'b@y.com', subject: 'Hi', html: 'x' });
+  assert.equal(res.error?.name, 'daily_quota_exceeded');
+  assert.deepEqual(res.error?.limit, limit);
+});
+
+test('a reputation gate keeps its additive `reputation` object, typed', async () => {
+  // The sibling of `limit`: Go, Rust and .NET all model this as a named detail
+  // struct, so the fields below must be reachable without a cast. The typed
+  // bindings below are compile-time assertions — they fail `typecheck:test` if
+  // `reputation` is ever widened back to `Record<string, unknown>`.
+  const reputation = {
+    retryable: true, scope: 'domain', status: 'warming', scope_key: 'acme.com',
+    hourly_limit: 50, daily_limit: 500, hourly_used: 50, daily_used: 120,
+    retry_at: '2026-08-08T12:00:00.000Z', support_email: 'support@mailblastr.com',
+  };
+  const { fn } = mockFetch(429, {
+    statusCode: 429, name: 'reputation_limit_exceeded', message: 'Warm-up capacity reached.', reputation,
+  });
+  const mb = new MailBlastr('mb_test', { baseUrl: 'https://api.test', fetch: fn, maxRetries: 0 });
+  const res = await mb.emails.send({ from: 'a@x.com', to: 'b@y.com', subject: 'Hi', html: 'x' });
+  assert.equal(res.error?.name, 'reputation_limit_exceeded');
+  const rep: ReputationDetail | undefined = res.error?.reputation;
+  const retryable: boolean | undefined = rep?.retryable;
+  const scopeKey: string | undefined = rep?.scope_key;
+  const retryAt: string | undefined = rep?.retry_at;
+  assert.equal(retryable, true);
+  assert.equal(rep?.scope, 'domain');
+  assert.equal(scopeKey, 'acme.com');
+  assert.equal(retryAt, '2026-08-08T12:00:00.000Z');
+  assert.deepEqual(rep, reputation);
+});
+
+test('`reputation` stays absent on an error that is not a reputation gate', async () => {
+  const { fn } = mockFetch(422, { statusCode: 422, name: 'validation_error', message: 'bad' });
+  const mb = new MailBlastr('mb_test', { baseUrl: 'https://api.test', fetch: fn, maxRetries: 0 });
+  const res = await mb.emails.send({ from: 'a@x.com', to: 'b@y.com', subject: 'Hi', html: 'x' });
+  assert.equal(res.error?.reputation, undefined);
+  assert.equal(res.error?.limit, undefined);
+});
+
+test('a partial batch failure keeps `sent` / `sent_count`', async () => {
+  const { fn } = mockFetch(429, {
+    statusCode: 429, name: 'daily_quota_exceeded', message: 'over quota',
+    sent: [{ id: 'e-1' }], sent_count: 1,
+  });
+  const mb = new MailBlastr('mb_test', { baseUrl: 'https://api.test', fetch: fn, maxRetries: 0 });
+  const res = await mb.batch.send([{ from: 'a@x.com', to: 'b@y.com', subject: 's', text: 't' }]);
+  assert.equal(res.error?.sent_count, 1);
+  assert.deepEqual(res.error?.sent, [{ id: 'e-1' }]);
+});
+
+test('`sent_count` falls back to `sent.length` when the body omits it', async () => {
+  // Every other MailBlastr SDK derives the count from the list, so a caller
+  // deciding what NOT to resend never has to compute it themselves.
+  const { fn } = mockFetch(429, {
+    statusCode: 429, name: 'daily_quota_exceeded', message: 'over quota',
+    sent: [{ id: 'e-1' }, { id: 'e-2' }],
+  });
+  const mb = new MailBlastr('mb_test', { baseUrl: 'https://api.test', fetch: fn, maxRetries: 0 });
+  const res = await mb.batch.send([{ from: 'a@x.com', to: 'b@y.com', subject: 's', text: 't' }]);
+  assert.equal(res.error?.sent_count, 2);
+});
+
+test('`sent_count` stays absent on an error that sent nothing', async () => {
+  // A synthesized 0 would read as "a batch ran and delivered none", which is a
+  // different claim from "this error has no batch outcome at all".
+  const { fn } = mockFetch(422, {
+    statusCode: 422, name: 'validation_error', message: 'bad payload',
+  });
+  const mb = new MailBlastr('mb_test', { baseUrl: 'https://api.test', fetch: fn, maxRetries: 0 });
+  const res = await mb.batch.send([{ from: 'a@x.com', to: 'b@y.com', subject: 's', text: 't' }]);
+  assert.equal(res.error?.sent_count, undefined);
+  assert.equal(res.error?.sent, undefined);
+});
+
+test('a non-envelope error body lifts `error` into `name`', async () => {
+  // The rate-limited public mounts and the CSRF guard answer with
+  // {"error":"..."} instead of {statusCode,name,message}.
+  const { fn } = mockFetch(403, { error: 'csrf_failed' });
+  const mb = new MailBlastr('mb_test', { baseUrl: 'https://api.test', fetch: fn });
+  const res = await mb.domains.list();
+  assert.equal(res.error?.statusCode, 403);
+  assert.equal(res.error?.name, 'csrf_failed');
 });
 
 test('emails: batch / get / update / cancel map to the right routes', async () => {
@@ -286,34 +441,17 @@ test('emails.send forwards template_id + variables in the body', async () => {
   assert.deepEqual(calls[0].body.variables, { name: 'Ada' });
 });
 
-test('campaigns + apiKeys map to the right routes', async () => {
+test('campaigns map to the right routes', async () => {
   const { fn, calls } = mockFetch(200, {});
   const mb = new MailBlastr('mb_test', { baseUrl: 'https://api.test', fetch: fn });
   await mb.campaigns.create({ domain: 'x.com', from: 'f@x.com', subject: 's', html: 'x' });
   await mb.campaigns.send('b1', { scheduled_at: '2030-01-01T00:00:00Z' });
   await mb.campaigns.cancel('b1');
-  await mb.apiKeys.create({ name: 'CI', permission: 'sending_access', domain_id: 'd1' });
-  // Multi-domain scoping is sending_access-only (full_access + domain_ids is a 422 server-side).
-  await mb.apiKeys.create({ name: 'CI multi', permission: 'sending_access', domain_ids: ['d1', 'd2'] });
-  await mb.apiKeys.remove('k1');
   assert.deepEqual(calls.map((c) => `${c.method} ${c.url}`), [
     'POST https://api.test/campaigns',
     'POST https://api.test/campaigns/b1/send',
     'POST https://api.test/campaigns/b1/cancel',
-    'POST https://api.test/api-keys',
-    'POST https://api.test/api-keys',
-    'DELETE https://api.test/api-keys/k1',
   ]);
-  assert.equal(calls[3].body.domain_id, 'd1');
-  assert.deepEqual(calls[4].body.domain_ids, ['d1', 'd2']);
-});
-
-test('apiKeys.create returns domain_ids from the response', async () => {
-  const { fn } = mockFetch(201, { object: 'api_key', id: 'k2', token: 'mb_live_x', domain_id: null, domain_ids: ['d1', 'd2'] });
-  const mb = new MailBlastr('mb_test', { baseUrl: 'https://api.test', fetch: fn });
-  const res = await mb.apiKeys.create({ name: 'CI multi', domain_ids: ['d1', 'd2'] });
-  assert.deepEqual(res.data?.domain_ids, ['d1', 'd2']);
-  assert.equal(res.data?.domain_id, null);
 });
 
 test('emails.list + sent-attachments map to the right routes', async () => {
@@ -326,6 +464,27 @@ test('emails.list + sent-attachments map to the right routes', async () => {
     'GET https://api.test/emails?limit=10&after=cur1',
     'GET https://api.test/emails/e1/attachments',
     'GET https://api.test/emails/e1/attachments/att1',
+  ]);
+});
+
+test('emails.list forwards the status + search filters', async () => {
+  const { fn, calls } = mockFetch(200, { object: 'list', has_more: false, data: [] });
+  const mb = new MailBlastr('mb_test', { baseUrl: 'https://api.test', fetch: fn });
+  await mb.emails.list({ status: 'delivered', search: 'ada@', domain_id: 'd1' });
+  assert.equal(
+    calls[0].url,
+    'https://api.test/emails?domain_id=d1&status=delivered&search=ada%40',
+  );
+});
+
+test('emails.sources + receiving.addresses map to the right routes', async () => {
+  const { fn, calls } = mockFetch(200, { object: 'list', has_more: false, data: [] });
+  const mb = new MailBlastr('mb_test', { baseUrl: 'https://api.test', fetch: fn });
+  await mb.emails.sources();
+  await mb.emails.receiving.addresses();
+  assert.deepEqual(calls.map((c) => `${c.method} ${c.url}`), [
+    'GET https://api.test/emails/sources',
+    'GET https://api.test/emails/receiving/addresses',
   ]);
 });
 
@@ -641,15 +800,19 @@ test('emails.list returns trimmed SentEmailListItem shape (no status; null cc/bc
   assert.equal(row.last_event, 'sent');
   assert.equal(row.cc, null);
   // Compile-time: `status` must NOT exist on the list item type. If the SDK
-  // regressed to ListResponse<Email>, `row.status` would typecheck and this
-  // @ts-expect-error would fail the build.
+  // regressed to ListResponse<Email>, `row.status` would typecheck and the
+  // directive below would become an unused-directive build error.
+  // (Do not start a comment line with the directive name in prose — TypeScript
+  // reads that as a second, real directive.)
   // @ts-expect-error SentEmailListItem has no `status`
   assert.equal(row.status, undefined);
 });
 
 test('apiKeys.list exposes token prefix, permission and last_used_at', async () => {
+  // `token` on a read is the 8-char display PREFIX of the key, never a secret
+  // and never an `mb_live_` form (that prefix does not exist).
   const key = {
-    id: '7', name: 'CI', token: 'mb_live_abcd', permission: 'sending_access',
+    id: '7', name: 'CI', token: 'mb_ab12', permission: 'sending_access',
     domain_id: null, created_at: '2026-07-04T00:00:00Z', last_used_at: null,
   };
   const { fn } = mockFetch(200, { object: 'list', has_more: false, data: [key] });
@@ -657,9 +820,36 @@ test('apiKeys.list exposes token prefix, permission and last_used_at', async () 
   const res = await mb.apiKeys.list();
   const k = res.data!.data[0];
   // These three fields are returned by the backend and must be typed.
-  assert.equal(k.token, 'mb_live_abcd');
+  assert.equal(k.token, 'mb_ab12');
   assert.equal(k.permission, 'sending_access');
   assert.equal(k.last_used_at, null);
+});
+
+test('apiKeys.list accepts pagination', async () => {
+  const { fn, calls } = mockFetch(200, { object: 'list', has_more: false, data: [] });
+  const mb = new MailBlastr('mb_test', { baseUrl: 'https://api.test', fetch: fn });
+  await mb.apiKeys.list({ limit: 5 });
+  assert.deepEqual(calls.map((c) => `${c.method} ${c.url}`), [
+    'GET https://api.test/api-keys?limit=5',
+  ]);
+});
+
+test('apiKeys exposes list only — key lifecycle is dashboard-only', async () => {
+  const mb = new MailBlastr('mb_test', { baseUrl: 'https://api.test' });
+  // Creating, re-scoping and revoking keys require a signed-in dashboard
+  // session, so the SDK ships no method for them: a leaked key cannot mint a
+  // replacement or widen its own scope. Absent at compile time too — each
+  // access below is a type error, which is what @ts-expect-error asserts.
+  for (const method of ['create', 'update', 'remove', 'revoke', 'delete'] as const) {
+    assert.equal((mb.apiKeys as unknown as Record<string, unknown>)[method], undefined);
+  }
+  // @ts-expect-error apiKeys.create does not exist
+  assert.equal(mb.apiKeys.create, undefined);
+  // @ts-expect-error apiKeys.update does not exist
+  assert.equal(mb.apiKeys.update, undefined);
+  // @ts-expect-error apiKeys.remove does not exist
+  assert.equal(mb.apiKeys.remove, undefined);
+  assert.equal(typeof mb.apiKeys.list, 'function');
 });
 
 test('logs + events map to the right routes', async () => {
@@ -684,6 +874,119 @@ test('logs + events map to the right routes', async () => {
   assert.deepEqual(calls[2].body, { name: 'signup.completed', domain: 'x.com', email: 'c@x.com', data: { plan: 'pro' } });
   assert.deepEqual(calls[3].body, { name: 'signup.completed', schema: { plan: 'string' } });
   assert.deepEqual(calls[5].body, { schema: { plan: 'string', seats: 'number' } });
+});
+
+test('contacts.remove returns the { object, id, deleted } ack', async () => {
+  // The route answers { object:'contact', id, deleted:true } — there is no
+  // `contact` key. Typing one would send callers looking for a field that
+  // never arrives.
+  const { fn } = mockFetch(200, { object: 'contact', id: 'c1', deleted: true });
+  const mb = new MailBlastr('mb_test', { baseUrl: 'https://api.test', fetch: fn });
+  const res = await mb.contacts.remove({ id: 'c1' });
+  assert.equal(res.data?.id, 'c1');
+  assert.equal(res.data?.deleted, true);
+  // @ts-expect-error the delete ack has no `contact` field
+  assert.equal(res.data?.contact, undefined);
+});
+
+test('contacts.listSegments returns id/name/created_at rows and accepts paging', async () => {
+  const { fn, calls } = mockFetch(200, {
+    object: 'list', has_more: false,
+    data: [{ id: 's1', name: 'General', created_at: '2026-07-04T00:00:00Z' }],
+  });
+  const mb = new MailBlastr('mb_test', { baseUrl: 'https://api.test', fetch: fn });
+  const res = await mb.contacts.listSegments('c1', { limit: 5 });
+  assert.equal(calls[0].url, 'https://api.test/contacts/c1/segments?limit=5');
+  assert.equal(res.data!.data[0].name, 'General');
+  // @ts-expect-error the nested rows carry no `filter`
+  assert.equal(res.data!.data[0].filter, undefined);
+});
+
+test('segments.contacts returns the reduced membership shape and accepts paging', async () => {
+  const row = {
+    id: 'c1', email: 'a@x.com', first_name: null, last_name: null,
+    unsubscribed: false, created_at: '2026-07-04T00:00:00Z',
+  };
+  const { fn, calls } = mockFetch(200, { object: 'list', has_more: false, data: [row] });
+  const mb = new MailBlastr('mb_test', { baseUrl: 'https://api.test', fetch: fn });
+  const res = await mb.segments.contacts('s1', { limit: 25 });
+  assert.equal(calls[0].url, 'https://api.test/segments/s1/contacts?limit=25');
+  assert.equal(res.data!.data[0].email, 'a@x.com');
+  // @ts-expect-error segment membership rows carry no `properties`
+  assert.equal(res.data!.data[0].properties, undefined);
+});
+
+test('segments accept a members_only status and an engagement filter', async () => {
+  const { fn, calls } = mockFetch(201, {});
+  const mb = new MailBlastr('mb_test', { baseUrl: 'https://api.test', fetch: fn });
+  await mb.segments.create({
+    domain: 'x.com', name: 'Openers',
+    filter: { status: 'members_only', engagement: { event: 'opened', campaign_id: 'cmp1' } },
+  });
+  assert.equal(calls[0].body.filter.status, 'members_only');
+  assert.deepEqual(calls[0].body.filter.engagement, { event: 'opened', campaign_id: 'cmp1' });
+});
+
+test('campaigns.engagement maps to GET /campaigns/:id/engagement', async () => {
+  const { fn, calls } = mockFetch(200, { object: 'campaign_engagement', campaign_id: 'b1', opened: [], clicked: [], replied: [] });
+  const mb = new MailBlastr('mb_test', { baseUrl: 'https://api.test', fetch: fn });
+  const res = await mb.campaigns.engagement('b1');
+  assert.equal(calls[0].url, 'https://api.test/campaigns/b1/engagement');
+  assert.deepEqual(res.data?.opened, []);
+});
+
+test('automations.runs forwards a status filter as a comma-separated list', async () => {
+  const { fn, calls } = mockFetch(200, {});
+  const mb = new MailBlastr('mb_test', { baseUrl: 'https://api.test', fetch: fn });
+  await mb.automations.runs('au1', { status: ['failed', 'running'], limit: 10 });
+  await mb.automations.runs('au1', { status: 'completed' });
+  assert.deepEqual(calls.map((c) => c.url), [
+    'https://api.test/automations/au1/runs?limit=10&status=failed%2Crunning',
+    'https://api.test/automations/au1/runs?status=completed',
+  ]);
+});
+
+test('automations.ai maps to POST /automations/:id/ai', async () => {
+  const { fn, calls } = mockFetch(200, { object: 'automation', id: 'au1', ai: { added_steps: 3, mode: 'workflow' } });
+  const mb = new MailBlastr('mb_test', { baseUrl: 'https://api.test', fetch: fn });
+  const res = await mb.automations.ai('au1', { prompt: 'welcome series', template_ids: ['t1'] });
+  assert.equal(calls[0].url, 'https://api.test/automations/au1/ai');
+  assert.deepEqual(calls[0].body, { prompt: 'welcome series', template_ids: ['t1'] });
+  assert.equal(res.data?.ai.added_steps, 3);
+});
+
+test('domains.recordsCsv returns the CSV body as text', async () => {
+  const csv = 'Type,Host,Full name,Value,Priority,TTL,Purpose,Status\r\n';
+  const fn = (async () => ({
+    ok: true, status: 200, headers: { get: () => null }, text: async () => csv,
+  })) as unknown as typeof fetch;
+  const mb = new MailBlastr('mb_test', { baseUrl: 'https://api.test', fetch: fn });
+  const res = await mb.domains.recordsCsv('d1');
+  assert.equal(res.error, null);
+  assert.equal(res.data, csv);
+});
+
+test('contacts.import supports storage_key + segment_id; createImportUpload maps correctly', async () => {
+  const { fn, calls } = mockFetch(201, {});
+  const mb = new MailBlastr('mb_test', { baseUrl: 'https://api.test', fetch: fn });
+  await mb.contacts.createImportUpload({ audienceId: 'a1', filename: 'big.csv', size: 1024 });
+  await mb.contacts.import({ audienceId: 'a1', storage_key: 'uploads/a1/big.csv', segment_id: 'seg1' });
+  assert.deepEqual(calls.map((c) => `${c.method} ${c.url}`), [
+    'POST https://api.test/audiences/a1/contacts/import/upload',
+    'POST https://api.test/audiences/a1/contacts/import?segment_id=seg1',
+  ]);
+  assert.deepEqual(calls[0].body, { filename: 'big.csv', size: 1024 });
+  assert.deepEqual(calls[1].body, { storage_key: 'uploads/a1/big.csv' });
+});
+
+test('webhooks.test surfaces a failed delivery as data.ok === false', async () => {
+  // The route answers HTTP 200 even when the endpoint could not be reached.
+  const { fn } = mockFetch(200, { object: 'webhook_test', id: 'wh1', ok: false, error: 'lookup_failed' });
+  const mb = new MailBlastr('mb_test', { baseUrl: 'https://api.test', fetch: fn });
+  const res = await mb.webhooks.test('wh1');
+  assert.equal(res.error, null);
+  assert.equal(res.data?.ok, false);
+  assert.equal(res.data?.error, 'lookup_failed');
 });
 
 test('domains.mxCheck maps to GET /domains/mx-check', async () => {

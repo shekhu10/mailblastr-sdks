@@ -56,6 +56,17 @@ class DomainsTest < Minitest::Test
     assert_equal "u", last_body["apiUser"]
   end
 
+  def test_mx_check_and_records_csv
+    Mailblastr::Domains.mx_check("yourdomain.com")
+    assert_request :get, "/domains/mx-check?name=yourdomain.com"
+
+    # records.csv is CSV text, not JSON — it must come back as a raw String.
+    stub_response!(200, "Type,Host,Full name,Value,Priority,TTL,Purpose,Status\r\nTXT,@,...")
+    csv = Mailblastr::Domains.records_csv("dom_1")
+    assert_request :get, "/domains/dom_1/records.csv"
+    assert csv.start_with?("Type,Host,Full name")
+  end
+
   def test_domain_id_is_escaped_in_paths
     Mailblastr::Domains.get("dom x/../../admin")
     assert_request :get, "/domains/dom%20x%2F..%2F..%2Fadmin"

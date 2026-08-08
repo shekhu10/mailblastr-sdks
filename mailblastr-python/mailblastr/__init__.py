@@ -18,7 +18,12 @@ Every method returns the parsed JSON response and raises
 
 from typing import Optional
 
-from .http_client import DEFAULT_BASE_URL, USER_AGENT, VERSION
+from .http_client import (
+    DEFAULT_BASE_URL,
+    IDEMPOTENCY_KEY_MAX_LENGTH,
+    USER_AGENT,
+    VERSION,
+)
 from .exceptions import MailblastrError
 from .emails import Emails
 from .batch import Batch
@@ -69,6 +74,7 @@ __all__ = [
     "Logs",
     "Polls",
     "DEFAULT_BASE_URL",
+    "IDEMPOTENCY_KEY_MAX_LENGTH",
     "USER_AGENT",
     "VERSION",
 ]

@@ -18,17 +18,15 @@ pub enum TemplateVariableType {
     Number,
 }
 
-/// A template variable definition as returned by the API.
+/// A template variable definition as returned by the API. The registry
+/// carries only the declaration — there is no per-variable id or timestamp.
 #[derive(Debug, Clone, Deserialize)]
 pub struct TemplateVariable {
-    pub id: String,
     pub key: String,
     #[serde(rename = "type")]
     pub variable_type: TemplateVariableType,
     /// String or number fallback.
     pub fallback_value: Option<Value>,
-    pub created_at: String,
-    pub updated_at: String,
 }
 
 /// A template.
@@ -51,6 +49,26 @@ pub struct Template {
     pub has_unpublished_versions: Option<bool>,
     pub current_version_id: Option<String>,
     pub variables: Option<Vec<TemplateVariable>>,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+/// A row of `templates.list()` — a SMALLER shape than [`Template`], with no
+/// `object` key and no `from`/`reply_to`/`text`/`variables`. Use
+/// `templates.get(id)` for the full record.
+#[derive(Debug, Clone, Deserialize)]
+pub struct TemplateListItem {
+    pub id: String,
+    pub name: String,
+    pub subject: Option<String>,
+    pub html: Option<String>,
+    /// `draft` | `published`.
+    pub status: Option<String>,
+    pub published_at: Option<String>,
+    /// Stable handle usable anywhere an id is accepted.
+    pub alias: Option<String>,
+    /// True when the draft has edits not yet published.
+    pub has_unpublished_versions: Option<bool>,
     pub created_at: String,
     pub updated_at: String,
 }
@@ -266,7 +284,8 @@ impl TemplatesSvc {
             .await
     }
 
-    /// Retrieve a template. `GET /templates/:id`
+    /// Retrieve a template. `template_id` may be the template UUID **or** its
+    /// `alias`. `GET /templates/:id`
     pub async fn get(&self, template_id: &str) -> Result<Template> {
         let path = format!("/templates/{}", seg(template_id));
         self.config
@@ -274,8 +293,13 @@ impl TemplatesSvc {
             .await
     }
 
-    /// List templates. `GET /templates`
-    pub async fn list(&self, params: Option<PaginationParams>) -> Result<ListResponse<Template>> {
+    /// List templates — trimmed [`TemplateListItem`] rows. Unlike domains /
+    /// topics / API keys this route always applies the page limit (default
+    /// 20). `GET /templates`
+    pub async fn list(
+        &self,
+        params: Option<PaginationParams>,
+    ) -> Result<ListResponse<TemplateListItem>> {
         let req = self
             .config
             .request(Method::GET, "/templates")

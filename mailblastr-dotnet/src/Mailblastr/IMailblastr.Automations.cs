@@ -16,14 +16,37 @@ public partial interface IMailblastr
     /// <summary>Update an automation (name / status / domain / connections). PATCH /automations/:id</summary>
     Task<Automation> AutomationUpdateAsync(string automationId, AutomationUpdateOptions options, CancellationToken cancellationToken = default);
 
-    /// <summary>Append a step to an automation. POST /automations/:id/steps</summary>
+    /// <summary>
+    /// Append a step to an automation. The automation must be DISABLED.
+    /// POST /automations/:id/steps
+    /// </summary>
     Task<AutomationStep> AutomationAddStepAsync(string automationId, AutomationAddStepOptions options, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Edit an existing step's type/config/key. The automation must be DISABLED.
+    /// PATCH /automations/:id/steps/:stepId
+    /// </summary>
+    Task<AutomationStep> AutomationUpdateStepAsync(string automationId, string stepId, AutomationAddStepOptions options, CancellationToken cancellationToken = default);
 
     /// <summary>Delete a step from an automation. DELETE /automations/:id/steps/:stepId</summary>
     Task<AutomationStepDeleted> AutomationDeleteStepAsync(string automationId, string stepId, CancellationToken cancellationToken = default);
 
     /// <summary>List an automation's runs. GET /automations/:id/runs</summary>
     Task<ListResponse<AutomationRun>> AutomationListRunsAsync(string automationId, PaginationOptions? pagination = null, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// List an automation's runs, optionally filtered to a set of statuses.
+    /// GET /automations/:id/runs
+    /// </summary>
+    Task<ListResponse<AutomationRun>> AutomationListRunsAsync(string automationId, AutomationRunListOptions options, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Generate (or extend) an automation's step graph from a prompt. The
+    /// automation must be stopped; without <c>options.Attach</c> it must also
+    /// have no steps yet. Rate-limited to 20 requests / 60s per account and
+    /// consumes AI credits. POST /automations/:id/ai
+    /// </summary>
+    Task<AutomationAiResult> AutomationCreateWithAiAsync(string automationId, AutomationAiOptions options, CancellationToken cancellationToken = default);
 
     /// <summary>Retrieve a single automation run with its step trace. GET /automations/:id/runs/:runId</summary>
     Task<AutomationRun> AutomationRetrieveRunAsync(string automationId, string runId, CancellationToken cancellationToken = default);
@@ -41,13 +64,39 @@ public partial interface IMailblastr
     /// is REQUIRED — only automations belonging to that domain are triggered.
     /// POST /events/send
     /// </summary>
+    /// <param name="options">The event to ingest.</param>
+    /// <param name="idempotencyKey">
+    /// Sent as <c>Idempotency-Key</c>, but the API honours that header on
+    /// <c>POST /emails</c> and <c>POST /emails/batch</c> ONLY — it is ignored
+    /// here, so a retry ingests a SECOND event and can enroll the contact
+    /// twice. De-duplicate on your side instead. The 1–255 length rule
+    /// (<see cref="MailblastrClient.MaxIdempotencyKeyLength"/>) is enforced by
+    /// the server, not by this client.
+    /// </param>
+    /// <param name="cancellationToken">Token to cancel the request.</param>
     Task<EventSendResponse> EventSendAsync(EventSendOptions options, string? idempotencyKey = null, CancellationToken cancellationToken = default);
 
     /// <summary>Create a custom-event definition (name + optional payload schema). POST /events</summary>
+    /// <param name="options">The definition to create.</param>
+    /// <param name="idempotencyKey">
+    /// Sent as <c>Idempotency-Key</c>, but the API honours that header on
+    /// <c>POST /emails</c> and <c>POST /emails/batch</c> ONLY — it has no effect
+    /// here. The 1–255 length rule
+    /// (<see cref="MailblastrClient.MaxIdempotencyKeyLength"/>) is enforced by
+    /// the server, not by this client.
+    /// </param>
+    /// <param name="cancellationToken">Token to cancel the request.</param>
     Task<EventDefinition> EventCreateAsync(EventCreateOptions options, string? idempotencyKey = null, CancellationToken cancellationToken = default);
 
     /// <summary>List custom-event definitions. GET /events</summary>
     Task<ListResponse<EventDefinition>> EventListAsync(PaginationOptions? pagination = null, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Replace a custom-event definition's payload schema (pass null to clear
+    /// it). The event NAME is immutable — automations reference it, so changing
+    /// it is a 422; create a new event instead. PATCH /events/:id
+    /// </summary>
+    Task<EventDefinition> EventUpdateSchemaAsync(string eventId, IDictionary<string, string>? schema, CancellationToken cancellationToken = default);
 
     /// <summary>Delete a custom-event definition. DELETE /events/:id</summary>
     Task<RemovedResponse> EventDeleteAsync(string eventId, CancellationToken cancellationToken = default);
@@ -72,7 +121,14 @@ public partial interface IMailblastr
     /// </summary>
     Task<WebhookCreated> WebhookRotateSecretAsync(string webhookId, CancellationToken cancellationToken = default);
 
-    /// <summary>Send a synchronous test delivery and return the endpoint's live result. POST /webhooks/:id/test</summary>
+    /// <summary>
+    /// Send a synchronous test delivery and return the endpoint's live result.
+    /// POST /webhooks/:id/test
+    /// <para>
+    /// A failed delivery is still HTTP 200, so this does NOT throw when your
+    /// endpoint rejects the test — read <see cref="WebhookTestResult.Ok"/>.
+    /// </para>
+    /// </summary>
     Task<WebhookTestResult> WebhookTestAsync(string webhookId, CancellationToken cancellationToken = default);
 
     /// <summary>Delete a webhook. DELETE /webhooks/:id</summary>

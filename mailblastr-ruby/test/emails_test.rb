@@ -5,6 +5,15 @@ require "test_helper"
 class EmailsTest < Minitest::Test
   include ClientStubHelper
 
+  # A stubbed 429 body would otherwise drive the real retry loop (and its real
+  # sleeps). These tests are about the error envelope, not the backoff.
+  def without_retries
+    Mailblastr.max_retries = 0
+    yield
+  ensure
+    Mailblastr.max_retries = nil
+  end
+
   def test_send_posts_json_body_with_auth
     stub_response!(200, { "id" => "email_1" })
     result = Mailblastr::Emails.send({
@@ -27,6 +36,38 @@ class EmailsTest < Minitest::Test
     assert_equal "order-123", last_request["Idempotency-Key"]
   end
 
+  # The 1-255 bound belongs to the server: the SDK forwards whatever it is
+  # given and lets the API answer 400 invalid_idempotency_key. Every MailBlastr
+  # SDK behaves this way — none of them pre-check the length.
+  def test_idempotency_key_is_sent_verbatim_and_never_checked_locally
+    assert_equal 255, Mailblastr::Client::IDEMPOTENCY_KEY_MAX_LENGTH
+
+    # Not trimmed — the server trims before measuring.
+    Mailblastr::Emails.send({ from: "a@b.com", to: "c@d.com", subject: "s" }, { idempotency_key: "  order-9  " })
+    assert_equal "  order-9  ", last_request["Idempotency-Key"]
+
+    max = "k" * Mailblastr::Client::IDEMPOTENCY_KEY_MAX_LENGTH
+    Mailblastr::Emails.send({ from: "a@b.com", to: "c@d.com", subject: "s" }, { idempotency_key: max })
+    assert_equal max, last_request["Idempotency-Key"]
+
+    # 256 is one over the api_idempotency.key column width — transmitted, so
+    # the API reports it, rather than raising here.
+    over = "k" * (Mailblastr::Client::IDEMPOTENCY_KEY_MAX_LENGTH + 1)
+    Mailblastr::Emails.send({ from: "a@b.com", to: "c@d.com", subject: "s" }, { idempotency_key: over })
+    assert_equal over, last_request["Idempotency-Key"]
+
+    Mailblastr::Emails.send({ from: "a@b.com", to: "c@d.com", subject: "s" }, { idempotency_key: "   " })
+    assert_equal "   ", last_request["Idempotency-Key"]
+  end
+
+  def test_blank_idempotency_key_sends_no_header
+    Mailblastr::Emails.send({ from: "a@b.com", to: "c@d.com", subject: "s" }, { idempotency_key: "" })
+    assert_nil last_request["Idempotency-Key"]
+
+    Mailblastr::Emails.send({ from: "a@b.com", to: "c@d.com", subject: "s" }, {})
+    assert_nil last_request["Idempotency-Key"]
+  end
+
   def test_batch_send_posts_array
     Mailblastr::Batch.send([{ from: "a@b.com", to: "c@d.com", subject: "one" }])
     assert_request :post, "/emails/batch"
@@ -38,6 +79,36 @@ class EmailsTest < Minitest::Test
     Mailblastr::Emails.list({ limit: 20, after: "email_9" })
     assert_request :get, "/emails?limit=20&after=email_9"
     assert_nil last_request.body
+  end
+
+  def test_list_forwards_every_server_side_filter
+    Mailblastr::Emails.list({
+                              limit: 10,
+                              campaign_id: "camp_1",
+                              automation_id: "auto_1",
+                              source: "individual",
+                              domain_id: "dom_1",
+                              status: "delivered",
+                              search: "acme"
+                            })
+    assert_request :get,
+                   "/emails?limit=10&campaign_id=camp_1&automation_id=auto_1&source=individual" \
+                   "&domain_id=dom_1&status=delivered&search=acme"
+  end
+
+  def test_list_supports_the_q_alias_for_search
+    Mailblastr::Emails.list({ q: "acme" })
+    assert_request :get, "/emails?q=acme"
+  end
+
+  def test_list_omits_filters_that_were_not_supplied
+    Mailblastr::Emails.list({ status: "bounced" })
+    assert_request :get, "/emails?status=bounced"
+  end
+
+  def test_sources
+    Mailblastr::Emails.sources
+    assert_request :get, "/emails/sources"
   end
 
   def test_get_update_cancel_and_attachments
@@ -70,8 +141,17 @@ class EmailsTest < Minitest::Test
     Mailblastr::Emails::Receiving.get("recv_1")
     assert_request :get, "/emails/receiving/recv_1"
 
+    Mailblastr::Emails::Receiving.addresses
+    assert_request :get, "/emails/receiving/addresses"
+
+    Mailblastr::Emails::Receiving.list({ received_for: "hi@yourdomain.com" })
+    assert_request :get, "/emails/receiving?received_for=hi%40yourdomain.com"
+
     Mailblastr::Emails::Receiving.list_attachments("recv_1")
     assert_request :get, "/emails/receiving/recv_1/attachments"
+
+    Mailblastr::Emails::Receiving.list_attachments("recv_1", { limit: 5 })
+    assert_request :get, "/emails/receiving/recv_1/attachments?limit=5"
 
     Mailblastr::Emails::Receiving.forward("recv_1", { from: "you@yourdomain.com", to: "team@you.com" })
     assert_request :post, "/emails/receiving/recv_1/forward"
@@ -104,6 +184,104 @@ class EmailsTest < Minitest::Test
     assert_equal 422, err.status_code
     assert_equal "validation_error", err.name
     assert_equal "from must be verified", err.message
+    # An ordinary error carries none of the additive fields.
+    assert_nil err.limit
+    assert_nil err.reputation
+    assert_nil err.sent
+    assert_nil err.sent_count
+  end
+
+  def test_quota_error_says_which_quota_ran_out
+    stub_response!(429, {
+                     "statusCode" => 429,
+                     "name" => "daily_quota_exceeded",
+                     "message" => "Daily send quota reached.",
+                     "limit" => {
+                       "kind" => "emails_daily", "used" => 100, "limit" => 100,
+                       "requested" => 3, "remaining" => 0, "period" => "24h",
+                       "plan" => { "id" => "free", "name" => "Free" },
+                       "next_plan" => { "id" => "pro", "name" => "Pro", "amount" => 1400, "currency" => "USD" },
+                       "credits" => { "balance" => 0, "needed" => 1, "purchasable" => true,
+                                      "unit" => 1000, "amount_per_unit_cents" => 100 }
+                     }
+                   })
+    err = without_retries do
+      assert_raises(Mailblastr::Error) do
+        Mailblastr::Emails.send({ from: "a@acme.com", to: "b@example.com", subject: "s" })
+      end
+    end
+    assert_equal 429, err.status_code
+    assert_equal "daily_quota_exceeded", err.name
+    assert_equal "emails_daily", err.limit["kind"]
+    assert_equal 100, err.limit["used"]
+    assert_equal 100, err.limit["limit"]
+    assert_equal "24h", err.limit["period"]
+    assert_equal "Pro", err.limit.dig("next_plan", "name")
+    assert_equal true, err.limit.dig("credits", "purchasable")
+    # The whole body stays reachable for anything newer than this SDK.
+    assert_equal "daily_quota_exceeded", err.body["name"]
+    assert_nil err.reputation
+    assert_nil err.sent
+  end
+
+  def test_reputation_error_exposes_the_gate_detail
+    stub_response!(429, {
+                     "statusCode" => 429,
+                     "name" => "reputation_limit_exceeded",
+                     "message" => "Sending is rate limited.",
+                     "reputation" => {
+                       "retryable" => true, "scope" => "domain", "status" => "warming",
+                       "scope_key" => "acme.com", "hourly_limit" => 50, "hourly_used" => 50,
+                       "retry_at" => "2026-08-08T12:00:00.000Z"
+                     }
+                   })
+    err = without_retries do
+      assert_raises(Mailblastr::Error) do
+        Mailblastr::Emails.send({ from: "a@acme.com", to: "b@example.com", subject: "s" })
+      end
+    end
+    assert_equal true, err.reputation["retryable"]
+    assert_equal "domain", err.reputation["scope"]
+    assert_equal "acme.com", err.reputation["scope_key"]
+    assert_equal "2026-08-08T12:00:00.000Z", err.reputation["retry_at"]
+    assert_nil err.limit
+  end
+
+  def test_partial_batch_failure_names_the_emails_already_sent
+    stub_response!(429, {
+                     "statusCode" => 429,
+                     "name" => "daily_quota_exceeded",
+                     "message" => "Daily send quota reached.",
+                     "limit" => { "kind" => "emails_daily", "used" => 100, "limit" => 100 },
+                     "sent" => [{ "id" => "em_1" }, { "id" => "em_2" }],
+                     "sent_count" => 2
+                   })
+    err = without_retries do
+      assert_raises(Mailblastr::Error) do
+        Mailblastr::Emails.batch([{ from: "a@acme.com", to: "b@example.com", subject: "s" }],
+                                 idempotency_key: "batch-1")
+      end
+    end
+    assert_equal 2, err.sent_count
+    assert_equal %w[em_1 em_2], err.sent.map { |e| e["id"] }
+    assert_equal "emails_daily", err.limit["kind"]
+  end
+
+  def test_partial_batch_failure_without_sent_count_falls_back_to_the_sent_list
+    stub_response!(429, { "statusCode" => 429, "name" => "monthly_quota_exceeded",
+                          "message" => "…", "sent" => [{ "id" => "em_1" }] })
+    err = without_retries { assert_raises(Mailblastr::Error) { Mailblastr::Emails.list } }
+    assert_equal 1, err.sent_count
+  end
+
+  def test_additive_fields_of_an_unknown_shape_do_not_cost_the_caller_the_error
+    stub_response!(402, { "statusCode" => 402, "name" => "plan_limit_reached",
+                          "message" => "Domain cap reached.", "limit" => "soon" })
+    err = assert_raises(Mailblastr::Error) { Mailblastr::Emails.list }
+    assert_equal 402, err.status_code
+    assert_equal "plan_limit_reached", err.name
+    assert_nil err.limit
+    assert_equal "soon", err.body["limit"]
   end
 
   def test_missing_api_key_raises_before_any_request

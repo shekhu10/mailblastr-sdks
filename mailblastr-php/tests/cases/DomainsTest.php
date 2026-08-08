@@ -16,6 +16,17 @@ check_same('domains.get: path', '/domains/dom_1', $t->lastPath());
 $mb->domains->list(['limit' => 3]);
 check_same('domains.list: path', '/domains?limit=3', $t->lastPath());
 
+$mb->domains->mxCheck('example.com');
+check_same('domains.mxCheck: method', 'GET', $t->last()['method']);
+check_same('domains.mxCheck: path', '/domains/mx-check?name=example.com', $t->lastPath());
+
+// records.csv streams CSV text, not JSON
+$t->queue(200, "Type,Host\r\nTXT,@\r\n");
+$csv = $mb->domains->recordsCsv('dom_1');
+check_same('domains.recordsCsv: raw CSV returned', "Type,Host\r\nTXT,@\r\n", $csv);
+check_same('domains.recordsCsv: path', '/domains/dom_1/records.csv', $t->lastPath());
+check_auth('domains.recordsCsv', $t->last());
+
 $mb->domains->update('dom_1', ['click_tracking' => true, 'tls' => 'enforced']);
 check_same('domains.update: method', 'PATCH', $t->last()['method']);
 check_same('domains.update: body', ['click_tracking' => true, 'tls' => 'enforced'], $t->lastJson());

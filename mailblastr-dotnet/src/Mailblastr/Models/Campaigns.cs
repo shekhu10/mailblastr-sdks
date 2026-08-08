@@ -43,12 +43,22 @@ public class CampaignAbInfo
     [JsonPropertyName("subject_b")]
     public string? SubjectB { get; set; }
 
+    [JsonPropertyName("html_b")]
+    public string? HtmlB { get; set; }
+
+    [JsonPropertyName("text_b")]
+    public string? TextB { get; set; }
+
     [JsonPropertyName("test_pct")]
     public int? TestPct { get; set; }
 
     /// <summary><c>open</c> | <c>click</c> | <c>reply</c>.</summary>
     [JsonPropertyName("metric")]
     public string? Metric { get; set; }
+
+    /// <summary>Hours the test ran before evaluating the winner.</summary>
+    [JsonPropertyName("eval_hours")]
+    public int? EvalHours { get; set; }
 
     [JsonPropertyName("status")]
     public string? Status { get; set; }
@@ -193,9 +203,75 @@ public class Campaign
     [JsonPropertyName("parent_campaign_id")]
     public string? ParentCampaignId { get; set; }
 
+    /// <summary>IANA zone the schedule and daily batching are evaluated in.</summary>
+    [JsonPropertyName("schedule_timezone")]
+    public string? ScheduleTimezone { get; set; }
+
+    /// <summary>Max recipients fanned out per batch-day; null ⇒ everyone at once.</summary>
+    [JsonPropertyName("daily_batch_size")]
+    public int? DailyBatchSize { get; set; }
+
+    /// <summary>Why the campaign failed or was paused; null otherwise.</summary>
+    [JsonPropertyName("failure_reason")]
+    public string? FailureReason { get; set; }
+
     /// <summary>Engagement counts — included only on retrieve (GET /campaigns/:id).</summary>
     [JsonPropertyName("statistics")]
     public JsonElement? Statistics { get; set; }
+}
+
+/// <summary>
+/// One row of CampaignListAsync (GET /campaigns). The list serializer is
+/// deliberately narrower than the full <see cref="Campaign"/>: no bodies, no
+/// <c>from</c>/<c>topic_id</c>/<c>reply_to</c>/<c>preview_text</c>, no schedule
+/// detail, follow-ups, recurrence or statistics. Use CampaignRetrieveAsync for
+/// those.
+/// </summary>
+public class CampaignListItem
+{
+    [JsonPropertyName("object")]
+    public string Object { get; set; } = "campaign";
+
+    [JsonPropertyName("id")]
+    public string Id { get; set; } = null!;
+
+    [JsonPropertyName("name")]
+    public string? Name { get; set; }
+
+    /// <summary>Included so a list view can render it without a per-row fetch.</summary>
+    [JsonPropertyName("subject")]
+    public string? Subject { get; set; }
+
+    [JsonPropertyName("audience_id")]
+    public string AudienceId { get; set; } = null!;
+
+    /// <summary>Segment target; null ⇒ the whole audience.</summary>
+    [JsonPropertyName("segment_id")]
+    public string? SegmentId { get; set; }
+
+    /// <summary><c>draft</c>, <c>queued</c>, <c>scheduled</c>, <c>recurring</c>, <c>paused</c>, <c>sent</c>, <c>failed</c>.</summary>
+    [JsonPropertyName("status")]
+    public string Status { get; set; } = null!;
+
+    /// <summary>
+    /// Lightweight A/B marker — <c>enabled</c> plus metric/status/winner when
+    /// enabled. Full A/B detail is on CampaignRetrieveAsync / CampaignAbAsync.
+    /// </summary>
+    [JsonPropertyName("ab_test")]
+    public CampaignAbInfo? AbTest { get; set; }
+
+    [JsonPropertyName("created_at")]
+    public string? CreatedAt { get; set; }
+
+    [JsonPropertyName("scheduled_at")]
+    public string? ScheduledAt { get; set; }
+
+    [JsonPropertyName("sent_at")]
+    public string? SentAt { get; set; }
+
+    /// <summary>Why the campaign failed or was paused; null otherwise.</summary>
+    [JsonPropertyName("failure_reason")]
+    public string? FailureReason { get; set; }
 }
 
 /// <summary>Payload for creating a campaign (POST /campaigns). <see cref="Domain"/> is REQUIRED.</summary>
@@ -395,6 +471,91 @@ public class CampaignStats
     /// <summary>Counts and engagement rates not modeled explicitly.</summary>
     [JsonExtensionData]
     public Dictionary<string, JsonElement>? Extra { get; set; }
+}
+
+/// <summary>One recipient who opened a campaign email.</summary>
+public class CampaignOpenEngagement
+{
+    [JsonPropertyName("email")]
+    public string Email { get; set; } = null!;
+
+    [JsonPropertyName("contact_id")]
+    public string? ContactId { get; set; }
+
+    [JsonPropertyName("opened_at")]
+    public string? OpenedAt { get; set; }
+
+    [JsonPropertyName("open_count")]
+    public int OpenCount { get; set; }
+}
+
+/// <summary>One recipient who clicked a link in a campaign email.</summary>
+public class CampaignClickEngagement
+{
+    [JsonPropertyName("email")]
+    public string Email { get; set; } = null!;
+
+    [JsonPropertyName("contact_id")]
+    public string? ContactId { get; set; }
+
+    [JsonPropertyName("clicked_at")]
+    public string? ClickedAt { get; set; }
+
+    [JsonPropertyName("click_count")]
+    public int ClickCount { get; set; }
+}
+
+/// <summary>One reply received to a campaign email.</summary>
+public class CampaignReplyEngagement
+{
+    [JsonPropertyName("email")]
+    public string Email { get; set; } = null!;
+
+    [JsonPropertyName("contact_id")]
+    public string? ContactId { get; set; }
+
+    [JsonPropertyName("replied_at")]
+    public string? RepliedAt { get; set; }
+
+    /// <summary>Id of the inbound message — pass it to ReceivedEmailRetrieveAsync.</summary>
+    [JsonPropertyName("received_email_id")]
+    public string? ReceivedEmailId { get; set; }
+
+    [JsonPropertyName("subject")]
+    public string? Subject { get; set; }
+
+    /// <summary>First 300 characters of the reply text.</summary>
+    [JsonPropertyName("preview")]
+    public string? Preview { get; set; }
+
+    /// <summary>AI reply intent: <c>interested</c> | <c>neutral</c> | <c>not_interested</c>.</summary>
+    [JsonPropertyName("category")]
+    public string? Category { get; set; }
+
+    [JsonPropertyName("received_at")]
+    public string? ReceivedAt { get; set; }
+}
+
+/// <summary>
+/// Per-recipient engagement for a campaign (GET /campaigns/:id/engagement).
+/// Not paginated — each list is capped at 500 rows server-side.
+/// </summary>
+public class CampaignEngagement
+{
+    [JsonPropertyName("object")]
+    public string Object { get; set; } = "campaign_engagement";
+
+    [JsonPropertyName("campaign_id")]
+    public string CampaignId { get; set; } = null!;
+
+    [JsonPropertyName("opened")]
+    public List<CampaignOpenEngagement> Opened { get; set; } = new();
+
+    [JsonPropertyName("clicked")]
+    public List<CampaignClickEngagement> Clicked { get; set; } = new();
+
+    [JsonPropertyName("replied")]
+    public List<CampaignReplyEngagement> Replied { get; set; } = new();
 }
 
 /// <summary>A/B winner evaluation (GET /campaigns/:id/ab).</summary>

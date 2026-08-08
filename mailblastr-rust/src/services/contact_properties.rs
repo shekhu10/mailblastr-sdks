@@ -30,7 +30,7 @@ pub struct ContactProperty {
     pub property_type: ContactPropertyType,
     /// String or number fallback used when a contact has no value.
     pub fallback_value: Option<Value>,
-    pub created_at: String,
+    pub created_at: Option<String>,
 }
 
 /// Options for `contact_properties.create` (`POST /contact-properties`).

@@ -7,11 +7,15 @@ import (
 
 // ApiKey is an API key as returned by ApiKeys.List (GET /api-keys).
 type ApiKey struct {
-	Id   string `json:"id"`
-	Name string `json:"name"`
-	// Token is the non-secret display prefix of the key (e.g.
-	// "mb_live_abcd…"); empty for legacy keys with no stored prefix. The full
-	// secret is returned only once, at creation.
+	// Id is a string-encoded integer.
+	Id string `json:"id"`
+	// Object is omitted on list rows.
+	Object string `json:"object,omitempty"`
+	Name   string `json:"name"`
+	// Token is the non-secret 8-character display prefix of the key (e.g.
+	// "mb_ab12"); empty for legacy keys with no stored prefix. The full secret
+	// is shown once, in the dashboard, when the key is created. There is no
+	// "mb_live_" prefix.
 	Token string `json:"token"`
 	// Permission is derived from the key's scopes: "full_access" |
 	// "sending_access".
@@ -27,63 +31,26 @@ type ApiKey struct {
 	LastUsedAt string `json:"last_used_at"`
 }
 
-// CreateApiKeyRequest is the payload for POST /api-keys.
-type CreateApiKeyRequest struct {
-	Name string `json:"name"`
-	// Permission is "full_access" | "sending_access".
-	Permission string `json:"permission,omitempty"`
-	// DomainId scopes a sending_access key to one domain (legacy; prefer
-	// DomainIds).
-	DomainId string `json:"domain_id,omitempty"`
-	// DomainIds scopes the key to one or more domains. Only valid with
-	// sending_access — full-access keys always work across all your domains
-	// (the API rejects the combination with a validation_error). Mutually exclusive with DomainId — providing both is a
-	// 422.
-	DomainIds []string `json:"domain_ids,omitempty"`
-}
-
-// CreateApiKeyResponse carries the full secret Token, returned only once.
-type CreateApiKeyResponse struct {
-	Object   string `json:"object"`
-	Id       string `json:"id"`
-	Token    string `json:"token"`
-	DomainId string `json:"domain_id"`
-	// DomainIds lists the domains the key is scoped to; nil when unscoped.
-	DomainIds []string `json:"domain_ids"`
-}
-
 // ApiKeysService handles the /api-keys endpoints.
+//
+// This service is deliberately read-only. Creating a key, changing its
+// permission or domain scoping, and revoking it are dashboard-only operations:
+// the API answers 403 dashboard_only to every api-key-authenticated caller,
+// whatever its scopes. That is a security property — a leaked key cannot mint
+// itself a replacement, widen its own access, or revoke the keys that would
+// have caught it — so the SDK exposes no method for any of it.
 type ApiKeysService struct {
 	client *Client
 }
 
-// Create creates an API key. The full secret Token is returned only here.
-// POST /api-keys
-func (s *ApiKeysService) Create(params *CreateApiKeyRequest) (*CreateApiKeyResponse, error) {
-	return s.CreateWithContext(context.Background(), params)
-}
-
-// CreateWithContext creates an API key. POST /api-keys
-func (s *ApiKeysService) CreateWithContext(ctx context.Context, params *CreateApiKeyRequest) (*CreateApiKeyResponse, error) {
-	return request[CreateApiKeyResponse](ctx, s.client, http.MethodPost, "/api-keys", params, nil)
-}
-
-// List lists API keys. GET /api-keys
-func (s *ApiKeysService) List() (*ListResponse[ApiKey], error) {
-	return s.ListWithContext(context.Background())
+// List lists API keys (revoked ones excluded), showing only the non-secret
+// display prefix of each. Pass nil to get every key — this endpoint only pages
+// when you supply pagination params. GET /api-keys
+func (s *ApiKeysService) List(params *ListParams) (*ListResponse[ApiKey], error) {
+	return s.ListWithContext(context.Background(), params)
 }
 
 // ListWithContext lists API keys. GET /api-keys
-func (s *ApiKeysService) ListWithContext(ctx context.Context) (*ListResponse[ApiKey], error) {
-	return request[ListResponse[ApiKey]](ctx, s.client, http.MethodGet, "/api-keys", nil, nil)
-}
-
-// Remove deletes an API key. DELETE /api-keys/:id
-func (s *ApiKeysService) Remove(id string) (*RemovedResponse, error) {
-	return s.RemoveWithContext(context.Background(), id)
-}
-
-// RemoveWithContext deletes an API key. DELETE /api-keys/:id
-func (s *ApiKeysService) RemoveWithContext(ctx context.Context, id string) (*RemovedResponse, error) {
-	return request[RemovedResponse](ctx, s.client, http.MethodDelete, "/api-keys/"+esc(id), nil, nil)
+func (s *ApiKeysService) ListWithContext(ctx context.Context, params *ListParams) (*ListResponse[ApiKey], error) {
+	return request[ListResponse[ApiKey]](ctx, s.client, http.MethodGet, listPath("/api-keys", params), nil, nil)
 }

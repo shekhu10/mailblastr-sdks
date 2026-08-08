@@ -1,6 +1,6 @@
 'use strict';
 
-const { clean, withPagination, pagination } = require('../helpers');
+const { clean, withPagination, pagination, saveFile } = require('../helpers');
 
 function register({ group, leaf, act }) {
   const domains = group('domains', 'Manage sending domains');
@@ -15,7 +15,8 @@ function register({ group, leaf, act }) {
       .option('--no-open-tracking', 'disable open tracking')
       .option('--click-tracking', 'enable click tracking')
       .option('--no-click-tracking', 'disable click tracking')
-      .option('--receiving', 'enable inbound email receiving'),
+      .option('--receiving', 'enable inbound email receiving')
+      .option('--no-receiving', 'disable inbound email receiving'),
     ({ client, opts, args: [name] }) =>
       client.domains.create(
         clean({
@@ -27,7 +28,10 @@ function register({ group, leaf, act }) {
           // Only send the booleans the user explicitly set.
           open_tracking: 'openTracking' in opts ? opts.openTracking : undefined,
           click_tracking: 'clickTracking' in opts ? opts.clickTracking : undefined,
-          capabilities: opts.receiving ? { receiving: 'enabled' } : undefined,
+          capabilities:
+            'receiving' in opts
+              ? { receiving: opts.receiving ? 'enabled' : 'disabled' }
+              : undefined,
         }),
       ),
   );
@@ -51,6 +55,11 @@ function register({ group, leaf, act }) {
       .option('--click-tracking', 'enable click tracking')
       .option('--no-click-tracking', 'disable click tracking')
       .option('--tracking-subdomain <label>', 'custom tracking host label')
+      .option('--custom-tracking', 'serve tracking links from the custom tracking host')
+      .option('--no-custom-tracking', 'serve tracking links from the MailBlastr host')
+      .option('--custom-return-path <label>', 'MAIL FROM subdomain (Return-Path) DNS label')
+      .option('--receiving', 'enable inbound email receiving')
+      .option('--no-receiving', 'disable inbound email receiving')
       .option('--tls <policy>', "outbound TLS policy: 'opportunistic' | 'enforced'"),
     ({ client, opts, args: [id] }) =>
       client.domains.update(
@@ -58,10 +67,36 @@ function register({ group, leaf, act }) {
         clean({
           open_tracking: 'openTracking' in opts ? opts.openTracking : undefined,
           click_tracking: 'clickTracking' in opts ? opts.clickTracking : undefined,
+          custom_tracking: 'customTracking' in opts ? opts.customTracking : undefined,
           tracking_subdomain: opts.trackingSubdomain,
+          custom_return_path: opts.customReturnPath,
+          capabilities:
+            'receiving' in opts
+              ? { receiving: opts.receiving ? 'enabled' : 'disabled' }
+              : undefined,
           tls: opts.tls,
         }),
       ),
+  );
+
+  act(
+    leaf(domains, 'mx-check <name>', 'Check whether a domain already has MX records pointed at us'),
+    ({ client, args: [name] }) => client.domains.mxCheck(name),
+  );
+
+  act(
+    leaf(
+      domains,
+      'records-csv <id>',
+      "Download this domain's DNS records as CSV, ready to hand to a registrar",
+    ).option('--output <path>', 'file to write (default: <id>-dns-records.csv)'),
+    async ({ client, opts, args: [id] }) => {
+      // The endpoint answers text/csv, not JSON — write it out and print where
+      // it landed, the same way the binary download commands do.
+      const result = await client.domains.recordsCsv(id);
+      if (result.error) return result;
+      return saveFile(opts.output || `${id}-dns-records.csv`, result.data);
+    },
   );
 
   act(leaf(domains, 'delete <id>', 'Delete a domain'), ({ client, args: [id] }) =>

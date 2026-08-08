@@ -19,15 +19,22 @@ module Mailblastr
       end
 
       # List sent emails (trimmed list items) — cursor pagination plus optional
-      # server-side `campaign_id`, `automation_id`, `source` ("individual"),
-      # and `domain_id` filters. GET /emails
+      # server-side filters: `campaign_id`, `automation_id`, `source`
+      # ("individual"), `domain_id`, `status` (matched case-insensitively
+      # against the row's `last_event`) and `search` (recipients, subject and
+      # sender). `q` is the server's alias for `search`, honoured only when
+      # `search` is absent. GET /emails
       def list(params = {})
-        query = Client.pagination(params)
-        %i[campaign_id automation_id source domain_id].each do |k|
-          v = Client.opt(params, k)
-          query[k] = v unless v.nil?
-        end
+        query = Client.pagination(params).merge(
+          Client.filters(params, :campaign_id, :automation_id, :source, :domain_id, :status, :search, :q)
+        )
         Client.request(:get, "/emails", query: query)
+      end
+
+      # Per-source send metrics, one row per campaign / automation / individual
+      # origin. Not paginated. GET /emails/sources
+      def sources
+        Client.request(:get, "/emails/sources")
       end
 
       # Retrieve a sent email and its events. GET /emails/:id
@@ -62,12 +69,18 @@ module Mailblastr
       class << self
         # List received emails — cursor pagination plus an optional
         # `received_for` filter (only messages received for that address).
+        # With no `limit` and no cursor the endpoint returns up to 1000 rows in
+        # one response; pass `limit` to get normal 1-100 pages.
         # GET /emails/receiving
         def list(params = {})
-          query = Client.pagination(params)
-          received_for = Client.opt(params, :received_for)
-          query[:received_for] = received_for unless received_for.nil?
+          query = Client.pagination(params).merge(Client.filters(params, :received_for))
           Client.request(:get, "/emails/receiving", query: query)
+        end
+
+        # Per-address inbound stats (totals, replies, last received).
+        # Not paginated. GET /emails/receiving/addresses
+        def addresses
+          Client.request(:get, "/emails/receiving/addresses")
         end
 
         # Retrieve a received email. GET /emails/receiving/:id
@@ -75,9 +88,15 @@ module Mailblastr
           Client.request(:get, "/emails/receiving/#{Client.path_escape(email_id)}")
         end
 
-        # List a received email's attachments. GET /emails/receiving/:id/attachments
-        def list_attachments(email_id)
-          Client.request(:get, "/emails/receiving/#{Client.path_escape(email_id)}/attachments")
+        # List a received email's attachments. With no `limit` and no `after`
+        # every attachment is returned; supplying either paginates normally.
+        # GET /emails/receiving/:id/attachments
+        def list_attachments(email_id, params = {})
+          Client.request(
+            :get,
+            "/emails/receiving/#{Client.path_escape(email_id)}/attachments",
+            query: Client.pagination(params)
+          )
         end
 
         # Download one attachment as raw bytes (binary String).

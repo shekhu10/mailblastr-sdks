@@ -40,6 +40,32 @@ class TestWebhooksApi(RecordingTestCase):
         mailblastr.Webhooks.test("wh_1")
         self.assertCall("POST", "/webhooks/wh_1/test")
 
+    def test_failed_test_delivery_is_a_200_not_an_error(self):
+        # A rejected test delivery still comes back HTTP 200, so this must not
+        # raise — the outcome lives in "ok", and treating 200 as success would
+        # silently report a broken endpoint as healthy.
+        self.response = {
+            "object": "webhook_test",
+            "id": "wh_1",
+            "ok": False,
+            "error": "lookup_failed",
+        }
+        result = mailblastr.Webhooks.test("wh_1")
+        self.assertCall("POST", "/webhooks/wh_1/test")
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["error"], "lookup_failed")
+
+    def test_successful_test_delivery_reports_the_endpoint_status(self):
+        self.response = {
+            "object": "webhook_test",
+            "id": "wh_1",
+            "ok": True,
+            "status": 200,
+        }
+        result = mailblastr.Webhooks.test("wh_1")
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["status"], 200)
+
 
 class TestVerifySignature(RecordingTestCase):
     payload = '{"type":"email.delivered","data":{"id":"em_1"}}'

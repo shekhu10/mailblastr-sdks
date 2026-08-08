@@ -41,14 +41,29 @@ type SendEventResponse struct {
 	Enrolled int `json:"enrolled,omitempty"`
 }
 
+// ReservedEventPrefix cannot start a custom event name — the API reserves it
+// for built-in triggers such as "mailblastr:schedule".
+const ReservedEventPrefix = "mailblastr:"
+
+// EventSchemaTypes are the value types accepted in an event definition's
+// Schema map.
+var EventSchemaTypes = []string{"string", "number", "boolean", "date"}
+
 // CreateEventRequest creates a custom-event definition.
 type CreateEventRequest struct {
-	// Name is the custom event name (cannot start with the reserved
-	// "mailblastr:" prefix).
+	// Name is the custom event name (cannot start with ReservedEventPrefix).
 	Name string `json:"name"`
-	// Schema is an optional flat key -> type map; types: "string" | "number"
-	// | "boolean" | "date".
+	// Schema is an optional flat key -> type map; types are EventSchemaTypes.
 	Schema map[string]string `json:"schema,omitempty"`
+}
+
+// UpdateEventRequest updates a custom-event definition. Only the schema is
+// mutable — the event name is immutable because automations reference it, and
+// sending a name is a 422.
+type UpdateEventRequest struct {
+	// Schema replaces the payload schema wholesale; a nil map clears it (the
+	// field is always sent).
+	Schema map[string]string `json:"schema"`
 }
 
 // EventDefinition is a registered custom-event definition.
@@ -77,14 +92,23 @@ func (s *EventsService) SendWithContext(ctx context.Context, params *SendEventRe
 	return request[SendEventResponse](ctx, s.client, http.MethodPost, "/events/send", params, nil)
 }
 
-// SendWithOptions sends a custom event with per-request options (e.g. an
-// Idempotency-Key). POST /events/send
+// SendWithOptions sends a custom event with per-request options.
+// POST /events/send
+//
+// Deprecated: this endpoint does not honour Idempotency-Key — only
+// POST /emails and POST /emails/batch read the header — so a retry here
+// ingests a second event. Use SendWithContext.
 func (s *EventsService) SendWithOptions(ctx context.Context, params *SendEventRequest, opts *RequestOptions) (*SendEventResponse, error) {
 	return request[SendEventResponse](ctx, s.client, http.MethodPost, "/events/send", params, opts)
 }
 
 // Create creates a custom-event definition (name + optional payload schema).
 // POST /events
+//
+// There is deliberately no CreateWithOptions: this endpoint does not honour
+// Idempotency-Key either — only POST /emails and POST /emails/batch read the
+// header. A duplicate event name is already rejected with a 422
+// validation_error, so a retry is safe without one.
 func (s *EventsService) Create(params *CreateEventRequest) (*EventDefinition, error) {
 	return s.CreateWithContext(context.Background(), params)
 }
@@ -102,6 +126,18 @@ func (s *EventsService) List(params *ListParams) (*ListResponse[EventDefinition]
 // ListWithContext lists custom-event definitions. GET /events
 func (s *EventsService) ListWithContext(ctx context.Context, params *ListParams) (*ListResponse[EventDefinition], error) {
 	return request[ListResponse[EventDefinition]](ctx, s.client, http.MethodGet, listPath("/events", params), nil, nil)
+}
+
+// Update updates a custom-event definition's payload schema (the name is
+// immutable). PATCH /events/:id
+func (s *EventsService) Update(id string, params *UpdateEventRequest) (*EventDefinition, error) {
+	return s.UpdateWithContext(context.Background(), id, params)
+}
+
+// UpdateWithContext updates a custom-event definition's schema.
+// PATCH /events/:id
+func (s *EventsService) UpdateWithContext(ctx context.Context, id string, params *UpdateEventRequest) (*EventDefinition, error) {
+	return request[EventDefinition](ctx, s.client, http.MethodPatch, "/events/"+esc(id), params, nil)
 }
 
 // Remove deletes a custom-event definition. DELETE /events/:id

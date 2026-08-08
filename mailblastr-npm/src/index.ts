@@ -1,32 +1,35 @@
 import { createHmac, timingSafeEqual } from 'node:crypto';
-import { HttpClient, type ClientConfig, DEFAULT_BASE_URL, VERSION, USER_AGENT } from './client';
+import { HttpClient, type ClientConfig, DEFAULT_BASE_URL, VERSION, USER_AGENT, IDEMPOTENCY_KEY_MAX_LENGTH } from './client';
 import type {
   Result, RequestOptions, PaginationParams, ObjectRef,
   SendEmailOptions, BatchEmailOptions, CreateEmailResponse, Email, SentEmailListItem,
-  ListEmailsParams, ListReceivedEmailsParams,
+  ListEmailsParams, ListReceivedEmailsParams, EmailSource, ReceivingAddressStats,
   AttachmentMeta, ReceivedAttachment, ReceivedEmail, ForwardReceivedEmailOptions,
+  ReplyReceivedEmailOptions,
   CreateDomainOptions, UpdateDomainOptions, Domain, MxCheckResponse,
   DomainClaim, ClaimDomainOptions,
   Audience, Contact, CreateContactOptions, UpdateContactOptions,
-  ContactInput, ImportContactsResponse, ListContactsParams,
-  ContactTopics, UpdateContactTopicsOptions,
+  ContactInput, ImportContactsResponse, ListContactsParams, ContactImportUpload,
+  ContactTopics, UpdateContactTopicsOptions, ContactSegmentRef,
   ContactProperty, CreateContactPropertyOptions, UpdateContactPropertyOptions,
   Poll, PollResult,
-  Campaign, CreateCampaignOptions, UpdateCampaignOptions, CampaignStats, CampaignAbResult,
-  Segment, CreateSegmentOptions, UpdateSegmentOptions, ListSegmentsParams,
+  Campaign, CampaignListItem, CreateCampaignOptions, UpdateCampaignOptions,
+  CampaignStats, CampaignAbResult, CampaignEngagement,
+  Segment, SegmentContact, CreateSegmentOptions, UpdateSegmentOptions, ListSegmentsParams,
   Topic, CreateTopicOptions, UpdateTopicOptions, ListTopicsParams,
-  Template, CreateTemplateOptions, UpdateTemplateOptions, DuplicateTemplateOptions,
+  Template, TemplateListItem, CreateTemplateOptions, UpdateTemplateOptions, DuplicateTemplateOptions,
   Automation, CreateAutomationOptions, UpdateAutomationOptions,
-  AddAutomationStepOptions, AutomationStep, AutomationRun,
-  Webhook, CreateWebhookOptions, UpdateWebhookOptions,
+  AddAutomationStepOptions, AutomationStep, AutomationRun, ListAutomationRunsParams,
+  AutomationAiOptions, AutomationAiResult,
+  Webhook, CreateWebhookOptions, UpdateWebhookOptions, WebhookTestResult,
   WebhookHeaders, VerifyWebhookResult, VerifyWebhookOptions,
   LogEntry, SendEventOptions, SendEventResponse, CreateEventOptions, UpdateEventOptions, EventDefinition,
-  ApiKey, CreateApiKeyOptions, CreateApiKeyResponse,
+  ApiKey,
   ListResponse, RemovedResponse,
 } from './types';
 
 export * from './types';
-export { DEFAULT_BASE_URL, VERSION, USER_AGENT };
+export { DEFAULT_BASE_URL, VERSION, USER_AGENT, IDEMPOTENCY_KEY_MAX_LENGTH };
 
 /**
  * Tagged template that percent-encodes every interpolated segment, so an id
@@ -41,37 +44,56 @@ function p(strings: TemplateStringsArray, ...values: unknown[]): string {
   );
 }
 
+/** Append `limit`/`after`/`before` to a URLSearchParams, skipping absent ones. */
+function addPagination(q: URLSearchParams, params?: PaginationParams): URLSearchParams {
+  if (params?.limit != null) q.set('limit', String(params.limit));
+  if (params?.after != null) q.set('after', params.after);
+  if (params?.before != null) q.set('before', params.before);
+  return q;
+}
+
+/** Render a URLSearchParams as `?a=b`, or `''` when empty. */
+function qs(q: URLSearchParams): string {
+  const s = q.toString();
+  return s ? `?${s}` : '';
+}
+
 /** Build a `?limit=&after=&before=` query string from pagination params. */
 function paginate(params?: PaginationParams): string {
-  if (!params) return '';
-  const q = new URLSearchParams();
-  if (params.limit != null) q.set('limit', String(params.limit));
-  if (params.after != null) q.set('after', params.after);
-  if (params.before != null) q.set('before', params.before);
-  const qs = q.toString();
-  return qs ? `?${qs}` : '';
+  return params ? qs(addPagination(new URLSearchParams(), params)) : '';
 }
 
 /** Inbound (received) email — accessed as `mb.emails.receiving`. */
 class ReceivingEmails {
   constructor(private readonly http: HttpClient) {}
-  /** List received emails. GET /emails/receiving — optional `received_for` filter. */
+  /**
+   * List received emails. GET /emails/receiving — optional `received_for` filter.
+   *
+   * Note the divergent default: with no `limit` and no cursor this returns up
+   * to 1000 rows in one response. Pass `limit` for normal 1–100 paging.
+   */
   list(params?: ListReceivedEmailsParams): Promise<Result<ListResponse<ReceivedEmail>>> {
-    const q = new URLSearchParams();
-    if (params?.limit != null) q.set('limit', String(params.limit));
-    if (params?.after != null) q.set('after', params.after);
-    if (params?.before != null) q.set('before', params.before);
+    const q = addPagination(new URLSearchParams(), params);
     if (params?.received_for != null) q.set('received_for', params.received_for);
-    const qs = q.toString();
-    return this.http.request('GET', `/emails/receiving${qs ? `?${qs}` : ''}`);
+    return this.http.request('GET', `/emails/receiving${qs(q)}`);
+  }
+  /**
+   * Per-address inbound stats — one row per address you receive mail for.
+   * GET /emails/receiving/addresses (not paginated).
+   */
+  addresses(): Promise<Result<ListResponse<ReceivingAddressStats>>> {
+    return this.http.request('GET', '/emails/receiving/addresses');
   }
   /** Retrieve a received email. GET /emails/receiving/:id */
   get(id: string): Promise<Result<ReceivedEmail>> {
     return this.http.request('GET', p`/emails/receiving/${id}`);
   }
-  /** List a received email's attachments. GET /emails/receiving/:id/attachments */
-  listAttachments(id: string): Promise<Result<ListResponse<ReceivedAttachment>>> {
-    return this.http.request('GET', p`/emails/receiving/${id}/attachments`);
+  /**
+   * List a received email's attachments. GET /emails/receiving/:id/attachments —
+   * with no `limit` and no `after` cursor every attachment is returned.
+   */
+  listAttachments(id: string, params?: PaginationParams): Promise<Result<ListResponse<ReceivedAttachment>>> {
+    return this.http.request('GET', p`/emails/receiving/${id}/attachments` + paginate(params));
   }
   /**
    * Download one attachment of a received email as raw bytes.
@@ -89,8 +111,8 @@ class ReceivingEmails {
   getRaw(id: string): Promise<Result<ArrayBuffer>> {
     return this.http.requestRaw('GET', p`/emails/receiving/${id}/raw`);
   }
-  /** Forward a received email. POST /emails/receiving/:id/forward */
-  forward(id: string, payload: ForwardReceivedEmailOptions): Promise<Result<CreateEmailResponse>> {
+  /** Forward a received email, attachments included. POST /emails/receiving/:id/forward */
+  forward(id: string, payload: ForwardReceivedEmailOptions): Promise<Result<ObjectRef<'email'>>> {
     return this.http.request('POST', p`/emails/receiving/${id}/forward`, payload);
   }
   /**
@@ -98,7 +120,7 @@ class ReceivingEmails {
    * (In-Reply-To the received message; subject defaults to `Re: …`).
    * POST /emails/receiving/:id/reply
    */
-  reply(id: string, payload: { from: string; html?: string; text?: string; subject?: string }): Promise<Result<CreateEmailResponse>> {
+  reply(id: string, payload: ReplyReceivedEmailOptions): Promise<Result<ObjectRef<'email'>>> {
     return this.http.request('POST', p`/emails/receiving/${id}/reply`, payload);
   }
   /** Delete a received email. DELETE /emails/receiving/:id */
@@ -128,19 +150,25 @@ class Emails {
   /**
    * List sent emails. GET /emails — returns trimmed {@link SentEmailListItem}s
    * (no status/html/text/events). Optional filters: `campaign_id`,
-   * `automation_id`, `source: 'individual'`, and `domain_id`.
+   * `automation_id`, `source: 'individual'`, `domain_id`, `status` (matched
+   * against `last_event`) and `search` (recipients / subject / sender).
    */
   list(params?: ListEmailsParams): Promise<Result<ListResponse<SentEmailListItem>>> {
-    const q = new URLSearchParams();
-    if (params?.limit != null) q.set('limit', String(params.limit));
-    if (params?.after != null) q.set('after', params.after);
-    if (params?.before != null) q.set('before', params.before);
+    const q = addPagination(new URLSearchParams(), params);
     if (params?.campaign_id != null) q.set('campaign_id', params.campaign_id);
     if (params?.automation_id != null) q.set('automation_id', params.automation_id);
     if (params?.source != null) q.set('source', params.source);
     if (params?.domain_id != null) q.set('domain_id', params.domain_id);
-    const qs = q.toString();
-    return this.http.request('GET', `/emails${qs ? `?${qs}` : ''}`);
+    if (params?.status != null) q.set('status', params.status);
+    if (params?.search != null) q.set('search', params.search);
+    return this.http.request('GET', `/emails${qs(q)}`);
+  }
+  /**
+   * Per-source send metrics — one row per campaign, automation, and a roll-up
+   * for individual API sends. GET /emails/sources (not paginated).
+   */
+  sources(): Promise<Result<ListResponse<EmailSource>>> {
+    return this.http.request('GET', '/emails/sources');
   }
   /** Retrieve a sent email and its events. GET /emails/:id */
   get(id: string): Promise<Result<Email>> {
@@ -154,12 +182,17 @@ class Emails {
   getAttachment(id: string, attachmentId: string): Promise<Result<AttachmentMeta>> {
     return this.http.request('GET', p`/emails/${id}/attachments/${attachmentId}`);
   }
-  /** Reschedule a scheduled email. PATCH /emails/:id */
-  update(id: string, payload: { scheduled_at: string }): Promise<Result<{ id: string; object: 'email' }>> {
+  /**
+   * Reschedule a scheduled email — only while it is still `scheduled`.
+   * `scheduled_at` is an ISO 8601 timestamp or a relative phrase like
+   * `'in 1 min'`, must be in the future, and at most 30 days ahead.
+   * PATCH /emails/:id
+   */
+  update(id: string, payload: { scheduled_at: string }): Promise<Result<ObjectRef<'email'>>> {
     return this.http.request('PATCH', p`/emails/${id}`, payload);
   }
-  /** Cancel a scheduled email. POST /emails/:id/cancel */
-  cancel(id: string): Promise<Result<{ id: string; object: 'email' }>> {
+  /** Cancel a scheduled email (only while it is still `scheduled`). POST /emails/:id/cancel */
+  cancel(id: string): Promise<Result<ObjectRef<'email'>>> {
     return this.http.request('POST', p`/emails/${id}/cancel`);
   }
 }
@@ -185,6 +218,10 @@ class Domains {
   get(id: string): Promise<Result<Domain>> {
     return this.http.request('GET', p`/domains/${id}`);
   }
+  /**
+   * List domains. With no pagination params every domain is returned;
+   * pass `limit` to page. Rows still in the `claim` state are excluded.
+   */
   list(params?: PaginationParams): Promise<Result<ListResponse<Domain>>> {
     return this.http.request('GET', `/domains${paginate(params)}`);
   }
@@ -204,6 +241,14 @@ class Domains {
    * MX records, and do they all point at our inbound host? GET /domains/mx-check */
   mxCheck(name: string): Promise<Result<MxCheckResponse>> {
     return this.http.request('GET', `/domains/mx-check?name=${encodeURIComponent(name)}`);
+  }
+  /**
+   * This domain's DNS records as CSV text, ready to hand to a registrar.
+   * Columns: Type,Host,Full name,Value,Priority,TTL,Purpose,Status.
+   * GET /domains/:id/records.csv
+   */
+  recordsCsv(id: string): Promise<Result<string>> {
+    return this.http.requestText('GET', p`/domains/${id}/records.csv`);
   }
   /** Retrieve a domain's claim record. GET /domains/:id/claim */
   getClaim(id: string): Promise<Result<DomainClaim>> {
@@ -330,12 +375,42 @@ class Contacts {
    * mode, where only already-registered columns are kept and the rest are returned
    * in `ignored_columns`.
    */
-  import(params: { audienceId: string; csv: string; on_conflict?: 'upsert' | 'skip'; create_properties?: boolean }): Promise<Result<ImportContactsResponse>> {
+  import(params: {
+    audienceId: string;
+    /** Inline CSV text (max 5 MB / 10,000 rows). Provide `csv` OR `storage_key`. */
+    csv?: string;
+    /** Key from {@link Contacts.createImportUpload} once the file is uploaded — for files past the inline caps. */
+    storage_key?: string;
+    /** Name recorded for the archived source file (inline mode). */
+    file_name?: string;
+    on_conflict?: 'upsert' | 'skip';
+    create_properties?: boolean;
+    /** Also add every imported email to this segment (must belong to the audience). */
+    segment_id?: string;
+  }): Promise<Result<ImportContactsResponse>> {
     const q = new URLSearchParams();
     if (params.on_conflict) q.set('on_conflict', params.on_conflict);
     if (params.create_properties === false) q.set('create_properties', 'false');
-    const qs = q.toString();
-    return this.http.request('POST', `/audiences/${encodeURIComponent(params.audienceId)}/contacts/import${qs ? `?${qs}` : ''}`, { csv: params.csv });
+    if (params.segment_id != null) q.set('segment_id', params.segment_id);
+    const body: Record<string, unknown> = {};
+    if (params.csv != null) body.csv = params.csv;
+    if (params.storage_key != null) body.storage_key = params.storage_key;
+    if (params.file_name != null) body.file_name = params.file_name;
+    return this.http.request('POST', p`/audiences/${params.audienceId}/contacts/import` + qs(q), body);
+  }
+  /**
+   * Mint a presigned direct-upload URL for a CSV too large for the 5 MB inline
+   * import (up to 256 MB). PUT the file to `upload_url`, then call
+   * `contacts.import({ audienceId, storage_key })`.
+   * POST /audiences/:id/contacts/import/upload
+   *
+   * The returned `upload_url` is a bearer credential — never log it.
+   */
+  createImportUpload(params: { audienceId: string; filename: string; size: number }): Promise<Result<ContactImportUpload>> {
+    return this.http.request('POST', p`/audiences/${params.audienceId}/contacts/import/upload`, {
+      filename: params.filename,
+      size: params.size,
+    });
   }
   /**
    * Update a contact. Returns the slim ack { object: 'contact', id }. On the
@@ -351,10 +426,10 @@ class Contacts {
       : this.http.request('PATCH', `/contacts/${eid}`, domain != null ? { ...body, domain } : body);
   }
   /**
-   * Delete a contact. The id is returned under `contact`. On the flat API,
-   * pass `domain` when `id` is an EMAIL (disambiguates across pools).
+   * Delete a contact. On the flat API, pass `domain` when `id` is an EMAIL
+   * (disambiguates across pools).
    */
-  remove(params: { audienceId?: string; domain?: string; id: string }): Promise<Result<{ object: 'contact'; contact: string; deleted: true }>> {
+  remove(params: { audienceId?: string; domain?: string; id: string }): Promise<Result<RemovedResponse>> {
     const id = encodeURIComponent(params.id);
     if (params.audienceId) return this.http.request('DELETE', `/audiences/${encodeURIComponent(params.audienceId)}/contacts/${id}`);
     const qs = params.domain ? `?domain=${encodeURIComponent(params.domain)}` : '';
@@ -368,13 +443,17 @@ class Contacts {
   removeFromSegment(id: string, segmentId: string): Promise<Result<{ id: string; audienceId: string; deleted: boolean }>> {
     return this.http.request('DELETE', `/contacts/${encodeURIComponent(id)}/segments/${encodeURIComponent(segmentId)}`);
   }
-  /** List the segments a contact belongs to. GET /contacts/:id/segments */
-  listSegments(id: string): Promise<Result<ListResponse<Segment>>> {
-    return this.http.request('GET', `/contacts/${encodeURIComponent(id)}/segments`);
+  /**
+   * List the segments a contact belongs to. GET /contacts/:id/segments —
+   * rows carry only `id`/`name`/`created_at`; use `mb.segments.get(id)` for
+   * the full segment.
+   */
+  listSegments(id: string, params?: PaginationParams): Promise<Result<ListResponse<ContactSegmentRef>>> {
+    return this.http.request('GET', p`/contacts/${id}/segments` + paginate(params));
   }
   /** Get a contact's topic subscriptions. GET /contacts/:id/topics */
-  getTopics(id: string): Promise<Result<ContactTopics>> {
-    return this.http.request('GET', `/contacts/${encodeURIComponent(id)}/topics`);
+  getTopics(id: string, params?: PaginationParams): Promise<Result<ContactTopics>> {
+    return this.http.request('GET', p`/contacts/${id}/topics` + paginate(params));
   }
   /** Update a contact's topic subscriptions. PATCH /contacts/:id/topics → { id } (the contact id). */
   updateTopics(id: string, payload: UpdateContactTopicsOptions): Promise<Result<{ id: string }>> {
@@ -406,7 +485,7 @@ class ContactProperties {
 /** Read-only results of the in-email poll widget. `mb.polls`. */
 class Polls {
   constructor(private readonly http: HttpClient) {}
-  /** One summary row per email that has poll responses. GET /polls */
+  /** One summary row per email that has poll responses. With no `limit`, all of them. GET /polls */
   list(params?: PaginationParams): Promise<Result<ListResponse<Poll>>> {
     return this.http.request('GET', `/polls${paginate(params)}`);
   }
@@ -422,10 +501,16 @@ class Campaigns {
   create(payload: CreateCampaignOptions): Promise<Result<{ id: string }>> {
     return this.http.request('POST', '/campaigns', payload);
   }
+  /** Retrieve one campaign, including `statistics`, `followups` and `list_address`. */
   get(id: string): Promise<Result<Campaign>> {
     return this.http.request('GET', p`/campaigns/${id}`);
   }
-  list(params?: PaginationParams): Promise<Result<ListResponse<Campaign>>> {
+  /**
+   * List campaigns. Rows are the trimmed {@link CampaignListItem} (no bodies,
+   * no follow-ups, no statistics) — use `campaigns.get(id)` for the full
+   * object. With no params every campaign is returned.
+   */
+  list(params?: PaginationParams): Promise<Result<ListResponse<CampaignListItem>>> {
     return this.http.request('GET', `/campaigns${paginate(params)}`);
   }
   update(id: string, payload: UpdateCampaignOptions): Promise<Result<{ id: string }>> {
@@ -447,6 +532,13 @@ class Campaigns {
   stats(id: string): Promise<Result<CampaignStats>> {
     return this.http.request('GET', p`/campaigns/${id}/stats`);
   }
+  /**
+   * Who opened, clicked and replied. GET /campaigns/:id/engagement — NOT
+   * paginated; each list is capped at 500 rows.
+   */
+  engagement(id: string): Promise<Result<CampaignEngagement>> {
+    return this.http.request('GET', p`/campaigns/${id}/engagement`);
+  }
   /** A/B winner evaluation for an A/B campaign. GET /campaigns/:id/ab */
   ab(id: string): Promise<Result<CampaignAbResult>> {
     return this.http.request('GET', p`/campaigns/${id}/ab`);
@@ -467,15 +559,16 @@ class Segments {
   }
   /** List a domain's segments (`domain` is required; includes its auto-created "General" segment). */
   list(params: ListSegmentsParams): Promise<Result<ListResponse<Segment>>> {
-    const q = new URLSearchParams({ domain: params.domain });
-    if (params.limit != null) q.set('limit', String(params.limit));
-    if (params.after != null) q.set('after', params.after);
-    if (params.before != null) q.set('before', params.before);
+    const q = addPagination(new URLSearchParams({ domain: params.domain }), params);
     return this.http.request('GET', `/segments?${q.toString()}`);
   }
-  /** Preview the contacts a segment currently resolves to. */
-  contacts(id: string): Promise<Result<ListResponse<Contact>>> {
-    return this.http.request('GET', p`/segments/${id}/contacts`);
+  /**
+   * Preview the contacts a segment currently resolves to (filter matches plus
+   * explicit members). Rows are the reduced {@link SegmentContact} shape — no
+   * `object`, no `properties`.
+   */
+  contacts(id: string, params?: PaginationParams): Promise<Result<ListResponse<SegmentContact>>> {
+    return this.http.request('GET', p`/segments/${id}/contacts` + paginate(params));
   }
   update(id: string, payload: UpdateSegmentOptions): Promise<Result<Segment>> {
     return this.http.request('PATCH', p`/segments/${id}`, payload);
@@ -491,10 +584,15 @@ class Templates {
   create(payload: CreateTemplateOptions): Promise<Result<ObjectRef<'template'>>> {
     return this.http.request('POST', '/templates', payload);
   }
+  /** Retrieve a template by id OR alias — both are accepted wherever `:id` is. */
   get(id: string): Promise<Result<Template>> {
     return this.http.request('GET', p`/templates/${id}`);
   }
-  list(params?: PaginationParams): Promise<Result<ListResponse<Template>>> {
+  /**
+   * List templates. Rows are the trimmed {@link TemplateListItem} (no `from`,
+   * `reply_to`, `text` or `variables`). Defaults to 20 per page.
+   */
+  list(params?: PaginationParams): Promise<Result<ListResponse<TemplateListItem>>> {
     return this.http.request('GET', `/templates${paginate(params)}`);
   }
   /** Returns the slim ack { object: 'template', id }. */
@@ -523,12 +621,9 @@ class Topics {
   get(id: string): Promise<Result<Topic>> {
     return this.http.request('GET', p`/topics/${id}`);
   }
-  /** List a domain's topics (`domain` is required). */
+  /** List a domain's topics (`domain` is required). With no `limit`, all of them. */
   list(params: ListTopicsParams): Promise<Result<ListResponse<Topic>>> {
-    const q = new URLSearchParams({ domain: params.domain });
-    if (params.limit != null) q.set('limit', String(params.limit));
-    if (params.after != null) q.set('after', params.after);
-    if (params.before != null) q.set('before', params.before);
+    const q = addPagination(new URLSearchParams({ domain: params.domain }), params);
     return this.http.request('GET', `/topics?${q.toString()}`);
   }
   update(id: string, payload: UpdateTopicOptions): Promise<Result<Topic>> {
@@ -566,9 +661,17 @@ class Automations {
   deleteStep(id: string, stepId: string): Promise<Result<{ id: string; deleted: boolean }>> {
     return this.http.request('DELETE', p`/automations/${id}/steps/${stepId}`);
   }
-  /** List an automation's runs. GET /automations/:id/runs */
-  runs(id: string, params?: PaginationParams): Promise<Result<ListResponse<AutomationRun>>> {
-    return this.http.request('GET', `/automations/${encodeURIComponent(id)}/runs${paginate(params)}`);
+  /**
+   * List an automation's runs, newest first. GET /automations/:id/runs —
+   * optionally filtered to one or more `status` values (`running`,
+   * `completed`, `failed`, `skipped`), applied before paging.
+   */
+  runs(id: string, params?: ListAutomationRunsParams): Promise<Result<ListResponse<AutomationRun>>> {
+    const q = addPagination(new URLSearchParams(), params);
+    if (params?.status != null) {
+      q.set('status', Array.isArray(params.status) ? params.status.join(',') : params.status);
+    }
+    return this.http.request('GET', p`/automations/${id}/runs` + qs(q));
   }
   /** Retrieve a single automation run. GET /automations/:id/runs/:runId */
   getRun(id: string, runId: string): Promise<Result<AutomationRun>> {
@@ -577,6 +680,15 @@ class Automations {
   /** Stop an automation — prevents new runs; in-progress runs finish. POST /automations/:id/stop */
   stop(id: string): Promise<Result<Automation>> {
     return this.http.request('POST', p`/automations/${id}/stop`);
+  }
+  /**
+   * Author (or extend) the step graph from a natural-language prompt. The
+   * automation must be disabled; without `attach` it must also have no steps
+   * yet. Consumes AI credits and is limited to 20 calls per minute per account.
+   * POST /automations/:id/ai
+   */
+  ai(id: string, payload: AutomationAiOptions): Promise<Result<AutomationAiResult>> {
+    return this.http.request('POST', p`/automations/${id}/ai`, payload);
   }
   remove(id: string): Promise<Result<RemovedResponse>> {
     return this.http.request('DELETE', p`/automations/${id}`);
@@ -592,6 +704,7 @@ class Webhooks {
   get(id: string): Promise<Result<Webhook>> {
     return this.http.request('GET', p`/webhooks/${id}`);
   }
+  /** List webhooks. Defaults to 20 per page. */
   list(params?: PaginationParams): Promise<Result<ListResponse<Webhook>>> {
     return this.http.request('GET', `/webhooks${paginate(params)}`);
   }
@@ -607,8 +720,12 @@ class Webhooks {
   rotate(id: string): Promise<Result<ObjectRef<'webhook'> & { signing_secret: string }>> {
     return this.http.request('POST', p`/webhooks/${id}/rotate`);
   }
-  /** Send a synchronous test delivery and return the endpoint's live result. POST /webhooks/:id/test */
-  test(id: string): Promise<Result<{ object: 'webhook_test'; id: string; [k: string]: unknown }>> {
+  /**
+   * Send a synchronous test delivery and return the endpoint's live result.
+   * POST /webhooks/:id/test — a FAILED delivery still returns HTTP 200, so
+   * branch on `data.ok`, not on `error`.
+   */
+  test(id: string): Promise<Result<WebhookTestResult>> {
     return this.http.request('POST', p`/webhooks/${id}/test`);
   }
   remove(id: string): Promise<Result<RemovedResponse>> {
@@ -738,11 +855,23 @@ class Logs {
 
 class Events {
   constructor(private readonly http: HttpClient) {}
-  /** Send a custom event that automations can trigger on. POST /events/send */
+  /**
+   * Send a custom event that automations can trigger on. POST /events/send
+   *
+   * `options.idempotencyKey` is still sent as `Idempotency-Key`, but the API
+   * honours that header on `POST /emails` and `POST /emails/batch` ONLY — it is
+   * ignored here, so a retry ingests a SECOND event and can enroll the contact
+   * twice. De-duplicate on your side instead.
+   */
   send(payload: SendEventOptions, options?: RequestOptions): Promise<Result<SendEventResponse>> {
     return this.http.request('POST', '/events/send', payload, options);
   }
-  /** Create a custom-event definition (name + optional payload schema). POST /events */
+  /**
+   * Create a custom-event definition (name + optional payload schema). POST /events
+   *
+   * `options.idempotencyKey` carries no guarantee here — see {@link Events.send}.
+   * A duplicate event name is already a 422 `validation_error`.
+   */
   create(payload: CreateEventOptions, options?: RequestOptions): Promise<Result<EventDefinition>> {
     return this.http.request('POST', '/events', payload, options);
   }
@@ -761,16 +890,21 @@ class Events {
   }
 }
 
+/**
+ * Read-only view of your API keys.
+ *
+ * Keys are created, re-scoped and revoked **in the MailBlastr dashboard only**,
+ * so this resource deliberately exposes nothing but `list()`. That is a
+ * security property: a key that leaks cannot mint itself a replacement, widen
+ * its own permission or domain scope, or revoke the keys around it. The API
+ * enforces it server-side — POST/PATCH/DELETE on `/api-keys` answer
+ * `403 dashboard_only` to every API-key caller, whatever its scopes.
+ */
 class ApiKeys {
   constructor(private readonly http: HttpClient) {}
-  create(payload: CreateApiKeyOptions): Promise<Result<CreateApiKeyResponse>> {
-    return this.http.request('POST', '/api-keys', payload);
-  }
-  list(): Promise<Result<ListResponse<ApiKey>>> {
-    return this.http.request('GET', '/api-keys');
-  }
-  remove(id: string): Promise<Result<RemovedResponse>> {
-    return this.http.request('DELETE', p`/api-keys/${id}`);
+  /** List active keys (revoked ones are excluded). With no params, all of them. */
+  list(params?: PaginationParams): Promise<Result<ListResponse<ApiKey>>> {
+    return this.http.request('GET', `/api-keys${paginate(params)}`);
   }
 }
 

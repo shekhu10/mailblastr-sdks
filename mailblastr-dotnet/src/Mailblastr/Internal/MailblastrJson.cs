@@ -27,6 +27,15 @@ internal sealed class ApiErrorBody
 
     [JsonPropertyName("message")]
     public string? Message { get; set; }
+
+    /// <summary>
+    /// The additive fields some errors carry on top of the envelope —
+    /// <c>limit</c>, <c>reputation</c>, <c>sent</c>, <c>sent_count</c>. Captured
+    /// unparsed so a shape this SDK version does not know still reaches the
+    /// caller via <see cref="MailblastrException.Extra"/>.
+    /// </summary>
+    [JsonExtensionData]
+    public Dictionary<string, JsonElement>? Extra { get; set; }
 }
 
 /// <summary>Envelope for endpoints that return a bare <c>{ data: [...] }</c> (e.g. POST /emails/batch).</summary>

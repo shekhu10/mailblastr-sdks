@@ -10,8 +10,8 @@ use serde_json::json;
 use crate::client::{page_query, seg, Config};
 use crate::services::email_types::{
     AttachmentMeta, BatchEmailOptions, CreateEmailBaseOptions, CreateEmailResponse, Email,
-    ForwardReceivedEmailOptions, ReceivedAttachment, ReceivedEmail, ReplyReceivedEmailOptions,
-    SendEmailBatchResponse, SentEmailListItem,
+    EmailSource, ForwardReceivedEmailOptions, ReceivedAttachment, ReceivedEmail,
+    ReceivingAddressStats, ReplyReceivedEmailOptions, SendEmailBatchResponse, SentEmailListItem,
 };
 use crate::types::{ListResponse, ObjectAck, PaginationParams, RemovedResponse, Result};
 
@@ -32,6 +32,12 @@ pub struct ListEmailsParams {
     /// Only emails sent from this sending domain (domain id). Composes with
     /// the source filters.
     pub domain_id: Option<String>,
+    /// Only emails whose latest state matches, e.g. `delivered`, `bounced`,
+    /// `opened`. Matched case-insensitively against the same value reads
+    /// expose as `last_event`.
+    pub status: Option<String>,
+    /// Free-text search across recipients, subject, and sender.
+    pub search: Option<String>,
 }
 
 impl ListEmailsParams {
@@ -74,6 +80,18 @@ impl ListEmailsParams {
         self
     }
 
+    /// Only emails whose latest state matches (e.g. `delivered`, `bounced`).
+    pub fn with_status(mut self, status: impl Into<String>) -> Self {
+        self.status = Some(status.into());
+        self
+    }
+
+    /// Free-text search across recipients, subject, and sender.
+    pub fn with_search(mut self, search: impl Into<String>) -> Self {
+        self.search = Some(search.into());
+        self
+    }
+
     fn to_query(&self) -> Vec<(&'static str, String)> {
         let mut q = Vec::new();
         if let Some(limit) = self.limit {
@@ -96,6 +114,12 @@ impl ListEmailsParams {
         }
         if let Some(domain_id) = &self.domain_id {
             q.push(("domain_id", domain_id.clone()));
+        }
+        if let Some(status) = &self.status {
+            q.push(("status", status.clone()));
+        }
+        if let Some(search) = &self.search {
+            q.push(("search", search.clone()));
         }
         q
     }
@@ -202,15 +226,31 @@ impl ReceivingSvc {
             .await
     }
 
-    /// List a received email's attachments. `GET /emails/receiving/:id/attachments`
+    /// Per-address inbound stats for every receiving address on your domains.
+    /// Not paginated. `GET /emails/receiving/addresses`
+    pub async fn list_addresses(&self) -> Result<ListResponse<ReceivingAddressStats>> {
+        self.config
+            .send(
+                self.config
+                    .request(Method::GET, "/emails/receiving/addresses"),
+            )
+            .await
+    }
+
+    /// List a received email's attachments. Pass `params` to page; with no
+    /// `limit` and no `after` cursor the route returns ALL attachments with
+    /// `has_more: false`. `GET /emails/receiving/:id/attachments`
     pub async fn list_attachments(
         &self,
         email_id: &str,
+        params: Option<PaginationParams>,
     ) -> Result<ListResponse<ReceivedAttachment>> {
         let path = format!("/emails/receiving/{}/attachments", seg(email_id));
-        self.config
-            .send(self.config.request(Method::GET, &path))
-            .await
+        let req = self
+            .config
+            .request(Method::GET, &path)
+            .query(&page_query(params.as_ref()));
+        self.config.send(req).await
     }
 
     /// Download one attachment as raw bytes (the route streams the binary
@@ -293,7 +333,17 @@ impl EmailsSvc {
     }
 
     /// Like [`send`](Self::send), with an `Idempotency-Key` header so the
-    /// create can be retried safely (24h window).
+    /// create can be retried safely.
+    ///
+    /// The key must be **1–255 characters** after trimming; outside that range
+    /// the API answers `400 invalid_idempotency_key`. Reusing a key with a
+    /// different payload is `409 invalid_idempotent_request`; reusing it while
+    /// the first request is still in flight is `409
+    /// concurrent_idempotent_requests`; reusing it after completion replays
+    /// the stored status and body.
+    ///
+    /// Only `POST /emails` and `POST /emails/batch` honour the header — every
+    /// other endpoint ignores it.
     pub async fn send_with_idempotency_key(
         &self,
         email: CreateEmailBaseOptions,
@@ -353,6 +403,14 @@ impl EmailsSvc {
         self.config.send(req).await
     }
 
+    /// Aggregate send metrics grouped by origin (campaign / automation /
+    /// one-off). Not paginated. `GET /emails/sources`
+    pub async fn sources(&self) -> Result<ListResponse<EmailSource>> {
+        self.config
+            .send(self.config.request(Method::GET, "/emails/sources"))
+            .await
+    }
+
     /// Retrieve a sent email and its events. `GET /emails/:id`
     pub async fn get(&self, email_id: &str) -> Result<Email> {
         let path = format!("/emails/{}", seg(email_id));
@@ -369,8 +427,9 @@ impl EmailsSvc {
             .await
     }
 
-    /// Retrieve one attachment of a sent email (metadata + presigned URL).
-    /// `GET /emails/:id/attachments/:attachment_id`
+    /// Retrieve one attachment of a sent email — metadata only. Sent
+    /// attachment bytes are not re-hosted, so `download_url` / `expires_at`
+    /// are always `None`. `GET /emails/:id/attachments/:attachment_id`
     pub async fn get_attachment(
         &self,
         email_id: &str,
@@ -473,7 +532,13 @@ impl BatchSvc {
     }
 
     /// Like [`send_emails`](Self::send_emails), with an `Idempotency-Key`
-    /// header so the batch can be retried safely (24h window).
+    /// header so the batch can be retried safely. The key must be **1–255
+    /// characters** after trimming (see
+    /// [`EmailsSvc::send_with_idempotency_key`]).
+    ///
+    /// If the batch fails partway AND a key was supplied, the error body also
+    /// carries `sent` / `sent_count`, and that combined body is what a replay
+    /// of the same key returns.
     pub async fn send_emails_with_idempotency_key(
         &self,
         emails: Vec<BatchEmailOptions>,

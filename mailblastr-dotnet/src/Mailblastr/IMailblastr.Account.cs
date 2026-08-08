@@ -2,16 +2,19 @@ namespace Mailblastr;
 
 public partial interface IMailblastr
 {
-    // ---- API keys ----
+    // ---- API keys (read-only by design) ----
+    //
+    // Keys are minted, re-scoped and revoked in the MailBlastr dashboard, and
+    // only there: those routes accept a signed-in dashboard session, never an
+    // API key. This SDK therefore exposes listing and nothing else, so a leaked
+    // key cannot mint itself a replacement, widen its own permission or revoke
+    // the keys around it.
 
-    /// <summary>Create an API key. The full token is returned ONCE. POST /api-keys</summary>
-    Task<ApiKeyCreated> ApiKeyCreateAsync(ApiKeyCreateOptions options, CancellationToken cancellationToken = default);
-
-    /// <summary>List API keys (non-secret display prefixes only). GET /api-keys</summary>
-    Task<ListResponse<ApiKey>> ApiKeyListAsync(CancellationToken cancellationToken = default);
-
-    /// <summary>Revoke an API key. DELETE /api-keys/:id</summary>
-    Task<RemovedResponse> ApiKeyDeleteAsync(string apiKeyId, CancellationToken cancellationToken = default);
+    /// <summary>
+    /// List API keys (non-secret display prefixes only; revoked keys excluded).
+    /// With no pagination options the API returns every key. GET /api-keys
+    /// </summary>
+    Task<ListResponse<ApiKey>> ApiKeyListAsync(PaginationOptions? pagination = null, CancellationToken cancellationToken = default);
 
     // ---- Logs ----
 

@@ -1,3 +1,5 @@
+using System.Globalization;
+
 namespace Mailblastr;
 
 public partial class MailblastrClient
@@ -28,11 +30,35 @@ public partial class MailblastrClient
         return RequestAsync<AutomationStep>(HttpMethod.Post, $"/automations/{E(automationId)}/steps", options, null, cancellationToken);
     }
 
+    public Task<AutomationStep> AutomationUpdateStepAsync(string automationId, string stepId, AutomationAddStepOptions options, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(options);
+        return RequestAsync<AutomationStep>(HttpMethod.Patch, $"/automations/{E(automationId)}/steps/{E(stepId)}", options, null, cancellationToken);
+    }
+
     public Task<AutomationStepDeleted> AutomationDeleteStepAsync(string automationId, string stepId, CancellationToken cancellationToken = default)
         => RequestAsync<AutomationStepDeleted>(HttpMethod.Delete, $"/automations/{E(automationId)}/steps/{E(stepId)}", null, null, cancellationToken);
 
     public Task<ListResponse<AutomationRun>> AutomationListRunsAsync(string automationId, PaginationOptions? pagination = null, CancellationToken cancellationToken = default)
         => RequestAsync<ListResponse<AutomationRun>>(HttpMethod.Get, $"/automations/{E(automationId)}/runs" + Paginate(pagination), null, null, cancellationToken);
+
+    public Task<ListResponse<AutomationRun>> AutomationListRunsAsync(string automationId, AutomationRunListOptions options, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(options);
+        var statuses = options.Status is null ? null : string.Join(",", options.Status);
+        var query = Query(
+            ("limit", options.Limit?.ToString(CultureInfo.InvariantCulture)),
+            ("after", options.After),
+            ("before", options.Before),
+            ("status", string.IsNullOrEmpty(statuses) ? null : statuses));
+        return RequestAsync<ListResponse<AutomationRun>>(HttpMethod.Get, $"/automations/{E(automationId)}/runs" + query, null, null, cancellationToken);
+    }
+
+    public Task<AutomationAiResult> AutomationCreateWithAiAsync(string automationId, AutomationAiOptions options, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(options);
+        return RequestAsync<AutomationAiResult>(HttpMethod.Post, $"/automations/{E(automationId)}/ai", options, null, cancellationToken);
+    }
 
     public Task<AutomationRun> AutomationRetrieveRunAsync(string automationId, string runId, CancellationToken cancellationToken = default)
         => RequestAsync<AutomationRun>(HttpMethod.Get, $"/automations/{E(automationId)}/runs/{E(runId)}", null, null, cancellationToken);
@@ -59,6 +85,13 @@ public partial class MailblastrClient
 
     public Task<ListResponse<EventDefinition>> EventListAsync(PaginationOptions? pagination = null, CancellationToken cancellationToken = default)
         => RequestAsync<ListResponse<EventDefinition>>(HttpMethod.Get, "/events" + Paginate(pagination), null, null, cancellationToken);
+
+    public Task<EventDefinition> EventUpdateSchemaAsync(string eventId, IDictionary<string, string>? schema, CancellationToken cancellationToken = default)
+    {
+        // Always written, so an explicit null clears the schema.
+        var body = new Dictionary<string, object?> { ["schema"] = schema };
+        return RequestAsync<EventDefinition>(HttpMethod.Patch, $"/events/{E(eventId)}", body, null, cancellationToken);
+    }
 
     public Task<RemovedResponse> EventDeleteAsync(string eventId, CancellationToken cancellationToken = default)
         => RequestAsync<RemovedResponse>(HttpMethod.Delete, $"/events/{E(eventId)}", null, null, cancellationToken);

@@ -19,7 +19,7 @@ pub struct Audience {
     pub id: String,
     pub name: String,
     pub domain: Option<String>,
-    pub created_at: String,
+    pub created_at: Option<String>,
 }
 
 /// Options for `audiences.import_sheet` — import contacts from a link-shared

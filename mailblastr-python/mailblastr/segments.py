@@ -6,16 +6,20 @@ segment."""
 from typing import Any, Dict, TypedDict
 
 from . import http_client
-from .http_client import build_query, path_escape as _e
+from .http_client import build_query, paginate, path_escape as _e
 
 
 class CreateParams(TypedDict, total=False):
     domain: str  # REQUIRED: the sending domain this segment belongs to
     name: str  # required
-    filter: Dict[str, Any]  # {status?, email_contains?, property_filters?}
+    # {status?, email_contains?, property_filters?, engagement?} — each key is
+    # also accepted at the top level of the body, where `filter` wins.
+    filter: Dict[str, Any]
 
 
 class UpdateParams(TypedDict, total=False):
+    # A segment's domain cannot change: sending `domain` (or `audience_id`) at
+    # all is a 422 — create a new segment on the other domain instead.
     name: str
     filter: Dict[str, Any]
 
@@ -60,10 +64,14 @@ class Segments:
         return http_client.request("GET", f"/segments{qs}")
 
     @classmethod
-    def contacts(cls, segment_id):
-        """Preview the contacts a segment currently resolves to.
-        GET /segments/:id/contacts"""
-        return http_client.request("GET", f"/segments/{_e(segment_id)}/contacts")
+    def contacts(cls, segment_id, params=None):
+        """Preview the contacts a segment currently resolves to (filter matches
+        plus explicit memberships). Items are a reduced contact shape with no
+        ``properties``. Called with no pagination params every contact is
+        returned. GET /segments/:id/contacts"""
+        return http_client.request(
+            "GET", f"/segments/{_e(segment_id)}/contacts{paginate(params)}"
+        )
 
     @classmethod
     def update(cls, segment_id, params):

@@ -5,7 +5,7 @@ calls with the same ``domain`` trigger it."""
 from typing import Any, Dict, List, TypedDict
 
 from . import http_client
-from .http_client import paginate, path_escape as _e
+from .http_client import build_query, paginate, path_escape as _e
 
 
 class CreateParams(TypedDict, total=False):
@@ -30,9 +30,35 @@ class UpdateParams(TypedDict, total=False):
 
 
 class AddStepParams(TypedDict, total=False):
-    type: str  # required, e.g. 'send_email' | 'wait' | 'condition'
+    # 'trigger' is NOT a step type here — the trigger is set on the automation
+    # itself. Documented names ('send_email', 'wait_for_event') and internal
+    # ones ('send', 'wait') are both accepted.
+    type: str  # required: 'delay' | 'send_email' | 'wait_for_event' | 'condition' | 'split' | 'add_to_segment' | 'contact_update' | 'contact_delete'
     config: Dict[str, Any]
     key: str
+
+
+class UpdateStepParams(TypedDict, total=False):
+    type: str
+    config: Dict[str, Any]
+    key: str
+
+
+class RunListParams(TypedDict, total=False):
+    limit: int
+    after: str
+    before: str
+    status: str  # comma-separated, e.g. 'running,failed'
+
+
+class AiParams(TypedDict, total=False):
+    prompt: str  # required, max 2000 characters
+    template_ids: List[str]  # first 10 kept
+    events: List[str]  # first 10 kept
+    # {'from': step or trigger key, 'type'?: edge type, 'before'?: step key} —
+    # supplying it APPENDS to the existing graph; omitting it builds a whole
+    # workflow and requires the automation to have no steps yet.
+    attach: Dict[str, str]
 
 
 class Automations:
@@ -41,6 +67,9 @@ class Automations:
     CreateParams = CreateParams
     UpdateParams = UpdateParams
     AddStepParams = AddStepParams
+    UpdateStepParams = UpdateStepParams
+    RunListParams = RunListParams
+    AiParams = AiParams
 
     @classmethod
     def create(cls, params):
@@ -65,23 +94,51 @@ class Automations:
 
     @classmethod
     def add_step(cls, automation_id, params):
-        """Append a step to an automation. POST /automations/:id/steps"""
+        """Append a step to an automation. The automation must be DISABLED —
+        editing the graph of an enabled automation is a 422.
+        POST /automations/:id/steps"""
         return http_client.request("POST", f"/automations/{_e(automation_id)}/steps", params)
 
     @classmethod
+    def update_step(cls, automation_id, step_id, params):
+        """Update a step. The automation must be DISABLED.
+        PATCH /automations/:id/steps/:step_id"""
+        return http_client.request(
+            "PATCH", f"/automations/{_e(automation_id)}/steps/{_e(step_id)}", params
+        )
+
+    @classmethod
     def delete_step(cls, automation_id, step_id):
-        """Delete a step from an automation.
+        """Delete a step from an automation. The automation must be DISABLED.
         DELETE /automations/:id/steps/:step_id"""
         return http_client.request(
             "DELETE", f"/automations/{_e(automation_id)}/steps/{_e(step_id)}"
         )
 
     @classmethod
+    def ai(cls, automation_id, params):
+        """Build or extend an automation's steps from a natural-language
+        ``prompt`` ("Create with AI"). Pass ``attach`` to append to an existing
+        graph; without it the automation must have no steps yet. The automation
+        must be stopped, and this route is limited to 20 requests per minute
+        per account. POST /automations/:id/ai"""
+        return http_client.request("POST", f"/automations/{_e(automation_id)}/ai", params)
+
+    @classmethod
     def runs(cls, automation_id, params=None):
-        """List an automation's runs. GET /automations/:id/runs"""
-        return http_client.request(
-            "GET", f"/automations/{_e(automation_id)}/runs{paginate(params)}"
+        """List an automation's runs, optionally filtered to a comma-separated
+        ``status`` list (e.g. ``'running,failed'``).
+        GET /automations/:id/runs"""
+        params = params or {}
+        qs = build_query(
+            {
+                "limit": params.get("limit"),
+                "after": params.get("after"),
+                "before": params.get("before"),
+                "status": params.get("status"),
+            }
         )
+        return http_client.request("GET", f"/automations/{_e(automation_id)}/runs{qs}")
 
     @classmethod
     def get_run(cls, automation_id, run_id):

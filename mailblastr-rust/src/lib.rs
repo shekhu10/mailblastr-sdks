@@ -21,9 +21,31 @@
 //! ```
 //!
 //! Every service method is `async` and returns [`Result<T>`](Result), where the
-//! error is [`Error`] — API failures surface as
-//! [`Error::Api { status_code, name, message }`](Error::Api), parsed from the
-//! standard MailBlastr error body.
+//! error is [`Error`] — API failures surface as [`Error::Api`] carrying an
+//! [`ApiError`], parsed from the standard MailBlastr
+//! `{ statusCode, name, message }` body.
+//!
+//! Some errors add fields on top of that envelope, and [`ApiError`] models each
+//! one as an `Option` (or an empty `Vec`) that is absent on ordinary errors:
+//! [`limit`](ApiError::limit) says WHICH plan or quota allowance ran out,
+//! [`reputation`](ApiError::reputation) what a reputation gate paused, and
+//! [`sent`](ApiError::sent) / [`sent_count`](ApiError::sent_count) which emails
+//! already went out when a batch failed part way through.
+//!
+//! ```no_run
+//! # async fn run(mb: mailblastr::Mailblastr, email: mailblastr::CreateEmailBaseOptions) {
+//! match mb.emails.send(email).await {
+//!     Ok(sent) => println!("sent {}", sent.id),
+//!     Err(err) => match err.api() {
+//!         Some(api) => match &api.limit {
+//!             Some(limit) => println!("{} cap hit: {}/{}", limit.kind, limit.used, limit.limit),
+//!             None => println!("{} ({})", api.message, api.name),
+//!         },
+//!         None => println!("transport failure: {err}"),
+//!     },
+//! }
+//! # }
+//! ```
 //!
 //! # Domain-first parameters
 //!
@@ -39,7 +61,7 @@ pub mod types;
 
 pub use client::{
     Mailblastr, MailblastrBuilder, DEFAULT_BASE_URL, DEFAULT_MAX_RETRIES, DEFAULT_TIMEOUT_SECS,
-    USER_AGENT, VERSION,
+    IDEMPOTENCY_KEY_MAX_LEN, USER_AGENT, VERSION,
 };
 pub use services::*;
 pub use types::*;

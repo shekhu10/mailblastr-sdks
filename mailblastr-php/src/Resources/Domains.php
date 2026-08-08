@@ -33,11 +33,34 @@ class Domains extends Resource
     /**
      * List domains. GET /domains
      *
-     * @param array $params Cursor pagination: limit, after, before.
+     * Domains still awaiting a DNS-TXT ownership claim are NOT included — read
+     * those with {@see getClaim()}.
+     *
+     * @param array $params Optional cursor pagination (limit, after, before).
+     *                      With no params every domain is returned.
      */
     public function list(array $params = []): array
     {
         return $this->client->request('GET', '/domains' . $this->paginationQuery($params));
+    }
+
+    /**
+     * Look up a domain's live MX records — 'ours' is true only when every MX
+     * host points at MailBlastr. Fails open: a DNS failure returns
+     * has_mx/ours false with an empty record list. GET /domains/mx-check
+     */
+    public function mxCheck(string $name): array
+    {
+        return $this->client->request('GET', '/domains/mx-check' . $this->client->query(['name' => $name]));
+    }
+
+    /**
+     * Download this domain's DNS records as CSV text (not JSON), ready to hand
+     * to a DNS provider's bulk importer. GET /domains/:id/records.csv
+     */
+    public function recordsCsv(string $id): string
+    {
+        return $this->client->requestRaw('GET', '/domains/' . Client::e($id) . '/records.csv');
     }
 
     /**

@@ -24,13 +24,17 @@ type CampaignAbTest struct {
 }
 
 // CampaignAbState is the A/B config + decision echoed back on retrieve.
+// Campaign list items carry only Enabled/Metric/Status/Winner.
 type CampaignAbState struct {
-	Enabled  bool   `json:"enabled"`
-	SubjectB string `json:"subject_b,omitempty"`
-	TestPct  int    `json:"test_pct,omitempty"`
-	Metric   string `json:"metric,omitempty"`
-	Status   string `json:"status,omitempty"`
-	Winner   string `json:"winner,omitempty"`
+	Enabled   bool   `json:"enabled"`
+	SubjectB  string `json:"subject_b,omitempty"`
+	HtmlB     string `json:"html_b,omitempty"`
+	TextB     string `json:"text_b,omitempty"`
+	TestPct   int    `json:"test_pct,omitempty"`
+	Metric    string `json:"metric,omitempty"`
+	EvalHours int    `json:"eval_hours,omitempty"`
+	Status    string `json:"status,omitempty"`
+	Winner    string `json:"winner,omitempty"`
 }
 
 // CampaignFollowupInput is an engagement follow-up accepted on create (max 5):
@@ -53,9 +57,11 @@ type CampaignFollowup struct {
 	Condition string `json:"condition"`
 	Delay     string `json:"delay"`
 	Subject   string `json:"subject"`
+	Html      string `json:"html"`
 	Status    string `json:"status"`
 	RunAt     string `json:"run_at"`
 	SentCount int    `json:"sent_count"`
+	CreatedAt string `json:"created_at"`
 }
 
 // CampaignRecurrenceState is the recurrence cadence echoed back on retrieve.
@@ -81,10 +87,19 @@ type Campaign struct {
 	Text        string `json:"text,omitempty"`
 	ReplyTo     string `json:"reply_to,omitempty"`
 	PreviewText string `json:"preview_text,omitempty"`
+	// Status is the campaign state: draft, queued (a send in flight),
+	// scheduled, recurring, paused, sent, or failed.
 	Status      string `json:"status"`
 	ScheduledAt string `json:"scheduled_at"`
 	SentAt      string `json:"sent_at"`
 	CreatedAt   string `json:"created_at"`
+	// ScheduleTimezone is the IANA zone the schedule and daily batching are
+	// evaluated in.
+	ScheduleTimezone string `json:"schedule_timezone,omitempty"`
+	// DailyBatchSize is the per-batch-day recipient cap (0 => send at once).
+	DailyBatchSize int `json:"daily_batch_size,omitempty"`
+	// FailureReason explains a failed or reputation-paused campaign.
+	FailureReason string `json:"failure_reason,omitempty"`
 	// AbTest is the A/B config + decision ({ enabled: false } when not an A/B
 	// campaign).
 	AbTest *CampaignAbState `json:"ab_test,omitempty"`
@@ -102,6 +117,35 @@ type Campaign struct {
 	ParentCampaignId string `json:"parent_campaign_id,omitempty"`
 	// Statistics holds engagement counts — included only on retrieve.
 	Statistics map[string]any `json:"statistics,omitempty"`
+}
+
+// CampaignListItem is one row of CampaignsService.List (GET /campaigns).
+//
+// The list serializer is deliberately narrower than the full Campaign: it
+// sends no bodies (Html/Text), no From/TopicId/ReplyTo/PreviewText, no
+// schedule detail, no follow-ups, recurrence or statistics. Typing the list as
+// Campaign would promise those fields and hand back empty strings instead, so
+// they are absent from the type. Use Campaigns.Get for the full record.
+type CampaignListItem struct {
+	Object string `json:"object"`
+	Id     string `json:"id"`
+	Name   string `json:"name"`
+	// Subject is included so a list view can render it without a per-row fetch.
+	Subject    string `json:"subject"`
+	AudienceId string `json:"audience_id"`
+	// SegmentId is the segment target (empty => whole audience).
+	SegmentId string `json:"segment_id"`
+	// Status is the campaign state: draft, queued, scheduled, recurring,
+	// paused, sent, or failed.
+	Status string `json:"status"`
+	// AbTest is the lightweight A/B marker — Enabled plus Metric/Status/Winner
+	// when enabled. Full A/B detail is on Campaigns.Get / Campaigns.Ab.
+	AbTest      *CampaignAbState `json:"ab_test,omitempty"`
+	CreatedAt   string           `json:"created_at"`
+	ScheduledAt string           `json:"scheduled_at"`
+	SentAt      string           `json:"sent_at"`
+	// FailureReason explains a failed or reputation-paused campaign.
+	FailureReason string `json:"failure_reason"`
 }
 
 // CreateCampaignRequest is the payload for POST /campaigns. Domain is
@@ -151,7 +195,16 @@ type CreateCampaignRequest struct {
 	DailyBatchSize int `json:"daily_batch_size,omitempty"`
 }
 
-// UpdateCampaignRequest is the payload for PATCH /campaigns/:id.
+// UpdateCampaignRequest is the payload for PATCH /campaigns/:id. Only a draft
+// campaign can be edited — anything else is a 422.
+//
+// The API patches by key presence, so a field left at its zero value is
+// omitted and stays untouched. The two fields with replace semantics
+// (Followups and ListTo) are pointers so you can express "clear"; the plain
+// string fields cannot currently be set back to null through this SDK.
+//
+// There is deliberately no AudienceId field — passing audience_id is a 422.
+// Changing Domain also clears SegmentId and TopicId server-side.
 type UpdateCampaignRequest struct {
 	Name        string   `json:"name,omitempty"`
 	From        string   `json:"from,omitempty"`
@@ -170,12 +223,14 @@ type UpdateCampaignRequest struct {
 	Recurrence      string          `json:"recurrence,omitempty"`
 	RecurrenceEvery int             `json:"recurrence_every,omitempty"`
 	AbTest          *CampaignAbTest `json:"ab_test,omitempty"`
-	// Followups replaces the pending engagement follow-ups (max 5); an empty
-	// slice clears them.
-	Followups []CampaignFollowupInput `json:"followups,omitempty"`
-	// ListTo shows a generated mailing-list address as the visible To.
-	// Delivery stays individual.
-	ListTo bool `json:"list_to,omitempty"`
+	// Followups replaces the pending engagement follow-ups (max 5). Leave nil
+	// to keep them; point it at an empty slice
+	// (&[]mailblastr.CampaignFollowupInput{}) to clear them. A plain empty
+	// slice value cannot express "clear", which is why this is a pointer.
+	Followups *[]CampaignFollowupInput `json:"followups,omitempty"`
+	// ListTo shows a generated mailing-list address as the visible To;
+	// Bool(false) clears the address. Delivery stays individual either way.
+	ListTo *bool `json:"list_to,omitempty"`
 	// UnsubscribePolicy: "account" (default), "domain", or "ignore"
 	// (bounced/complained addresses are ALWAYS excluded).
 	UnsubscribePolicy string `json:"unsubscribe_policy,omitempty"`
@@ -194,21 +249,117 @@ type SendCampaignRequest struct {
 	ScheduleTimezone string `json:"schedule_timezone,omitempty"`
 }
 
+// CampaignStatsLink is one tracked link's click tally.
+type CampaignStatsLink struct {
+	Url    string `json:"url"`
+	Clicks int    `json:"clicks"`
+}
+
+// CampaignStatsRates are engagement percentages. Open/click/reply are computed
+// against Delivered, falling back to Total when nothing was delivered.
+type CampaignStatsRates struct {
+	Delivery  float64 `json:"delivery"`
+	Open      float64 `json:"open"`
+	Click     float64 `json:"click"`
+	Reply     float64 `json:"reply"`
+	Bounce    float64 `json:"bounce"`
+	Complaint float64 `json:"complaint"`
+}
+
 // CampaignStats is the per-campaign analytics from GET /campaigns/:id/stats.
 type CampaignStats struct {
-	Object     string           `json:"object"`
-	CampaignId string           `json:"campaign_id"`
-	Links      []map[string]any `json:"links,omitempty"`
+	Object     string `json:"object"`
+	CampaignId string `json:"campaign_id"`
+
+	Total      int `json:"total"`
+	Delivered  int `json:"delivered"`
+	Opened     int `json:"opened"`
+	Clicked    int `json:"clicked"`
+	Replied    int `json:"replied"`
+	Bounced    int `json:"bounced"`
+	Complained int `json:"complained"`
+
+	Rates CampaignStatsRates `json:"rates"`
+	// Links is the top 50 tracked links, most-clicked first.
+	Links []CampaignStatsLink `json:"links,omitempty"`
+}
+
+// CampaignAbArm is one variant's performance in an A/B evaluation.
+type CampaignAbArm struct {
+	// Variant is "A" or "B".
+	Variant     string  `json:"variant"`
+	Sent        int     `json:"sent"`
+	Conversions int     `json:"conversions"`
+	Rate        float64 `json:"rate"`
 }
 
 // CampaignAbResult is the A/B winner evaluation from GET /campaigns/:id/ab.
+// Retrieving it for a non-A/B campaign is a 422 validation_error.
 type CampaignAbResult struct {
 	Object     string `json:"object"`
 	CampaignId string `json:"campaign_id"`
 	// Metric is "open" | "click" | "reply".
-	Metric string `json:"metric"`
-	Status string `json:"status,omitempty"`
+	Metric string        `json:"metric"`
+	A      CampaignAbArm `json:"a"`
+	B      CampaignAbArm `json:"b"`
+	// Winner is "A" or "B".
 	Winner string `json:"winner,omitempty"`
+	// Fallback is true when a variant had zero sends or the rates tied, in
+	// which case Winner defaults to "A".
+	Fallback bool    `json:"fallback"`
+	Lift     float64 `json:"lift"`
+	// ZScore and PValue are camelCase on the wire — deliberately, do not
+	// expect snake_case.
+	ZScore float64 `json:"zScore"`
+	PValue float64 `json:"pValue"`
+	// Confidence is "low" | "medium" | "high"; forced to "low" when either
+	// arm has fewer than 20 sends.
+	Confidence string `json:"confidence,omitempty"`
+	// Reason is a human-readable explanation of the decision.
+	Reason string `json:"reason,omitempty"`
+	Status string `json:"status,omitempty"`
+}
+
+// CampaignOpenEngagement is one recipient's open activity.
+type CampaignOpenEngagement struct {
+	Email     string `json:"email"`
+	ContactId string `json:"contact_id"`
+	OpenedAt  string `json:"opened_at"`
+	OpenCount int    `json:"open_count"`
+}
+
+// CampaignClickEngagement is one recipient's click activity.
+type CampaignClickEngagement struct {
+	Email      string `json:"email"`
+	ContactId  string `json:"contact_id"`
+	ClickedAt  string `json:"clicked_at"`
+	ClickCount int    `json:"click_count"`
+}
+
+// CampaignReplyEngagement is one reply received for the campaign.
+type CampaignReplyEngagement struct {
+	Email     string `json:"email"`
+	ContactId string `json:"contact_id"`
+	RepliedAt string `json:"replied_at"`
+	// ReceivedEmailId addresses the inbound message via Emails.Receiving.
+	ReceivedEmailId string `json:"received_email_id"`
+	Subject         string `json:"subject"`
+	// Preview is the first 300 characters of the reply text.
+	Preview string `json:"preview"`
+	// Category is the AI reply intent, e.g. "interested".
+	Category   string `json:"category"`
+	ReceivedAt string `json:"received_at"`
+}
+
+// CampaignEngagement is the per-recipient breakdown from
+// GET /campaigns/:id/engagement. Each list is capped at 500 rows and the
+// endpoint is not paginated.
+type CampaignEngagement struct {
+	Object     string                    `json:"object"`
+	CampaignId string                    `json:"campaign_id"`
+	Opened     []CampaignOpenEngagement  `json:"opened"`
+	Clicked    []CampaignClickEngagement `json:"clicked"`
+	Replied    []CampaignReplyEngagement `json:"replied"`
 }
 
 // CampaignsService handles the /campaigns endpoints.
@@ -236,14 +387,18 @@ func (s *CampaignsService) GetWithContext(ctx context.Context, id string) (*Camp
 	return request[Campaign](ctx, s.client, http.MethodGet, "/campaigns/"+esc(id), nil, nil)
 }
 
-// List lists campaigns. GET /campaigns
-func (s *CampaignsService) List(params *ListParams) (*ListResponse[Campaign], error) {
+// List lists campaigns, newest first. Rows are the reduced CampaignListItem
+// shape — no bodies, no From/TopicId/ReplyTo/PreviewText, no schedule detail,
+// follow-ups or statistics; use Get for those. Passing nil returns every
+// campaign: this endpoint only pages when you supply pagination params.
+// GET /campaigns
+func (s *CampaignsService) List(params *ListParams) (*ListResponse[CampaignListItem], error) {
 	return s.ListWithContext(context.Background(), params)
 }
 
-// ListWithContext lists campaigns. GET /campaigns
-func (s *CampaignsService) ListWithContext(ctx context.Context, params *ListParams) (*ListResponse[Campaign], error) {
-	return request[ListResponse[Campaign]](ctx, s.client, http.MethodGet, listPath("/campaigns", params), nil, nil)
+// ListWithContext lists campaigns. Rows are CampaignListItem. GET /campaigns
+func (s *CampaignsService) ListWithContext(ctx context.Context, params *ListParams) (*ListResponse[CampaignListItem], error) {
+	return request[ListResponse[CampaignListItem]](ctx, s.client, http.MethodGet, listPath("/campaigns", params), nil, nil)
 }
 
 // Update updates a campaign; returns { id }. PATCH /campaigns/:id
@@ -291,6 +446,18 @@ func (s *CampaignsService) Stats(id string) (*CampaignStats, error) {
 // StatsWithContext returns per-campaign analytics. GET /campaigns/:id/stats
 func (s *CampaignsService) StatsWithContext(ctx context.Context, id string) (*CampaignStats, error) {
 	return request[CampaignStats](ctx, s.client, http.MethodGet, "/campaigns/"+esc(id)+"/stats", nil, nil)
+}
+
+// Engagement returns the per-recipient open/click/reply breakdown (each list
+// capped at 500 rows). GET /campaigns/:id/engagement
+func (s *CampaignsService) Engagement(id string) (*CampaignEngagement, error) {
+	return s.EngagementWithContext(context.Background(), id)
+}
+
+// EngagementWithContext returns the per-recipient engagement breakdown.
+// GET /campaigns/:id/engagement
+func (s *CampaignsService) EngagementWithContext(ctx context.Context, id string) (*CampaignEngagement, error) {
+	return request[CampaignEngagement](ctx, s.client, http.MethodGet, "/campaigns/"+esc(id)+"/engagement", nil, nil)
 }
 
 // Ab returns the A/B winner evaluation for an A/B campaign.

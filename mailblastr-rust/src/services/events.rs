@@ -117,6 +117,36 @@ impl CreateEventOptions {
     }
 }
 
+/// Options for `events.update` (`PATCH /events/:id`). Only the schema is
+/// mutable; the event name cannot change.
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct UpdateEventOptions {
+    /// `Some(Some(..))` replaces the schema; `Some(None)` serializes as
+    /// `null` and clears it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub schema: Option<Option<HashMap<String, EventFieldType>>>,
+}
+
+impl UpdateEventOptions {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn with_schema_field(mut self, key: impl Into<String>, field_type: EventFieldType) -> Self {
+        self.schema
+            .get_or_insert_with(|| Some(HashMap::new()))
+            .get_or_insert_with(HashMap::new)
+            .insert(key.into(), field_type);
+        self
+    }
+
+    /// Drop the payload schema (serializes `schema: null`).
+    pub fn clear_schema(mut self) -> Self {
+        self.schema = Some(None);
+        self
+    }
+}
+
 /// A custom-event definition.
 #[derive(Debug, Clone, Deserialize)]
 pub struct EventDefinition {
@@ -152,6 +182,14 @@ impl EventsSvc {
     }
 
     /// Like [`send`](Self::send), with an `Idempotency-Key` header.
+    ///
+    /// **The API ignores the header here.** Only `POST /emails` and
+    /// `POST /emails/batch` implement idempotency, so a retry of this call
+    /// ingests the event a second time. De-duplicate on your side instead.
+    #[deprecated(
+        since = "2.0.0",
+        note = "POST /events/send does not honour Idempotency-Key — the header is ignored and a retry re-ingests the event. Use `send` and de-duplicate on your side."
+    )]
     pub async fn send_with_idempotency_key(
         &self,
         options: SendEventOptions,
@@ -168,6 +206,11 @@ impl EventsSvc {
     }
 
     /// Create a custom-event definition. `POST /events`
+    ///
+    /// There is deliberately no `create_with_idempotency_key`: this endpoint
+    /// does not honour `Idempotency-Key` either — only `POST /emails` and
+    /// `POST /emails/batch` do. A duplicate event name is already rejected
+    /// with a `422 validation_error`, so a retry is safe without one.
     pub async fn create(&self, options: CreateEventOptions) -> Result<EventDefinition> {
         self.config
             .send(self.config.request(Method::POST, "/events").json(&options))
@@ -184,6 +227,21 @@ impl EventsSvc {
             .request(Method::GET, "/events")
             .query(&page_query(params.as_ref()));
         self.config.send(req).await
+    }
+
+    /// Update a definition's payload schema. The event NAME is immutable
+    /// (automations reference it) — passing `name` is a 422. Pass
+    /// [`UpdateEventOptions::clear_schema`] to drop the schema entirely.
+    /// `PATCH /events/:id`
+    pub async fn update(
+        &self,
+        event_id: &str,
+        options: UpdateEventOptions,
+    ) -> Result<EventDefinition> {
+        let path = format!("/events/{}", seg(event_id));
+        self.config
+            .send(self.config.request(Method::PATCH, &path).json(&options))
+            .await
     }
 
     /// Delete a custom-event definition. `DELETE /events/:id`

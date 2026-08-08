@@ -7,8 +7,31 @@ import (
 	"strconv"
 )
 
+// Send-payload limits enforced by the API. Exceeding one is a 422
+// (validation_error, or invalid_attachment for the attachment caps).
+const (
+	// MaxRecipients is the cap on To entries per send (also the minimum: at
+	// least one recipient is required). Cc and Bcc are capped at 50 each too.
+	MaxRecipients = 50
+	// MaxFromLength caps the whole From string, display name included.
+	MaxFromLength = 320
+	// MaxPreviewTextLength caps PreviewText (the inbox preheader).
+	MaxPreviewTextLength = 150
+	// MaxBatchEmails is the cap on emails per POST /emails/batch call.
+	MaxBatchEmails = 100
+	// MaxAttachmentBytes is the decoded-size cap for a single attachment.
+	MaxAttachmentBytes = 25 * 1024 * 1024
+	// MaxAttachmentsTotalBytes is the decoded-size cap across all attachments
+	// of one send.
+	MaxAttachmentsTotalBytes = 40 * 1024 * 1024
+	// MaxScheduleAheadDays is how far ahead ScheduledAt may be.
+	MaxScheduleAheadDays = 30
+)
+
 // Attachment is a file attached to an outgoing email. Provide Content
-// (base64) OR Path (a hosted URL fetched at send time).
+// (base64) OR Path (a hosted URL fetched at send time). A single attachment
+// may decode to at most MaxAttachmentBytes, and all attachments of one send to
+// at most MaxAttachmentsTotalBytes.
 type Attachment struct {
 	Filename string `json:"filename"`
 	// Content is the base64-encoded file content.
@@ -29,11 +52,19 @@ type TemplateRef struct {
 }
 
 // SendEmailRequest is the payload for POST /emails.
+//
+// There is no Tags field: the API rejects `tags` outright with a 422
+// validation_error rather than dropping it silently.
 type SendEmailRequest struct {
-	From    string   `json:"from"`
+	// From is the sender, "Name <addr@domain>" or a bare address, on one of
+	// your verified domains. Max MaxFromLength characters.
+	From string `json:"from"`
+	// To holds 1..MaxRecipients recipients.
 	To      []string `json:"to"`
 	Subject string   `json:"subject"`
-	Bcc     []string `json:"bcc,omitempty"`
+	// Bcc holds at most MaxRecipients addresses.
+	Bcc []string `json:"bcc,omitempty"`
+	// Cc holds at most MaxRecipients addresses.
 	Cc      []string `json:"cc,omitempty"`
 	ReplyTo []string `json:"reply_to,omitempty"`
 	// Html body. Markdown-style [text](url) links and bare URLs are converted
@@ -41,11 +72,12 @@ type SendEmailRequest struct {
 	Html string `json:"html,omitempty"`
 	Text string `json:"text,omitempty"`
 	// PreviewText is the inbox preview (preheader) shown next to the subject.
-	// Max 150 characters.
+	// Max MaxPreviewTextLength characters.
 	PreviewText string            `json:"preview_text,omitempty"`
 	Headers     map[string]string `json:"headers,omitempty"`
 	Attachments []Attachment      `json:"attachments,omitempty"`
-	// ScheduledAt is an ISO 8601 timestamp to schedule the send.
+	// ScheduledAt is an ISO 8601 timestamp, or a relative phrase like
+	// "in 1 min" / "tomorrow at 9am", at most MaxScheduleAheadDays ahead.
 	ScheduledAt string `json:"scheduled_at,omitempty"`
 	// TopicId drops recipients unsubscribed from this topic (topic gating).
 	TopicId string `json:"topic_id,omitempty"`
@@ -73,7 +105,7 @@ type BatchEmailRequest struct {
 	Html string `json:"html,omitempty"`
 	Text string `json:"text,omitempty"`
 	// PreviewText is the inbox preview (preheader) shown next to the subject.
-	// Max 150 characters.
+	// Max MaxPreviewTextLength characters.
 	PreviewText string            `json:"preview_text,omitempty"`
 	Headers     map[string]string `json:"headers,omitempty"`
 	// TopicId drops recipients unsubscribed from this topic (topic gating).
@@ -111,6 +143,8 @@ type Email struct {
 	MessageId string   `json:"message_id"`
 	From      string   `json:"from"`
 	To        []string `json:"to"`
+	// DomainId is the sending domain the email went out on.
+	DomainId  string   `json:"domain_id"`
 	Cc        []string `json:"cc,omitempty"`
 	Bcc       []string `json:"bcc,omitempty"`
 	ReplyTo   []string `json:"reply_to,omitempty"`
@@ -130,11 +164,13 @@ type Email struct {
 // /emails): no Status/Html/Text/Events. Use Emails.Get for the full
 // email with its event timeline.
 type SentEmailListItem struct {
-	Object      string   `json:"object"`
-	Id          string   `json:"id"`
-	MessageId   string   `json:"message_id"`
-	From        string   `json:"from"`
-	To          []string `json:"to"`
+	Object    string   `json:"object"`
+	Id        string   `json:"id"`
+	MessageId string   `json:"message_id"`
+	From      string   `json:"from"`
+	To        []string `json:"to"`
+	// DomainId is the sending domain the email went out on.
+	DomainId    string   `json:"domain_id"`
 	Cc          []string `json:"cc"`
 	Bcc         []string `json:"bcc"`
 	ReplyTo     []string `json:"reply_to"`
@@ -142,6 +178,34 @@ type SentEmailListItem struct {
 	LastEvent   string   `json:"last_event"`
 	ScheduledAt string   `json:"scheduled_at"`
 	CreatedAt   string   `json:"created_at"`
+	// CampaignId is set when the send originated from a campaign (including
+	// its follow-ups).
+	CampaignId string `json:"campaign_id"`
+	// AutomationId is set when the send originated from an automation.
+	AutomationId string `json:"automation_id"`
+}
+
+// EmailSource is one row of Emails.Sources (GET /emails/sources): aggregated
+// send metrics per campaign, automation, or one-off ("individual") origin.
+type EmailSource struct {
+	// Kind is "campaign" | "automation" | "individual".
+	Kind string `json:"kind"`
+	// Id, Name and Status are null for the "individual" row; Subject is set
+	// only for campaigns.
+	Id      string `json:"id"`
+	Name    string `json:"name"`
+	Subject string `json:"subject"`
+	Status  string `json:"status"`
+
+	Total     int `json:"total"`
+	Sent      int `json:"sent"`
+	Delivered int `json:"delivered"`
+	Opened    int `json:"opened"`
+	Clicked   int `json:"clicked"`
+	Replied   int `json:"replied"`
+	Failed    int `json:"failed"`
+
+	LastSentAt string `json:"last_sent_at"`
 }
 
 // AttachmentMeta describes an attachment of a sent email.
@@ -174,6 +238,13 @@ type ListEmailsRequest struct {
 	// DomainId restricts to emails sent from this sending domain (domain id).
 	// Composes with the source filters.
 	DomainId string
+	// Status restricts to emails whose latest event matches, case-insensitively
+	// — the same value reads expose as LastEvent (e.g. "delivered", "bounced",
+	// "opened").
+	Status string
+	// Search matches recipients, subject, and sender (case-insensitive
+	// substring).
+	Search string
 }
 
 // UpdateEmailRequest reschedules a scheduled email.
@@ -226,7 +297,8 @@ func (s *EmailsService) BatchWithContext(ctx context.Context, params []*SendEmai
 }
 
 // List lists sent emails (trimmed SentEmailListItem rows). GET /emails
-// For the campaign_id/automation_id/source/domain_id filters use ListFiltered.
+// For the campaign_id/automation_id/source/domain_id/status/search filters use
+// ListFiltered.
 func (s *EmailsService) List(params *ListParams) (*ListResponse[SentEmailListItem], error) {
 	return s.ListWithContext(context.Background(), params)
 }
@@ -237,7 +309,7 @@ func (s *EmailsService) ListWithContext(ctx context.Context, params *ListParams)
 }
 
 // ListFiltered lists sent emails with optional campaign_id/automation_id/
-// source/domain_id filters. GET /emails
+// source/domain_id/status/search filters. GET /emails
 func (s *EmailsService) ListFiltered(params *ListEmailsRequest) (*ListResponse[SentEmailListItem], error) {
 	return s.ListFilteredWithContext(context.Background(), params)
 }
@@ -267,12 +339,31 @@ func (s *EmailsService) ListFilteredWithContext(ctx context.Context, params *Lis
 		if params.DomainId != "" {
 			q.Set("domain_id", params.DomainId)
 		}
+		if params.Status != "" {
+			q.Set("status", params.Status)
+		}
+		if params.Search != "" {
+			q.Set("search", params.Search)
+		}
 	}
 	path := "/emails"
 	if enc := q.Encode(); enc != "" {
 		path += "?" + enc
 	}
 	return request[ListResponse[SentEmailListItem]](ctx, s.client, http.MethodGet, path, nil, nil)
+}
+
+// Sources lists aggregated send metrics per campaign / automation /
+// individual origin. Not paginated — HasMore is always false.
+// GET /emails/sources
+func (s *EmailsService) Sources() (*ListResponse[EmailSource], error) {
+	return s.SourcesWithContext(context.Background())
+}
+
+// SourcesWithContext lists aggregated per-source send metrics.
+// GET /emails/sources
+func (s *EmailsService) SourcesWithContext(ctx context.Context) (*ListResponse[EmailSource], error) {
+	return request[ListResponse[EmailSource]](ctx, s.client, http.MethodGet, "/emails/sources", nil, nil)
 }
 
 // Get retrieves a sent email and its events. GET /emails/:id
@@ -327,6 +418,17 @@ func (s *EmailsService) CancelWithContext(ctx context.Context, id string) (*Obje
 }
 
 // BatchService sends up to 100 emails in one request: client.Batch.Send([...]).
+//
+// A batch can fail PART WAY THROUGH. When it does and the call carried an
+// Idempotency-Key, the returned *MailblastrError names the emails that were
+// already delivered in its Sent / SentCount fields — send only the remainder
+// on retry:
+//
+//	_, err := client.Batch.SendEmailsWithOptions(ctx, emails, &mailblastr.RequestOptions{IdempotencyKey: key})
+//	var apiErr *mailblastr.MailblastrError
+//	if errors.As(err, &apiErr) && apiErr.SentCount > 0 {
+//		// apiErr.Sent[i].Id already went out; apiErr.Limit says which quota ran out.
+//	}
 type BatchService struct {
 	client *Client
 }

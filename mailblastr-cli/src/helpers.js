@@ -1,5 +1,8 @@
 'use strict';
 
+const fs = require('node:fs');
+const path = require('node:path');
+
 /** Error whose message is reported as a CLI usage error (exit 1, no stack). */
 class CliError extends Error {}
 
@@ -14,6 +17,14 @@ function collect(value, previous) {
       .map((s) => s.trim())
       .filter(Boolean),
   );
+}
+
+/**
+ * Commander collector for repeatable flags whose values must stay verbatim
+ * (file paths, URLs) — unlike `collect`, it never splits on commas.
+ */
+function append(value, previous) {
+  return (previous || []).concat(value);
 }
 
 /** Parse a JSON-valued flag, failing with a friendly message. */
@@ -43,16 +54,26 @@ function clean(obj) {
   return out;
 }
 
-/** Add the standard cursor-pagination flags to a list command. */
+/**
+ * Add the standard cursor-pagination flags to a list command. The API accepts
+ * an integer 1-100 (default 20) and rejects `--after` together with `--before`.
+ */
 function withPagination(cmd) {
   return cmd
-    .option('--limit <n>', 'max results to return')
-    .option('--after <cursor>', 'cursor: results after this id')
-    .option('--before <cursor>', 'cursor: results before this id');
+    .option('--limit <n>', 'max results per page (integer 1-100, default 20)')
+    .option('--after <cursor>', 'cursor: the id of the last item on the previous page')
+    .option('--before <cursor>', 'cursor: the id of the first item on the next page');
 }
 
-/** Build the SDK pagination params object from parsed options. */
+/**
+ * Build the SDK pagination params object from parsed options. `after` and
+ * `before` are mutually exclusive (the API answers 422); catch that locally so
+ * the user gets a usage error instead of a round-trip.
+ */
 function pagination(opts) {
+  if (opts.after !== undefined && opts.before !== undefined) {
+    throw new CliError('Use either --after or --before, not both.');
+  }
   return clean({
     limit: toInt(opts.limit, '--limit'),
     after: opts.after,
@@ -60,4 +81,19 @@ function pagination(opts) {
   });
 }
 
-module.exports = { CliError, collect, parseJson, toInt, clean, withPagination, pagination };
+/**
+ * Write a non-JSON API payload to disk and return the printable `{ data }`
+ * summary the command layer expects. A few endpoints answer with bytes
+ * (attachments, raw RFC822) or text (a domain's records.csv) rather than JSON,
+ * so the file is saved and stdout keeps its JSON-only contract.
+ */
+function saveFile(filePath, contents) {
+  const abs = path.resolve(filePath);
+  const buf = typeof contents === 'string' ? Buffer.from(contents, 'utf8') : Buffer.from(contents);
+  fs.writeFileSync(abs, buf);
+  return { data: { object: 'file', path: abs, bytes: buf.length } };
+}
+
+module.exports = {
+  CliError, collect, append, parseJson, toInt, clean, withPagination, pagination, saveFile,
+};
