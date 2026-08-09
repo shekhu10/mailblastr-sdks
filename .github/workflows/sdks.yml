@@ -10,6 +10,18 @@ on:
   workflow_dispatch:
 
 jobs:
+  # Internal-consistency half of the version guard: every version coordinate
+  # across the 9 SDKs must agree with every other one. No tag argument here —
+  # this workflow does not run on tags; release.yml runs the same script WITH
+  # the tag, before any publish job.
+  versions:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: '22' }
+      - run: node scripts/check-versions.mjs
+
   npm:
     runs-on: ubuntu-latest
     defaults: { run: { working-directory: mailblastr-npm } }
