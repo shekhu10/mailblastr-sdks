@@ -74,11 +74,11 @@ class TestBatch(RecordingTestCase):
 
 class TestEmailAttachments(RecordingTestCase):
     def test_list(self):
-        mailblastr.Emails.Attachments.list("em_1")
+        mailblastr.Emails.list_attachments("em_1")
         self.assertCall("GET", "/emails/em_1/attachments")
 
     def test_get(self):
-        mailblastr.Emails.Attachments.get("em_1", "att_1")
+        mailblastr.Emails.get_attachment("em_1", "att_1")
         self.assertCall("GET", "/emails/em_1/attachments/att_1")
 
 
@@ -92,7 +92,7 @@ class TestReceiving(RecordingTestCase):
         self.assertCall("GET", "/emails/receiving/rcv_1")
 
     def test_addresses(self):
-        mailblastr.Emails.Receiving.addresses()
+        mailblastr.Emails.Receiving.list_addresses()
         self.assertCall("GET", "/emails/receiving/addresses")
 
     def test_list_filtered_by_received_for(self):
@@ -100,11 +100,11 @@ class TestReceiving(RecordingTestCase):
         self.assertCall("GET", "/emails/receiving?received_for=hi%40acme.com")
 
     def test_attachments(self):
-        mailblastr.Emails.Receiving.attachments("rcv_1")
+        mailblastr.Emails.Receiving.list_attachments("rcv_1")
         self.assertCall("GET", "/emails/receiving/rcv_1/attachments")
 
     def test_attachments_paginated(self):
-        mailblastr.Emails.Receiving.attachments("rcv_1", {"limit": 10, "after": "2"})
+        mailblastr.Emails.Receiving.list_attachments("rcv_1", {"limit": 10, "after": "2"})
         self.assertCall("GET", "/emails/receiving/rcv_1/attachments?limit=10&after=2")
 
     def test_get_attachment_is_binary(self):
@@ -115,7 +115,7 @@ class TestReceiving(RecordingTestCase):
         self.assertEqual(data, self.raw_response)
 
     def test_raw_is_binary(self):
-        data = mailblastr.Emails.Receiving.raw("rcv_1")
+        data = mailblastr.Emails.Receiving.get_raw("rcv_1")
         self.assertEqual(self.last["path"], "/emails/receiving/rcv_1/raw")
         self.assertTrue(self.last.get("raw"))
         self.assertEqual(data, self.raw_response)

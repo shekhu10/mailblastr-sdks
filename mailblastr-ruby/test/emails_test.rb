@@ -141,7 +141,7 @@ class EmailsTest < Minitest::Test
     Mailblastr::Emails::Receiving.get("recv_1")
     assert_request :get, "/emails/receiving/recv_1"
 
-    Mailblastr::Emails::Receiving.addresses
+    Mailblastr::Emails::Receiving.list_addresses
     assert_request :get, "/emails/receiving/addresses"
 
     Mailblastr::Emails::Receiving.list({ received_for: "hi@yourdomain.com" })
@@ -166,7 +166,7 @@ class EmailsTest < Minitest::Test
 
   def test_receiving_raw_downloads_return_body_string_unparsed
     stub_response!(200, "BINARY-BYTES-NOT-JSON")
-    data = Mailblastr::Emails::Receiving.raw("recv_1")
+    data = Mailblastr::Emails::Receiving.get_raw("recv_1")
     assert_request :get, "/emails/receiving/recv_1/raw"
     assert_equal "BINARY-BYTES-NOT-JSON", data
 

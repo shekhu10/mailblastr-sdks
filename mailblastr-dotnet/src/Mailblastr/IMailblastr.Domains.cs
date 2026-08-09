@@ -26,7 +26,7 @@ public partial interface IMailblastr
     /// enabling inbound. Fails open — a lookup failure is a 200 with
     /// <c>HasMx = false</c>. GET /domains/mx-check
     /// </summary>
-    Task<MxCheckResult> DomainCheckMxAsync(string domainName, CancellationToken cancellationToken = default);
+    Task<MxCheckResult> DomainMxCheckAsync(string domainName, CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Download a domain's DNS records as CSV text (CRLF-terminated, header row

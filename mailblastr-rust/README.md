@@ -12,7 +12,7 @@ cargo add tokio -F macros,rt-multi-thread
 ## Usage
 
 ```rust
-use mailblastr::{CreateEmailBaseOptions, Mailblastr, Result};
+use mailblastr::{SendEmailOptions, Mailblastr, Result};
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -22,7 +22,7 @@ async fn main() -> Result<()> {
     let to = ["user@example.com"];
     let subject = "Hello from MailBlastr";
 
-    let email = CreateEmailBaseOptions::new(from, to, subject)
+    let email = SendEmailOptions::new(from, to, subject)
         .with_html("<p>Your first email 🎉</p>");
 
     let sent = mailblastr.emails.send(email).await?;
@@ -84,9 +84,9 @@ match mailblastr.emails.send(email).await {
 Attach files by hosted URL (fetched at send time) or inline base64:
 
 ```rust
-use mailblastr::{Attachment, CreateEmailBaseOptions};
+use mailblastr::{Attachment, SendEmailOptions};
 
-let email = CreateEmailBaseOptions::new(from, to, "Your invoice")
+let email = SendEmailOptions::new(from, to, "Your invoice")
     .with_html("<p>Invoice attached.</p>")
     .with_attachment(Attachment::from_path(
         "invoice.pdf",
@@ -220,7 +220,7 @@ mailblastr.templates.create(CreateTemplateOptions::new("Welcome").with_subject("
 mailblastr.templates.duplicate(id, None).await?;
 mailblastr.templates.publish(id).await?;
 mailblastr.emails.send(
-    CreateEmailBaseOptions::new(from, to, subject)
+    SendEmailOptions::new(from, to, subject)
         .with_template_id(template_id)
         .with_variable("first_name", "Ada"),
 ).await?;
@@ -339,7 +339,7 @@ let result = verify_webhook_signature(raw_body, &headers, &signing_secret, &Veri
 if result.valid {
     // process the event
 }
-// also available as mailblastr.webhooks.verify_signature(...)
+// also available as mailblastr.webhooks.verify(...)
 ```
 
 ### Pagination

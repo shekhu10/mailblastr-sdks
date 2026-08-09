@@ -216,11 +216,11 @@ public class MailblastrClientTests
     }
 
     [Fact]
-    public async Task EventUpdateSchema_PatchesAndCanClearTheSchema()
+    public async Task EventUpdate_PatchesAndCanClearTheSchema()
     {
         var (client, stub) = CreateClient("""{"object":"event","id":"evt_1","name":"signup","schema":null,"created_at":"2026-01-01T00:00:00Z"}""");
 
-        await client.EventUpdateSchemaAsync("evt_1", null);
+        await client.EventUpdateAsync("evt_1", null);
 
         Assert.Equal(HttpMethod.Patch, stub.LastRequest.Method);
         Assert.Equal("https://www.mailblastr.com/api/events/evt_1", stub.LastRequest.RequestUri!.AbsoluteUri);
@@ -247,11 +247,11 @@ public class MailblastrClientTests
     }
 
     [Fact]
-    public async Task DomainCheckMx_PassesTheNameQuery()
+    public async Task DomainMxCheck_PassesTheNameQuery()
     {
         var (client, stub) = CreateClient("""{"has_mx":true,"ours":false,"records":[{"exchange":"mx.example.com","priority":10}]}""");
 
-        var result = await client.DomainCheckMxAsync("example.com");
+        var result = await client.DomainMxCheckAsync("example.com");
 
         Assert.Equal("https://www.mailblastr.com/api/domains/mx-check?name=example.com", stub.LastRequest.RequestUri!.AbsoluteUri);
         Assert.True(result.HasMx);
@@ -317,7 +317,7 @@ public class MailblastrClientTests
         {
             Domain = "acme.com",
             Name = "Openers",
-            Filter = new SegmentFilter
+            Filter = new SegmentFilterOptions
             {
                 Status = "members_only",
                 Engagement = new SegmentEngagementFilter { Event = "opened", CampaignId = "cmp_1" },
@@ -822,5 +822,111 @@ public class MailblastrClientTests
         await client.DomainListAsync();
 
         Assert.Equal("http://localhost:3000/domains", stub.LastRequest.RequestUri!.AbsoluteUri);
+    }
+
+    [Fact]
+    public async Task ContactRetrieveTopics_ForwardsPaginationAndReadsHasMore()
+    {
+        // GET /contacts/:id/topics is a paginated list endpoint. Before 3.0.0
+        // the method took no pagination argument (unlike its three siblings
+        // ContactListSegmentsAsync, SegmentListContactsAsync and
+        // ReceivedEmailListAttachmentsAsync), and has_more was not modelled.
+        var (client, stub) = CreateClient("""{"object":"list","has_more":true,"data":[{"id":"top_1","name":"Product","subscription":"opt_in"}]}""");
+
+        var topics = await client.ContactRetrieveTopicsAsync("con_1", new PaginationOptions { Limit = 2, After = "top_9" });
+
+        Assert.True(topics.HasMore);
+        Assert.Single(topics.Data);
+        var uri = stub.LastRequest.RequestUri!;
+        Assert.Equal("/api/contacts/con_1/topics", uri.AbsolutePath);
+        Assert.Contains("limit=2", uri.Query);
+        Assert.Contains("after=top_9", uri.Query);
+    }
+
+    [Fact]
+    public async Task ContactRetrieveTopics_WithoutPagination_SendsNoQuery()
+    {
+        var (client, stub) = CreateClient("""{"object":"list","has_more":false,"data":[]}""");
+
+        await client.ContactRetrieveTopicsAsync("con_1");
+
+        Assert.Equal(string.Empty, stub.LastRequest.RequestUri!.Query);
+    }
+
+    [Fact]
+    public async Task TemplateUpdate_ClearsFieldsWithAnExplicitNull()
+    {
+        // PATCH semantics are `'key' in body`-based: present-with-null clears,
+        // absent leaves the field untouched. The client omits nulls, so the
+        // clearable properties are Patch<T>? rather than plain string?.
+        var (client, stub) = CreateClient("""{"object":"template","id":"tpl_1"}""");
+
+        await client.TemplateUpdateAsync("tpl_1", new TemplateUpdateOptions
+        {
+            Name = "Receipt",
+            Alias = Patch.Clear<string>(),
+            Subject = Patch.Clear<string>(),
+            From = Patch.Clear<string>(),
+            ReplyTo = Patch.Clear<EmailAddressList>(),
+            HtmlBody = Patch.Clear<string>(),
+            TextBody = Patch.Clear<string>(),
+        });
+
+        using var body = JsonDocument.Parse(stub.LastRequestBody!);
+        foreach (var key in new[] { "alias", "subject", "from", "reply_to", "html", "text" })
+        {
+            Assert.True(body.RootElement.TryGetProperty(key, out var property), $"{key} must be present");
+            Assert.Equal(JsonValueKind.Null, property.ValueKind);
+        }
+
+        Assert.Equal("Receipt", body.RootElement.GetProperty("name").GetString());
+    }
+
+    [Fact]
+    public async Task TemplateUpdate_OmitsUntouchedFieldsAndSendsSetValues()
+    {
+        var (client, stub) = CreateClient("""{"object":"template","id":"tpl_1"}""");
+
+        await client.TemplateUpdateAsync("tpl_1", new TemplateUpdateOptions
+        {
+            Subject = "Your receipt",
+        });
+
+        using var body = JsonDocument.Parse(stub.LastRequestBody!);
+        Assert.Equal("Your receipt", body.RootElement.GetProperty("subject").GetString());
+        Assert.False(body.RootElement.TryGetProperty("alias", out _));
+        Assert.False(body.RootElement.TryGetProperty("html", out _));
+    }
+
+    [Fact]
+    public async Task TopicUpdate_ClearsTheDescription()
+    {
+        var (client, stub) = CreateClient("""{"object":"topic","id":"top_1"}""");
+
+        await client.TopicUpdateAsync("top_1", new TopicUpdateOptions { Description = Patch.Clear<string>() });
+
+        using var body = JsonDocument.Parse(stub.LastRequestBody!);
+        Assert.Equal(JsonValueKind.Null, body.RootElement.GetProperty("description").ValueKind);
+    }
+
+    [Fact]
+    public async Task SegmentUpdate_ClearsTheEngagementPredicate()
+    {
+        var (client, stub) = CreateClient("""{"object":"segment","id":"seg_1","audience_id":"aud_1","name":"VIP","created_at":"2026-01-01T00:00:00Z"}""");
+
+        await client.SegmentUpdateAsync("seg_1", new SegmentUpdateOptions
+        {
+            Filter = new SegmentFilterOptions
+            {
+                Engagement = Patch.Clear<SegmentEngagementFilter>(),
+                PropertyFilters = new List<PropertyFilter>(),
+            },
+        });
+
+        using var body = JsonDocument.Parse(stub.LastRequestBody!);
+        var filter = body.RootElement.GetProperty("filter");
+        Assert.Equal(JsonValueKind.Null, filter.GetProperty("engagement").ValueKind);
+        Assert.Equal(JsonValueKind.Array, filter.GetProperty("property_filters").ValueKind);
+        Assert.Equal(0, filter.GetProperty("property_filters").GetArrayLength());
     }
 }

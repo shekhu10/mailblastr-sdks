@@ -121,7 +121,7 @@ function register({ group, leaf, act }) {
       .option('--attach-type <type>', "connection type: 'default' (default) | 'condition_met' | 'condition_not_met' | 'event_received' | 'timeout'")
       .option('--attach-before <key>', 'insert before this existing step key'),
     ({ client, opts, args: [id] }) =>
-      client.automations.ai(
+      client.automations.createWithAi(
         id,
         clean({
           prompt: opts.prompt,

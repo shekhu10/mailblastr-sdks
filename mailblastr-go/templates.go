@@ -118,13 +118,16 @@ type CreateTemplateRequest struct {
 
 // UpdateTemplateRequest is the payload for PATCH /templates/:id.
 type UpdateTemplateRequest struct {
-	Name      string                  `json:"name,omitempty"`
-	Alias     string                  `json:"alias,omitempty"`
-	Subject   string                  `json:"subject,omitempty"`
-	From      string                  `json:"from,omitempty"`
-	ReplyTo   []string                `json:"reply_to,omitempty"`
-	Html      string                  `json:"html,omitempty"`
-	Text      string                  `json:"text,omitempty"`
+	Name string `json:"name,omitempty"`
+	// Every field below is clearable: a field present with null clears it
+	// server-side, so use Set(v) to change it and Clear[T]() to remove it.
+	// Leave a field nil to keep the stored value.
+	Alias     *Null[string]           `json:"alias,omitempty"`
+	Subject   *Null[string]           `json:"subject,omitempty"`
+	From      *Null[string]           `json:"from,omitempty"`
+	ReplyTo   *Null[[]string]         `json:"reply_to,omitempty"`
+	Html      *Null[string]           `json:"html,omitempty"`
+	Text      *Null[string]           `json:"text,omitempty"`
 	Variables []TemplateVariableInput `json:"variables,omitempty"`
 }
 

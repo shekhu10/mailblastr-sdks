@@ -109,10 +109,10 @@ $mb->automations->deleteStep('auto_1', 'step_2');
 check_same('automations.deleteStep: method', 'DELETE', $t->last()['method']);
 check_same('automations.deleteStep: path', '/automations/auto_1/steps/step_2', $t->lastPath());
 
-$mb->automations->ai('auto_1', ['prompt' => 'Welcome new signups over 3 days']);
-check_same('automations.ai: method', 'POST', $t->last()['method']);
-check_same('automations.ai: path', '/automations/auto_1/ai', $t->lastPath());
-check_same('automations.ai: body', ['prompt' => 'Welcome new signups over 3 days'], $t->lastJson());
+$mb->automations->createWithAi('auto_1', ['prompt' => 'Welcome new signups over 3 days']);
+check_same('automations.createWithAi: method', 'POST', $t->last()['method']);
+check_same('automations.createWithAi: path', '/automations/auto_1/ai', $t->lastPath());
+check_same('automations.createWithAi: body', ['prompt' => 'Welcome new signups over 3 days'], $t->lastJson());
 
 $mb->automations->runs('auto_1', ['limit' => 25]);
 check_same('automations.runs: path', '/automations/auto_1/runs?limit=25', $t->lastPath());

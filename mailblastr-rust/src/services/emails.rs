@@ -9,7 +9,7 @@ use serde_json::json;
 
 use crate::client::{page_query, seg, Config};
 use crate::services::email_types::{
-    AttachmentMeta, BatchEmailOptions, CreateEmailBaseOptions, CreateEmailResponse, Email,
+    AttachmentMeta, BatchEmailOptions, SendEmailOptions, CreateEmailResponse, Email,
     EmailSource, ForwardReceivedEmailOptions, ReceivedAttachment, ReceivedEmail,
     ReceivingAddressStats, ReplyReceivedEmailOptions, SendEmailBatchResponse, SentEmailListItem,
 };
@@ -326,7 +326,7 @@ impl EmailsSvc {
     }
 
     /// Send a single email. `POST /emails`
-    pub async fn send(&self, email: CreateEmailBaseOptions) -> Result<CreateEmailResponse> {
+    pub async fn send(&self, email: SendEmailOptions) -> Result<CreateEmailResponse> {
         self.config
             .send(self.config.request(Method::POST, "/emails").json(&email))
             .await
@@ -346,7 +346,7 @@ impl EmailsSvc {
     /// other endpoint ignores it.
     pub async fn send_with_idempotency_key(
         &self,
-        email: CreateEmailBaseOptions,
+        email: SendEmailOptions,
         idempotency_key: &str,
     ) -> Result<CreateEmailResponse> {
         self.config
@@ -367,7 +367,7 @@ impl EmailsSvc {
     )]
     pub async fn batch(
         &self,
-        emails: Vec<CreateEmailBaseOptions>,
+        emails: Vec<SendEmailOptions>,
     ) -> Result<SendEmailBatchResponse> {
         self.config
             .send(
@@ -484,7 +484,7 @@ impl BatchSvc {
     )]
     pub async fn send(
         &self,
-        emails: Vec<CreateEmailBaseOptions>,
+        emails: Vec<SendEmailOptions>,
     ) -> Result<SendEmailBatchResponse> {
         self.config
             .send(
@@ -502,7 +502,7 @@ impl BatchSvc {
     )]
     pub async fn send_with_idempotency_key(
         &self,
-        emails: Vec<CreateEmailBaseOptions>,
+        emails: Vec<SendEmailOptions>,
         idempotency_key: &str,
     ) -> Result<SendEmailBatchResponse> {
         self.config

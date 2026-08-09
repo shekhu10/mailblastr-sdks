@@ -57,9 +57,10 @@ type ListTopicsRequest struct {
 // UpdateTopicRequest is the payload for PATCH /topics/:id. DefaultSubscription
 // is immutable, so it is deliberately absent here.
 type UpdateTopicRequest struct {
-	Name        string `json:"name,omitempty"`
-	Description string `json:"description,omitempty"`
-	Visibility  string `json:"visibility,omitempty"`
+	Name string `json:"name,omitempty"`
+	// Description is clearable: Clear[string]() removes the stored copy.
+	Description *Null[string] `json:"description,omitempty"`
+	Visibility  string        `json:"visibility,omitempty"`
 }
 
 // TopicsService handles the /topics endpoints.

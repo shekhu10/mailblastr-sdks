@@ -3,6 +3,476 @@
 All nine MailBlastr SDKs release in lockstep — one version, one tag, every registry.
 Dates are release dates; entries cover every package unless a language is called out.
 
+## 3.0.0 — 2026-08-09
+
+**3.0.0 lands one day after 2.0.0, and it is worth saying plainly why.** It ships no new
+endpoint, no new capability, and no fix for a bug that is losing anyone data today.
+
+It exists because the 2.0.0 audit left one endpoint's signature wrong in three languages —
+`GET /contacts/:id/topics` took no pagination argument in Go, Rust and .NET while its three
+structural siblings took one in every package — and that cannot be fixed without breaking a
+signature published on three registries. Once a major was unavoidable, the question stopped
+being "is this worth a break?" and became "what else is in this category?" The answer was
+every remaining place where the nine packages spell the same endpoint differently, and every
+place where a PATCH field the API lets you clear could not be cleared from a typed SDK.
+
+There are no customers on the platform yet. A break costs approximately nothing today and
+compounds forever after. That is the whole justification — there is not a second one — and
+it is why this release closes the naming and PATCH-shape work in one pass rather than
+letting it leak out over the next several minors.
+
+**Migrating is mechanical.** Every change below is a rename or an added optional argument;
+none of it changes what any method sends, except the PATCH fields that could not previously
+express "clear" at all. There is no behavioural change on the wire for code that already
+compiles.
+
+---
+
+### Breaking changes
+
+#### 1. The defect that forced the major: `contacts` topic subscriptions are paginated
+
+`GET /contacts/:id/topics` is a paginating endpoint — contract-c §0.10 lists it with
+`forceLimit: false`, meaning an unpaged call returns everything and supplying
+`limit`/`after`/`before` restores paging, exactly like `GET /contacts/:id/segments` and
+`GET /segments/:id/contacts`. npm, Python, Ruby, PHP, Java and the CLI already passed those
+params. Go, Rust and .NET did not accept them at all, so from those three languages the
+query string was unreachable.
+
+```go
+// Go — 2.0.0
+topics, err := client.Contacts.GetTopics(contactID)
+
+// Go — 3.0.0 (nil ⇒ every topic, exactly as before)
+topics, err := client.Contacts.GetTopics(contactID, nil)
+topics, err = client.Contacts.GetTopics(contactID, &mailblastr.ListParams{Limit: 50})
+```
+
+```rust
+// Rust — 2.0.0
+let topics = mailblastr.contacts.get_topics(contact_id).await?;
+
+// Rust — 3.0.0
+let topics = mailblastr.contacts.get_topics(contact_id, None).await?;
+```
+
+```csharp
+// .NET — 2.0.0
+var topics = await mailblastr.ContactRetrieveTopicsAsync(contactId);
+
+// .NET — 3.0.0 — pagination is optional and goes BEFORE the CancellationToken.
+var topics = await mailblastr.ContactRetrieveTopicsAsync(contactId);
+var page   = await mailblastr.ContactRetrieveTopicsAsync(contactId, new PaginationOptions { Limit = 50 });
+```
+
+The .NET insertion has the same hazard 2.0.0 documented for its other list methods: a call
+site that passed the `CancellationToken` **positionally** must now name it
+(`cancellationToken: ct`). Named and default call sites are unaffected.
+
+Paging you cannot drive is not a fix, so the response model was completed at the same time:
+**`ContactTopics` gained `has_more`** in Rust (`pub has_more: bool`) and .NET
+(`public bool HasMore`). npm and Go already modelled it; the route returns the standard
+`{ object, has_more, data }` list envelope.
+
+#### 2. One name per endpoint, across all nine packages
+
+Six endpoints and one local helper had two, three or four public names across the libraries.
+Each now has one.
+
+The rule, applied uniformly, is that a method returning a list is `list<Noun>`, a method
+fetching one thing is `get<Noun>`, and a method minting something is `create<Noun>`. Where
+that agreed with the majority spelling — `getRaw` (5 of 8), `listAttachments` (7 of 8),
+`createImportUpload` (4 of 8, the largest of four spellings), `verify` (6 of 8) — the
+majority simply won. Twice it did not, and the rule won anyway: `ai` was a dead 4/4 tie, and
+`addresses` was the majority at 6 of 8 but is a list method. Picking the rule over the head
+count in those two is the only way the table below is a rule rather than a poll, and a rule
+is what stops the next endpoint from re-opening the argument.
+
+| Endpoint | 3.0.0 name | Was, and where |
+| --- | --- | --- |
+| `POST /automations/:id/ai` | `createWithAi` | `ai` in npm, Python, PHP, Java |
+| `GET /emails/receiving/addresses` | `listAddresses` | `addresses` in npm, Python, Ruby, PHP, Java |
+| `GET /emails/receiving/:id/attachments` | `listAttachments` | `attachments` in Python |
+| `GET /emails/receiving/:id/raw` | `getRaw` | `raw` in Python and Ruby; `ReceivedEmailDownloadRawAsync` in .NET |
+| `GET /emails/receiving/:id/attachments/:aid` | `getAttachment` | `ReceivedEmailDownloadAttachmentAsync` in .NET |
+| `POST /audiences/:id/contacts/import/upload` | `createImportUpload` | `import_upload` in Python and Ruby, `ImportUpload` / `ImportUploadWithContext` in Go, `uploadUrl` in PHP |
+| webhook signature verification | `verify` | `verify_signature` in Ruby and Rust; `WebhookVerifySignature` in .NET |
+
+Each package keeps its own casing convention — `createWithAi` in npm/PHP/Java,
+`create_with_ai` in Python/Ruby/Rust, `CreateWithAi` in Go,
+`AutomationCreateWithAiAsync` in .NET — so this is one name per endpoint, not one
+identifier. .NET in particular keeps `Retrieve` as its verb for fetching a modelled object
+(`ReceivedEmailRetrieveAsync`, `EmailRetrieveAttachmentAsync`, `ContactRetrieveTopicsAsync`
+are all unchanged); the two rows it moved to `Get` are the raw-**byte** downloads, which is
+the same distinction the `getRaw` / `getAttachment` spelling draws in the other eight.
+
+```ts
+// npm
+await mb.emails.receiving.addresses();          // 2.0.0
+await mb.emails.receiving.listAddresses();      // 3.0.0
+
+await mb.automations.ai(id, { prompt });        // 2.0.0
+await mb.automations.createWithAi(id, { prompt }); // 3.0.0
+```
+
+```python
+# Python
+mailblastr.Emails.Receiving.raw(email_id)            # 2.0.0
+mailblastr.Emails.Receiving.get_raw(email_id)        # 3.0.0
+
+mailblastr.Emails.Receiving.attachments(email_id)    # 2.0.0
+mailblastr.Emails.Receiving.list_attachments(email_id)  # 3.0.0
+
+mailblastr.Contacts.import_upload({...})             # 2.0.0
+mailblastr.Contacts.create_import_upload({...})      # 3.0.0
+```
+
+```ruby
+# Ruby
+Mailblastr::Webhooks.verify_signature(payload, headers, secret)  # 2.0.0
+Mailblastr::Webhooks.verify(payload, headers, secret)            # 3.0.0
+```
+
+```php
+// PHP
+$slot = $mailblastr->contacts->uploadUrl(          // 2.0.0
+    ['audienceId' => $audienceId, 'filename' => 'leads.csv', 'size' => $bytes]);
+$slot = $mailblastr->contacts->createImportUpload( // 3.0.0
+    ['audienceId' => $audienceId, 'filename' => 'leads.csv', 'size' => $bytes]);
+```
+
+```rust
+// Rust — 2.0.0
+let result = mailblastr.webhooks.verify_signature(raw_body, &headers, secret, &VerifyWebhookOptions::default());
+// Rust — 3.0.0
+let result = mailblastr.webhooks.verify(raw_body, &headers, secret, &VerifyWebhookOptions::default());
+```
+
+The free function `verify_webhook_signature` (Rust) and the static
+`Webhooks.verifyWebhookSignature` (Java) are unchanged — only the method hanging off the
+resource was renamed, so the two spellings no longer describe the same call.
+
+**The CLI's command names are deliberately unchanged.** `emails receiving addresses`,
+`emails receiving raw <id>`, `automations ai <id>` and `contacts import-upload` all still
+work; only the SDK calls behind them moved. A subcommand is already scoped by its resource
+path, so the shell surface stays short. That convention is now written down in the CLI
+README as a table mapping each command to the SDK method it invokes, so the difference reads
+as a rule rather than as drift.
+
+#### 3. Four .NET methods renamed to the name the other eight already used
+
+Same principle as above, but these were .NET-only outliers on endpoints where the other
+eight packages already agreed.
+
+| Endpoint | 2.0.0 (.NET) | 3.0.0 (.NET) | The other eight |
+| --- | --- | --- | --- |
+| `PATCH /events/:id` | `EventUpdateSchemaAsync` | `EventUpdateAsync` | `update` |
+| `POST /webhooks/:id/rotate` | `WebhookRotateSecretAsync` | `WebhookRotateAsync` | `rotate` |
+| `GET /domains/mx-check` | `DomainCheckMxAsync` | `DomainMxCheckAsync` | `mxCheck` / `mx_check` / `MxCheck` |
+| `PATCH /emails/:id` | `EmailRescheduleAsync` | `EmailUpdateAsync` | `update` |
+
+```csharp
+// .NET
+await mailblastr.EmailRescheduleAsync(id, "2026-08-01T09:00:00Z"); // 2.0.0
+await mailblastr.EmailUpdateAsync(id, "2026-08-01T09:00:00Z");     // 3.0.0
+```
+
+#### 4. npm: the client is `Mailblastr`, not `MailBlastr`
+
+npm was the only package spelling the brand with an internal capital B in its published
+symbols. Every other package — and every package name on every registry — is lowercase
+`mailblastr`. Three exported identifiers changed:
+
+```ts
+// 2.0.0
+import { MailBlastr, type MailBlastrError, type MailBlastrOptions } from 'mailblastr';
+const mb = new MailBlastr('mb_xxxxxxxxx');
+
+// 3.0.0
+import { Mailblastr, type MailblastrError, type MailblastrOptions } from 'mailblastr';
+const mb = new Mailblastr('mb_xxxxxxxxx');
+```
+
+`Result<T>` still resolves to `{ data: null, error: MailblastrError }`, so `const { data,
+error } = await …` call sites do not change; only an explicit type annotation or a named
+import does. The default export is unchanged in shape (`export default Mailblastr`), so
+`import Mailblastr from 'mailblastr'` keeps working under any local name. **No compatibility
+alias for the old casing is exported** — a silently-working `MailBlastr` would leave the
+split in place, which is the thing this release is spending a major to remove. "MailBlastr"
+remains the prose spelling of the product in every README.
+
+The CLI was repointed to the new class name in the same change and now declares
+`mailblastr: ^3.0.0`.
+
+#### 5. Python and PHP: sent-email attachments are flat methods, not a sub-resource
+
+Both packages reached a *received* email's attachments through a flat `listAttachments` but
+a *sent* email's through a nested sub-resource — internally inconsistent, and the only two
+packages doing it. The other six were already flat.
+
+```python
+# Python — 2.0.0
+mailblastr.Emails.Attachments.list(email_id)
+mailblastr.Emails.Attachments.get(email_id, attachment_id)
+
+# Python — 3.0.0
+mailblastr.Emails.list_attachments(email_id)
+mailblastr.Emails.get_attachment(email_id, attachment_id)
+```
+
+```php
+// PHP — 2.0.0
+$mailblastr->emails->attachments->list(emailId: $id);
+$mailblastr->emails->attachments->get(emailId: $id, attachmentId: $attachmentId);
+
+// PHP — 3.0.0  (note the first parameter is now named $id)
+$mailblastr->emails->listAttachments(id: $id);
+$mailblastr->emails->getAttachment(id: $id, attachmentId: $attachmentId);
+```
+
+`Mailblastr\Resources\EmailAttachments` is deleted and `$mailblastr->emails->attachments`
+no longer exists; `mailblastr.Emails.Attachments` is likewise gone. `emails->receiving` /
+`Emails.Receiving` are untouched — those group a genuinely different resource, not a verb.
+
+#### 6. PATCH fields that clear: Go, Rust and .NET can finally send an explicit JSON null
+
+The API patches on key **presence**: a key that is absent leaves the field alone, and a key
+present with `null` clears it (contract-b §4.5 for templates and §5.5 for topics, contract-c
+§1.7 for campaigns and §5.1 for segment filters). A plain `string` with `omitempty`, or a
+`string?` under `WhenWritingNull`, can only express two of those three states — so from Go,
+Rust and .NET, "clear this field" was simply not sendable. npm, Python, Ruby, PHP and Java
+were already fine, either because they type the field `| null` or because they pass a map
+through untouched.
+
+Each language got the idiomatic three-state carrier:
+
+**Go — `Null[T]` with `Set` / `Clear`** (new, exported from the package root):
+
+```go
+// nil        -> key omitted, server leaves the field alone
+// Set(v)     -> key sent with v
+// Clear[T]() -> key sent as JSON null, server clears the field
+
+client.Campaigns.Update(id, &mailblastr.UpdateCampaignRequest{
+    SegmentId: mailblastr.Clear[string](),   // untarget the campaign
+    ReplyTo:   mailblastr.Set([]string{"support@yourdomain.com"}),
+})
+```
+
+**Rust — `Option<Option<T>>` plus a `clear_*` builder per field:**
+
+```rust
+// None            -> omitted
+// Some(Some(v))   -> sent with v          (with_alias(..))
+// Some(None)      -> sent as null         (clear_alias())
+let opts = UpdateTemplateOptions::new().clear_alias().with_subject("Your receipt");
+```
+
+**.NET — `Patch<T>` with an implicit conversion from `T`:**
+
+```csharp
+await mailblastr.TemplateUpdateAsync(id, new TemplateUpdateOptions
+{
+    Subject = "Your receipt",        // set (implicit conversion)
+    Alias   = Patch.Clear<string>(), // cleared server-side
+                                     // Name omitted => unchanged
+});
+```
+
+Which fields changed type:
+
+| Package | Type | Fields whose declared type changed |
+| --- | --- | --- |
+| Go | `UpdateCampaignRequest` | `ReplyTo`, `PreviewText`, `SegmentId`, `TopicId`, `ScheduleTimezone`, `DailyBatchSize` |
+| Go | `UpdateTemplateRequest` | `Alias`, `Subject`, `From`, `ReplyTo`, `Html`, `Text` |
+| Go | `UpdateTopicRequest` | `Description` |
+| Go | `SegmentFilterInput` | `Engagement` (`*Null[SegmentEngagement]`), `PropertyFilters` (`*[]PropertyFilter` — point it at an empty slice to clear) |
+| Rust | `UpdateTemplateOptions` | `alias`, `subject`, `from`, `reply_to`, `html`, `text` |
+| Rust | `UpdateTopicOptions` | `description` |
+| Rust | `SegmentFilterOptions` | `engagement` (plus `clear_engagement()` / `clear_property_filters()`) |
+| .NET | `TemplateUpdateOptions` | `Alias`, `Subject`, `From`, `ReplyTo`, `HtmlBody`, `TextBody` |
+| .NET | `TopicUpdateOptions` | `Description` |
+| .NET | `SegmentFilterOptions` | `Engagement` |
+
+Setting a value still reads the same in Rust and .NET — `with_alias("x")` and
+`Alias = "x"` both compile unchanged, because the builders were updated and `Patch<T>` takes
+an implicit conversion from `T`. Go is the one language where a plain assignment must become
+`mailblastr.Set(v)`.
+
+Property predicates clear with an **empty array**, not a null: the contract replaces them
+wholesale, so `[]` is a valid replacement meaning "none". Go needed a pointer for this
+(`&[]mailblastr.PropertyFilter{}`) because a bare empty slice is dropped by `omitempty`;
+Rust's `Some(vec![])` and .NET's empty `List` already serialized correctly and now have a
+`clear_property_filters()` / documented empty-list contract to make it findable.
+
+#### 7. Go and .NET: the segment filter is two types, not one
+
+Both packages used a single `SegmentFilter` as the request body *and* the response body. The
+two directions genuinely differ: going in, every field is optional and `property_filters` /
+`engagement` are three-state; coming out, `filter.status` is always present and
+`property_filters` is always an array. One type has to pick a side, and both had picked the
+request reading — so the response model declared `omitempty` / `WhenWritingNull` on fields
+the API always sends. npm and Rust had already split them.
+
+```go
+// Go — 2.0.0
+Filter: &mailblastr.SegmentFilter{Status: "subscribed"}
+
+// Go — 3.0.0
+Filter: &mailblastr.SegmentFilterInput{Status: "subscribed"}
+```
+
+```csharp
+// .NET — 2.0.0
+Filter = new SegmentFilter { Status = "subscribed" }
+
+// .NET — 3.0.0
+Filter = new SegmentFilterOptions { Status = "subscribed" }
+```
+
+`SegmentFilter` survives in both as the **response** type carried on `Segment`, and it
+tightened accordingly: Go's `Status` / `EmailContains` / `PropertyFilters` / `Engagement`
+lost `omitempty`, and .NET's `Status` is now non-nullable (`= "all"`) with
+`PropertyFilters` non-nullable (`= new()`).
+
+#### 8. Model renames
+
+| Was | Now | Packages | Already correct in |
+| --- | --- | --- | --- |
+| `ReceivedAddressStats` (Go), `ReceivedEmailAddressStats` (.NET) | `ReceivingAddressStats` | Go, .NET | npm, Rust |
+| `WebhookVerificationResult` | `VerifyWebhookResult` | .NET | npm, Go, Rust, Java |
+| `CreateEmailBaseOptions` | `SendEmailOptions` | Rust | npm |
+
+The Rust one is worth a note: `Base` was an implementation detail — it existed only because
+`BatchEmailOptions` is the same shape minus `attachments` and `scheduled_at` — leaking into
+the type users name most often.
+
+```rust
+// Rust — 2.0.0
+use mailblastr::CreateEmailBaseOptions;
+let email = CreateEmailBaseOptions::new(from, to, subject).with_html("<p>Hi</p>");
+
+// Rust — 3.0.0
+use mailblastr::SendEmailOptions;
+let email = SendEmailOptions::new(from, to, subject).with_html("<p>Hi</p>");
+```
+
+The five methods that take it — `emails.send`, `emails.send_with_idempotency_key`, the
+deprecated `emails.batch` alias, `batch.send` and `batch.send_with_idempotency_key` — are
+otherwise unchanged. `batch.send_emails` / `batch.send_emails_with_idempotency_key` still
+take `BatchEmailOptions`, which keeps its name: there, "batch" is the shape, not a
+leaked base class.
+
+#### 9. Go: the module path is now `.../mailblastr-go/v3`
+
+Required by Go's module rules for a major above v1, and it is the one change here you cannot
+discover from a compiler error — an unchanged `/v2` import keeps resolving, and keeps serving
+2.0.0.
+
+```bash
+go get github.com/shekhu10/mailblastr-sdks/mailblastr-go/v3
+```
+
+```go
+import "github.com/shekhu10/mailblastr-sdks/mailblastr-go/v3"
+```
+
+The package name is still `mailblastr`, so only the import line changes. The release
+workflow's proxy warm-up derives the module path from `go.mod` rather than hard-coding it,
+so the v3 path is warmed without a workflow edit.
+
+---
+
+### Deliberately not changed
+
+Listed because each was considered and rejected, not because it was missed.
+
+- **.NET keeps its flat `IMailblastr` interface** with `<Entity><Verb>Async` methods, rather
+  than being reshaped into `client.<resource>.<verb>()` like the other eight. That is a
+  whole-surface rewrite of every call site in every .NET consumer, and it is a different
+  argument from "one name per endpoint" — it is "one *shape* across languages", which trades
+  away .NET's own conventions. It is not obviously right, so it is not being done under cover
+  of a major that was already happening.
+- **The request-payload naming schemes stay split** — `…Options` in npm and Rust, `…Request`
+  in Go and Java, `<Noun><Verb>Options` in .NET; `PaginationParams` / `ListParams` /
+  `PaginationOptions` for the pagination bag. Every one of those matches its own ecosystem's
+  house style. Renaming them would touch far more public surface than the endpoint-name work
+  above while making each SDK read slightly foreign to its own users.
+- **Rust still has no `#[non_exhaustive]`** on its public structs (verified: zero occurrences
+  in `mailblastr-rust/src`). Today's field sets are complete against the contract, so this is
+  not a present-day gap — but it is the mechanism that will turn the *next* additive API field
+  into a forced major. It stays open because adding it is itself a breaking change for
+  callers who construct or destructure with struct literals, and that call deserves its own
+  decision rather than being smuggled in here.
+
+### Known gaps — carried forward
+
+- **`PATCH /campaigns/:id` still cannot clear every clearable field everywhere.** Go can now
+  clear all six (`reply_to`, `preview_text`, `segment_id`, `topic_id`, `schedule_timezone`,
+  `daily_batch_size`). Rust and npm can clear `segment_id`, `topic_id`, `schedule_timezone`
+  and `daily_batch_size` but not `reply_to` or `preview_text`. .NET's `CampaignUpdateOptions`
+  can clear none of them, and says so in its own doc comments. Campaign PATCH was the one
+  body where the fix was applied unevenly, and finishing it is the first thing to do in the
+  next cycle.
+- **`retry_after` is exposed on the error object in Python only**, unchanged from 2.0.0.
+- **`RateLimit-Limit` / `RateLimit-Remaining` / `RateLimit-Reset` are not surfaced** by any
+  package; doing so changes the return shape of every method.
+- **`GET /domains/dns/callback` is intentionally not modelled** — a browser redirect target
+  with no auth and no JSON body.
+
+### Verification
+
+Every package was built and its suite run from this tree, with the same commands CI uses.
+The counts below were read off those runs.
+
+| Package | Command | Result |
+|---|---|---|
+| mailblastr-npm | `npm run build` + `npm run typecheck:test` + `npm test` | 70 pass / 0 fail |
+| mailblastr-cli | `npm test` | 71 pass / 0 fail |
+| mailblastr-python | `python3 -m unittest discover -s tests -t .` | 138 pass / 0 fail |
+| mailblastr-ruby | every `test/**/*_test.rb` loaded under `ruby -Ilib -Itest` | 78 runs, 715 assertions, 0 failures |
+| mailblastr-php | `php -l` over `src` + `tests`, then `php tests/run.php` | 267 pass / 0 fail |
+| mailblastr-go | `go build ./...`, `go vet ./...`, `gofmt -l .`, `go test ./... -count=1` | 77 pass / 0 fail; vet and gofmt clean |
+| mailblastr-rust | `cargo build` + `cargo test` | 64 pass / 0 fail (25 unit + 30 integration + 9 doc) |
+| mailblastr-java | `mvn -B compile test-compile` + `java -cp target/classes:target/test-classes com.mailblastr.tests.AllTests` | 264 pass / 0 fail |
+| mailblastr-dotnet | `dotnet test tests/Mailblastr.Tests/Mailblastr.Tests.csproj` | 60 pass / 0 fail |
+
+The three-state PATCH work and the topics pagination are the changes most able to fail
+silently — a field that serializes as absent instead of null does not raise, it just does
+nothing — so each is pinned by a test that asserts the **request body or query string on the
+wire**, not merely that the call returned:
+
+- **Go** — `TestContactsGetTopicsPagination` and `TestContactsGetTopicsNilParamsSendsNoQuery`;
+  `TestCampaignsUpdateClearsFieldsWithExplicitNull` and `TestCampaignsUpdateSendsSetValues`;
+  `TestTemplatesUpdateClearsFieldsWithExplicitNull`;
+  `TestSegmentsUpdateClearsEngagementAndPropertyFilters`.
+- **Rust** — `contact_topics_are_paginated_like_their_siblings`,
+  `template_update_can_clear_fields_with_an_explicit_null`,
+  `segment_update_can_clear_the_engagement_predicate`,
+  `topic_update_can_clear_the_description`.
+- **.NET** — `ContactRetrieveTopics_ForwardsPaginationAndReadsHasMore`,
+  `ContactRetrieveTopics_WithoutPagination_SendsNoQuery`,
+  `TemplateUpdate_ClearsFieldsWithAnExplicitNull`,
+  `TemplateUpdate_OmitsUntouchedFieldsAndSendsSetValues`, `TopicUpdate_ClearsTheDescription`,
+  `SegmentUpdate_ClearsTheEngagementPredicate`, `EventUpdate_PatchesAndCanClearTheSchema`,
+  `DomainMxCheck_PassesTheNameQuery`.
+
+The renames are covered by each package's existing suite plus Java's `ContractParityTest`
+and the CLI's command-to-method assertions, which now name `listAddresses` and
+`createWithAi` explicitly.
+
+Two harness details still bite, unchanged from 2.0.0: Java's `pom.xml` sets
+`<skipTests>true</skipTests>` (the tests are plain `main()` runners, so `mvn test` reports
+BUILD SUCCESS having run zero of them — `com.mailblastr.tests.AllTests` is the real
+entrypoint), and `dotnet test` must be given the test csproj explicitly or it fails with
+MSB1003.
+
+No test in any package makes a live API call — all drive an injected mock transport.
+Response-shape claims are verified against the contract documents and replayed fixtures, not
+observed traffic.
+
+---
+
 ## 2.0.0 — 2026-08-08
 
 A contract-parity release. Every package was audited endpoint-by-endpoint against the

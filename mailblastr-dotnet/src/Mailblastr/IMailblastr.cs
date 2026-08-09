@@ -75,7 +75,7 @@ public partial interface IMailblastr
     /// <param name="emailId">Id of the scheduled email.</param>
     /// <param name="scheduledAt">ISO 8601 timestamp of the new send time.</param>
     /// <param name="cancellationToken">Token to cancel the request.</param>
-    Task<ObjectRef> EmailRescheduleAsync(string emailId, string scheduledAt, CancellationToken cancellationToken = default);
+    Task<ObjectRef> EmailUpdateAsync(string emailId, string scheduledAt, CancellationToken cancellationToken = default);
 
     /// <summary>Cancel a scheduled email. POST /emails/:id/cancel</summary>
     Task<ObjectRef> EmailCancelAsync(string emailId, CancellationToken cancellationToken = default);
@@ -95,7 +95,7 @@ public partial interface IMailblastr
     /// Inbound counters per receiving address. Not paginated.
     /// GET /emails/receiving/addresses
     /// </summary>
-    Task<ListResponse<ReceivedEmailAddressStats>> ReceivedEmailListAddressesAsync(CancellationToken cancellationToken = default);
+    Task<ListResponse<ReceivingAddressStats>> ReceivedEmailListAddressesAsync(CancellationToken cancellationToken = default);
 
     /// <summary>Retrieve a received email. GET /emails/receiving/:id</summary>
     Task<ReceivedEmail> ReceivedEmailRetrieveAsync(string receivedEmailId, CancellationToken cancellationToken = default);
@@ -109,10 +109,10 @@ public partial interface IMailblastr
     Task<ListResponse<ReceivedAttachment>> ReceivedEmailListAttachmentsAsync(string receivedEmailId, PaginationOptions? pagination = null, CancellationToken cancellationToken = default);
 
     /// <summary>Download one attachment of a received email as raw bytes. GET /emails/receiving/:id/attachments/:attachmentId</summary>
-    Task<byte[]> ReceivedEmailDownloadAttachmentAsync(string receivedEmailId, string attachmentId, CancellationToken cancellationToken = default);
+    Task<byte[]> ReceivedEmailGetAttachmentAsync(string receivedEmailId, string attachmentId, CancellationToken cancellationToken = default);
 
     /// <summary>Download the original RFC822/MIME message as raw bytes. GET /emails/receiving/:id/raw</summary>
-    Task<byte[]> ReceivedEmailDownloadRawAsync(string receivedEmailId, CancellationToken cancellationToken = default);
+    Task<byte[]> ReceivedEmailGetRawAsync(string receivedEmailId, CancellationToken cancellationToken = default);
 
     /// <summary>Forward a received email. POST /emails/receiving/:id/forward</summary>
     Task<EmailCreated> ReceivedEmailForwardAsync(string receivedEmailId, ReceivedEmailForwardOptions options, CancellationToken cancellationToken = default);

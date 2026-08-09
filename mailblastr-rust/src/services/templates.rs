@@ -174,18 +174,24 @@ impl CreateTemplateOptions {
 pub struct UpdateTemplateOptions {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
+    /// `Some(None)` serializes as `null` (clears the alias).
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub alias: Option<String>,
+    pub alias: Option<Option<String>>,
+    /// `Some(None)` serializes as `null` (clears the subject).
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub subject: Option<String>,
+    pub subject: Option<Option<String>>,
+    /// `Some(None)` serializes as `null` (clears the from address).
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub from: Option<String>,
+    pub from: Option<Option<String>>,
+    /// `Some(None)` serializes as `null` (clears the reply-to addresses).
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub reply_to: Option<Vec<String>>,
+    pub reply_to: Option<Option<Vec<String>>>,
+    /// `Some(None)` serializes as `null` (clears the HTML body).
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub html: Option<String>,
+    pub html: Option<Option<String>>,
+    /// `Some(None)` serializes as `null` (clears the text body).
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub text: Option<String>,
+    pub text: Option<Option<String>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub variables: Option<Vec<TemplateVariableInput>>,
 }
@@ -201,32 +207,68 @@ impl UpdateTemplateOptions {
     }
 
     pub fn with_alias(mut self, alias: impl Into<String>) -> Self {
-        self.alias = Some(alias.into());
+        self.alias = Some(Some(alias.into()));
+        self
+    }
+
+    /// Clear the alias (serializes `alias: null`).
+    pub fn clear_alias(mut self) -> Self {
+        self.alias = Some(None);
         self
     }
 
     pub fn with_subject(mut self, subject: impl Into<String>) -> Self {
-        self.subject = Some(subject.into());
+        self.subject = Some(Some(subject.into()));
+        self
+    }
+
+    /// Clear the subject (serializes `subject: null`).
+    pub fn clear_subject(mut self) -> Self {
+        self.subject = Some(None);
         self
     }
 
     pub fn with_from(mut self, from: impl Into<String>) -> Self {
-        self.from = Some(from.into());
+        self.from = Some(Some(from.into()));
+        self
+    }
+
+    /// Clear the from address (serializes `from: null`).
+    pub fn clear_from(mut self) -> Self {
+        self.from = Some(None);
         self
     }
 
     pub fn with_reply_to(mut self, reply_to: impl IntoIterator<Item = impl Into<String>>) -> Self {
-        self.reply_to = Some(reply_to.into_iter().map(Into::into).collect());
+        self.reply_to = Some(Some(reply_to.into_iter().map(Into::into).collect()));
+        self
+    }
+
+    /// Clear the reply-to addresses (serializes `reply_to: null`).
+    pub fn clear_reply_to(mut self) -> Self {
+        self.reply_to = Some(None);
         self
     }
 
     pub fn with_html(mut self, html: impl Into<String>) -> Self {
-        self.html = Some(html.into());
+        self.html = Some(Some(html.into()));
+        self
+    }
+
+    /// Clear the HTML body (serializes `html: null`).
+    pub fn clear_html(mut self) -> Self {
+        self.html = Some(None);
         self
     }
 
     pub fn with_text(mut self, text: impl Into<String>) -> Self {
-        self.text = Some(text.into());
+        self.text = Some(Some(text.into()));
+        self
+    }
+
+    /// Clear the text body (serializes `text: null`).
+    pub fn clear_text(mut self) -> Self {
+        self.text = Some(None);
         self
     }
 

@@ -7,8 +7,9 @@ use std::net::TcpListener;
 use std::thread::{self, JoinHandle};
 
 use mailblastr::{
-    ApiKeyPermission, BatchEmailOptions, CampaignListItem, CreateEmailBaseOptions, Error,
-    ListEmailsParams, ListSegmentsParams, Mailblastr, PaginationParams,
+    ApiKeyPermission, BatchEmailOptions, CampaignListItem, Error, SendEmailOptions,
+    ListEmailsParams, ListSegmentsParams, Mailblastr, PaginationParams, SegmentFilterOptions,
+    UpdateSegmentOptions, UpdateTemplateOptions, UpdateTopicOptions,
 };
 
 /// Find the first occurrence of `needle` in `haystack`.
@@ -139,7 +140,7 @@ async fn retries_a_429_then_succeeds() {
         (200, r#"{"id":"em_ok"}"#, None),
     ]);
     let mb = Mailblastr::with_base_url("mb_test_key", base_url);
-    let email = CreateEmailBaseOptions::new("Acme <hi@x.com>", ["b@y.com"], "Hi").with_html("<p>x</p>");
+    let email = SendEmailOptions::new("Acme <hi@x.com>", ["b@y.com"], "Hi").with_html("<p>x</p>");
     let sent = mb
         .emails
         .send(email)
@@ -158,7 +159,7 @@ async fn does_not_retry_a_422() {
         None,
     )]);
     let mb = Mailblastr::with_base_url("mb_test_key", base_url);
-    let email = CreateEmailBaseOptions::new("Acme <hi@x.com>", ["b@y.com"], "Hi").with_html("<p>x</p>");
+    let email = SendEmailOptions::new("Acme <hi@x.com>", ["b@y.com"], "Hi").with_html("<p>x</p>");
     let err = mb.emails.send(email).await.expect_err("422 should fail");
     match err {
         Error::Api(api) => assert_eq!(api.status_code, 422),
@@ -172,7 +173,7 @@ async fn sends_an_email_with_auth_and_json_body() {
     let mb = Mailblastr::with_base_url("mb_test_key", base_url);
 
     let email =
-        CreateEmailBaseOptions::new("Acme <hello@yourdomain.com>", ["user@example.com"], "Hello")
+        SendEmailOptions::new("Acme <hello@yourdomain.com>", ["user@example.com"], "Hello")
             .with_html("<p>Hi</p>");
 
     let sent = mb.emails.send(email).await.expect("send should succeed");
@@ -229,7 +230,7 @@ async fn surfaces_the_plan_limit_object_end_to_end() {
         .max_retries(0)
         .build();
     let email =
-        CreateEmailBaseOptions::new("Acme <hi@x.com>", ["b@y.com"], "Hi").with_html("<p>x</p>");
+        SendEmailOptions::new("Acme <hi@x.com>", ["b@y.com"], "Hi").with_html("<p>x</p>");
 
     let err = mb.emails.send(email).await.expect_err("quota should fail");
     let api = err.api().expect("an API error");
@@ -362,7 +363,7 @@ async fn idempotency_key_header_is_sent() {
     let (base_url, handle) = spawn_stub(200, r#"{"id":"em_9"}"#);
     let mb = Mailblastr::with_base_url("mb_test_key", base_url);
 
-    let email = CreateEmailBaseOptions::new("a@b.com", ["c@d.com"], "S");
+    let email = SendEmailOptions::new("a@b.com", ["c@d.com"], "S");
     mb.emails
         .send_with_idempotency_key(email, "order-123")
         .await
@@ -387,7 +388,7 @@ async fn over_long_idempotency_key_is_left_to_the_server() {
     let mb = Mailblastr::with_base_url("mb_test_key", base_url);
 
     let too_long = "k".repeat(mailblastr::IDEMPOTENCY_KEY_MAX_LEN + 1);
-    let email = CreateEmailBaseOptions::new("a@b.com", ["c@d.com"], "S");
+    let email = SendEmailOptions::new("a@b.com", ["c@d.com"], "S");
     mb.emails
         .send_with_idempotency_key(email, &too_long)
         .await
@@ -709,5 +710,128 @@ async fn pagination_params_apply_to_list_endpoints() {
     assert!(
         request.starts_with("GET /emails?limit=25&after=em_5 HTTP/1.1"),
         "got: {request}"
+    );
+}
+
+#[tokio::test]
+async fn contact_topics_are_paginated_like_their_siblings() {
+    // `GET /contacts/:id/topics` is a paginated list endpoint (forceLimit
+    // false). Before 3.0.0 `get_topics` took no params, so limit/after/before
+    // were unreachable from Rust and `has_more` was not even modelled.
+    let (base_url, handle) = spawn_stub(
+        200,
+        r#"{"object":"list","has_more":true,"data":[{"id":"top_1","name":"Product","description":null,"subscription":"opt_in"}]}"#,
+    );
+    let mb = Mailblastr::with_base_url("mb_test_key", base_url);
+
+    let topics = mb
+        .contacts
+        .get_topics(
+            "con_1",
+            Some(PaginationParams::new().with_limit(2).with_after("top_9")),
+        )
+        .await
+        .expect("get_topics should decode");
+
+    assert!(topics.has_more, "has_more must round-trip off the envelope");
+    assert_eq!(topics.data.len(), 1);
+
+    let request = handle.join().unwrap();
+    assert!(
+        request.contains("limit=2"),
+        "limit must reach the query string: {request}"
+    );
+    assert!(
+        request.contains("after=top_9"),
+        "after must reach the query string: {request}"
+    );
+}
+
+#[tokio::test]
+async fn template_update_can_clear_fields_with_an_explicit_null() {
+    // PATCH semantics are `'key' in body`-based: a key present with null
+    // clears the field, an absent key leaves it untouched. Before 3.0.0 the
+    // clearable template fields were plain `Option<T>`, so "clear" could not
+    // be expressed at all.
+    let (base_url, handle) = spawn_stub(200, r#"{"object":"template","id":"tpl_1"}"#);
+    let mb = Mailblastr::with_base_url("mb_test_key", base_url);
+
+    mb.templates
+        .update(
+            "tpl_1",
+            UpdateTemplateOptions::new()
+                .with_name("Receipt")
+                .clear_alias()
+                .clear_subject()
+                .clear_from()
+                .clear_reply_to()
+                .clear_html()
+                .clear_text(),
+        )
+        .await
+        .expect("update should decode");
+
+    let request = handle.join().unwrap();
+    for key in ["alias", "subject", "from", "reply_to", "html", "text"] {
+        assert!(
+            request.contains(&format!("\"{key}\":null")),
+            "{key} must be sent as an explicit null: {request}"
+        );
+    }
+    assert!(request.contains("\"name\":\"Receipt\""));
+}
+
+#[tokio::test]
+async fn segment_update_can_clear_the_engagement_predicate() {
+    let (base_url, handle) = spawn_stub(
+        200,
+        r#"{"object":"segment","id":"seg_1","audience_id":"aud_1","name":"VIP",
+            "filter":{"status":"all","email_contains":null,"property_filters":[],"engagement":null},
+            "created_at":null,"updated_at":null}"#,
+    );
+    let mb = Mailblastr::with_base_url("mb_test_key", base_url);
+
+    mb.segments
+        .update(
+            "seg_1",
+            UpdateSegmentOptions::new().with_filter(
+                SegmentFilterOptions::new()
+                    .clear_engagement()
+                    .clear_property_filters(),
+            ),
+        )
+        .await
+        .expect("update should decode");
+
+    let request = handle.join().unwrap();
+    assert!(
+        request.contains("\"engagement\":null"),
+        "engagement must be sent as an explicit null: {request}"
+    );
+    assert!(
+        request.contains("\"property_filters\":[]"),
+        "property_filters must be sent as an empty array: {request}"
+    );
+}
+
+#[tokio::test]
+async fn topic_update_can_clear_the_description() {
+    let (base_url, handle) = spawn_stub(
+        200,
+        r#"{"object":"topic","id":"top_1","audience_id":"aud_1","name":"Product",
+            "description":null,"default_subscription":"opt_in","visibility":"public",
+            "created_at":"2026-08-09T00:00:00Z"}"#,
+    );
+    let mb = Mailblastr::with_base_url("mb_test_key", base_url);
+
+    mb.topics
+        .update("top_1", UpdateTopicOptions::new().clear_description())
+        .await
+        .expect("update should decode");
+
+    let request = handle.join().unwrap();
+    assert!(
+        request.contains("\"description\":null"),
+        "description must be sent as an explicit null: {request}"
     );
 }

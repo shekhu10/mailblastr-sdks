@@ -11,9 +11,9 @@ npm install mailblastr
 ## Usage
 
 ```ts
-import { MailBlastr } from 'mailblastr';
+import { Mailblastr } from 'mailblastr';
 
-const mb = new MailBlastr('mb_xxxxxxxxx');
+const mb = new Mailblastr('mb_xxxxxxxxx');
 
 const { data, error } = await mb.emails.send({
   from: 'Acme <hello@yourdomain.com>',
@@ -79,7 +79,7 @@ await mb.emails.send({
 ### Options
 
 ```ts
-const mb = new MailBlastr('mb_xxxxxxxxx', {
+const mb = new Mailblastr('mb_xxxxxxxxx', {
   baseUrl: 'https://www.mailblastr.com/api', // override your API host
   timeoutMs: 30000,  // per-request timeout (default 30s; 0 disables)
   maxRetries: 2,     // auto-retry 429/503 responses (default 2; 0 disables)
@@ -119,7 +119,7 @@ await mb.emails.cancel(id);
 // Inbound email — `from` must be one of your verified sending addresses
 await mb.emails.receiving.list();
 await mb.emails.receiving.get(id);
-await mb.emails.receiving.addresses();               // per-address inbound stats
+await mb.emails.receiving.listAddresses();               // per-address inbound stats
 await mb.emails.receiving.forward(id, { from: 'hello@yourdomain.com', to: 'team@you.com' });
 await mb.emails.receiving.reply(id, { from: 'hello@yourdomain.com', text: 'Thanks!' });
 
@@ -261,7 +261,7 @@ await mb.automations.addStep(automation!.id, {
 await mb.automations.update(automation!.id, { status: 'enabled' });
 
 // Or let AI draft the graph from a prompt (automation must be disabled)
-await mb.automations.ai(automation!.id, { prompt: 'Wait 2 days, then send the welcome email' });
+await mb.automations.createWithAi(automation!.id, { prompt: 'Wait 2 days, then send the welcome email' });
 
 // Fire a custom event — only yourdomain.com's automations are triggered
 await mb.events.send({ name: 'signup.completed', domain: 'yourdomain.com', email: 'user@example.com', data: { plan: 'pro' } });
@@ -329,7 +329,7 @@ await mb.batch.send(payloads, { idempotencyKey: 'nightly-digest-2026-08-08' });
 
 ## Requirements
 
-Node.js 18+ (uses the global `fetch`). For older runtimes pass a `fetch` implementation: `new MailBlastr(key, { fetch })`.
+Node.js 18+ (uses the global `fetch`). For older runtimes pass a `fetch` implementation: `new Mailblastr(key, { fetch })`.
 
 The API rejects any request without a `User-Agent` header (`403
 validation_error`). The SDK always sends one — if you supply your own `fetch`,

@@ -206,20 +206,24 @@ type CreateCampaignRequest struct {
 // There is deliberately no AudienceId field — passing audience_id is a 422.
 // Changing Domain also clears SegmentId and TopicId server-side.
 type UpdateCampaignRequest struct {
-	Name        string   `json:"name,omitempty"`
-	From        string   `json:"from,omitempty"`
-	Subject     string   `json:"subject,omitempty"`
-	Html        string   `json:"html,omitempty"`
-	Text        string   `json:"text,omitempty"`
-	ReplyTo     []string `json:"reply_to,omitempty"`
-	PreviewText string   `json:"preview_text,omitempty"`
+	Name    string `json:"name,omitempty"`
+	From    string `json:"from,omitempty"`
+	Subject string `json:"subject,omitempty"`
+	Html    string `json:"html,omitempty"`
+	Text    string `json:"text,omitempty"`
+	// ReplyTo replaces the reply-to addresses; Clear[[]string]() removes them.
+	ReplyTo *Null[[]string] `json:"reply_to,omitempty"`
+	// PreviewText sets the inbox preview (max 150 chars);
+	// Clear[string]() removes it.
+	PreviewText *Null[string] `json:"preview_text,omitempty"`
 	// Domain re-points the campaign at another of your domains' contact pools
-	// (draft campaigns only).
+	// (draft campaigns only). Changing it also clears SegmentId and TopicId
+	// server-side.
 	Domain string `json:"domain,omitempty"`
-	// SegmentId re-targets a segment.
-	SegmentId string `json:"segment_id,omitempty"`
-	// TopicId re-targets a topic gate.
-	TopicId         string          `json:"topic_id,omitempty"`
+	// SegmentId re-targets a segment; Clear[string]() untargets the campaign.
+	SegmentId *Null[string] `json:"segment_id,omitempty"`
+	// TopicId re-targets a topic gate; Clear[string]() removes the gate.
+	TopicId         *Null[string]   `json:"topic_id,omitempty"`
 	Recurrence      string          `json:"recurrence,omitempty"`
 	RecurrenceEvery int             `json:"recurrence_every,omitempty"`
 	AbTest          *CampaignAbTest `json:"ab_test,omitempty"`
@@ -235,10 +239,11 @@ type UpdateCampaignRequest struct {
 	// (bounced/complained addresses are ALWAYS excluded).
 	UnsubscribePolicy string `json:"unsubscribe_policy,omitempty"`
 	// ScheduleTimezone is the IANA timezone the schedule + daily batching are
-	// evaluated in (e.g. "America/New_York").
-	ScheduleTimezone string `json:"schedule_timezone,omitempty"`
-	// DailyBatchSize is the max recipients fanned out per batch-day (1-100000).
-	DailyBatchSize int `json:"daily_batch_size,omitempty"`
+	// evaluated in (e.g. "America/New_York"); Clear[string]() resets it.
+	ScheduleTimezone *Null[string] `json:"schedule_timezone,omitempty"`
+	// DailyBatchSize is the max recipients fanned out per batch-day
+	// (1-100000); Clear[int]() removes the cap.
+	DailyBatchSize *Null[int] `json:"daily_batch_size,omitempty"`
 }
 
 // SendCampaignRequest sends a campaign now, or schedules it with ScheduledAt.

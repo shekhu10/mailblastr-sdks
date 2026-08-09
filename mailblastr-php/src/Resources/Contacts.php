@@ -111,7 +111,7 @@ class Contacts extends Resource
      * POST /audiences/:id/contacts/import
      *
      * Two input modes: inline 'csv' text (max 5 MB / 10,000 rows), or
-     * 'storage_key' from {@see uploadUrl()} for a file uploaded straight to
+     * 'storage_key' from {@see createImportUpload()} for a file uploaded straight to
      * storage (no size limit beyond the upload cap; rows beyond the account's
      * remaining contact capacity are reported as limit_skipped instead of
      * failing).
@@ -165,7 +165,7 @@ class Contacts extends Resource
      * @param array $params ['audienceId' => …, 'filename' => must end in .csv,
      *                      'size' => file size in bytes (max 256 MB)]
      */
-    public function uploadUrl(array $params): array
+    public function createImportUpload(array $params): array
     {
         $body = [];
         foreach (['filename', 'size'] as $key) {

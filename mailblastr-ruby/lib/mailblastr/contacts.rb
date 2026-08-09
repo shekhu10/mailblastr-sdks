@@ -104,7 +104,7 @@ module Mailblastr
       #
       # Inline CSV text (capped at 5 MB and 10,000 rows):
       #   Contacts.import({ audience_id: "aud_1", csv: "email\na@b.com" })
-      # Or a file already uploaded via import_upload (no row cap — the
+      # Or a file already uploaded via create_import_upload (no row cap — the
       # overflow past your contact limit comes back as `limit_skipped`):
       #   Contacts.import({ audience_id: "aud_1", storage_key: key })
       def import(params)
@@ -125,7 +125,7 @@ module Mailblastr
       # `storage_key` to Contacts.import.
       # POST /audiences/:id/contacts/import/upload — params: { filename:, size: }
       # The `upload_url` is a bearer credential — do not log it.
-      def import_upload(params)
+      def create_import_upload(params)
         audience_id = Client.opt(params, :audience_id)
         Client.request(
           :post,

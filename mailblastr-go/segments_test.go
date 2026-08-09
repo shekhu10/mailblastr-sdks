@@ -28,7 +28,7 @@ func TestSegmentsCreateDomainRequired(t *testing.T) {
 	seg, err := client.Segments.Create(&CreateSegmentRequest{
 		Domain: "yourdomain.com",
 		Name:   "VIP",
-		Filter: &SegmentFilter{Status: "subscribed"},
+		Filter: &SegmentFilterInput{Status: "subscribed"},
 	})
 	if err != nil {
 		t.Fatalf("Create: %v", err)
@@ -58,9 +58,9 @@ func TestSegmentsCreateEngagementFilter(t *testing.T) {
 	seg, err := client.Segments.Create(&CreateSegmentRequest{
 		Domain: "yourdomain.com",
 		Name:   "Re-engage",
-		Filter: &SegmentFilter{
+		Filter: &SegmentFilterInput{
 			Status:     "members_only",
-			Engagement: &SegmentEngagement{Event: "not_opened", CampaignId: "cmp_1"},
+			Engagement: Set(SegmentEngagement{Event: "not_opened", CampaignId: "cmp_1"}),
 		},
 	})
 	if err != nil {
@@ -109,5 +109,43 @@ func TestSegmentsContactsPreview(t *testing.T) {
 	}
 	if list.Object != "list" || len(list.Data) != 0 {
 		t.Errorf("unexpected list: %+v", list)
+	}
+}
+
+// Segment create/patch and the segment response are different shapes: the
+// request side is three-state (absent / value / null-clears), the response
+// side always carries status plus a property_filters array. 3.0.0 split them
+// into SegmentFilterInput and SegmentFilter so the clears are expressible.
+func TestSegmentsUpdateClearsEngagementAndPropertyFilters(t *testing.T) {
+	client := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPatch || r.URL.Path != "/segments/seg_1" {
+			t.Errorf("%s %s, want PATCH /segments/seg_1", r.Method, r.URL.Path)
+		}
+		filter, ok := decodeBody(t, r)["filter"].(map[string]any)
+		if !ok {
+			t.Fatalf("filter missing from body")
+		}
+		engagement, present := filter["engagement"]
+		if !present || engagement != nil {
+			t.Errorf("engagement = %v (present=%v), want null", engagement, present)
+		}
+		propertyFilters, present := filter["property_filters"]
+		if !present {
+			t.Fatalf("property_filters missing from body")
+		}
+		if list, ok := propertyFilters.([]any); !ok || len(list) != 0 {
+			t.Errorf("property_filters = %v, want []", propertyFilters)
+		}
+		w.Write([]byte(`{"object":"segment","id":"seg_1","audience_id":"aud_1","name":"VIP","filter":{"status":"all","email_contains":null,"property_filters":[],"engagement":null},"created_at":null,"updated_at":null}`))
+	})
+
+	_, err := client.Segments.Update("seg_1", &UpdateSegmentRequest{
+		Filter: &SegmentFilterInput{
+			Engagement:      Clear[SegmentEngagement](),
+			PropertyFilters: &[]PropertyFilter{},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Update: %v", err)
 	}
 }

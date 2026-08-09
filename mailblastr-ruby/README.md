@@ -129,11 +129,11 @@ Mailblastr::Emails.send({
 
 ```ruby
 Mailblastr::Emails::Receiving.list
-Mailblastr::Emails::Receiving.addresses # per-address inbound stats
+Mailblastr::Emails::Receiving.list_addresses # per-address inbound stats
 Mailblastr::Emails::Receiving.get(id)
 Mailblastr::Emails::Receiving.list_attachments(id)
 Mailblastr::Emails::Receiving.get_attachment(id, attachment_id) # => raw bytes (String)
-Mailblastr::Emails::Receiving.raw(id)                           # => original RFC822 message
+Mailblastr::Emails::Receiving.get_raw(id)                           # => original RFC822 message
 Mailblastr::Emails::Receiving.forward(id, { from: "you@yourdomain.com", to: "team@you.com" })
 Mailblastr::Emails::Receiving.reply(id, { from: "you@yourdomain.com", html: "<p>Thanks!</p>" })
 Mailblastr::Emails::Receiving.delete(id)
@@ -182,7 +182,7 @@ Mailblastr::Contacts.batch({ audience_id: aud_id, contacts: [{ email: "a@b.com" 
 Mailblastr::Contacts.import({ audience_id: aud_id, csv: "email,company\na@b.com,Acme" })
 
 # CSV too big to inline (5 MB / 10,000 rows)? Upload it directly, then import by key.
-slot = Mailblastr::Contacts.import_upload({ audience_id: aud_id, filename: "list.csv", size: bytes })
+slot = Mailblastr::Contacts.create_import_upload({ audience_id: aud_id, filename: "list.csv", size: bytes })
 # PUT the file to slot["upload_url"], then:
 Mailblastr::Contacts.import({ audience_id: aud_id, storage_key: slot["storage_key"] })
 
@@ -330,10 +330,10 @@ warn "test delivery failed: #{result['error']}" unless result["ok"]
 
 ### Verifying deliveries
 
-`verify_signature` checks the Svix-style HMAC-SHA256 signature locally (no HTTP request). Pass the **exact raw request body** — re-serializing parsed JSON breaks the signature.
+`verify` checks the Svix-style HMAC-SHA256 signature locally (no HTTP request). Pass the **exact raw request body** — re-serializing parsed JSON breaks the signature.
 
 ```ruby
-result = Mailblastr::Webhooks.verify_signature(
+result = Mailblastr::Webhooks.verify(
   request.raw_post,          # raw body string
   {
     "svix-id" => request.headers["svix-id"],

@@ -108,7 +108,7 @@ $mailblastr = Mailblastr::client('mb_xxxxxxxxx', [
 The client exposes one property per resource, each following a consistent
 (`create` / `get` / `list` / `update` / `remove`, plus resource-specific verbs) shape:
 
-`emails` (with nested `emails->attachments` and `emails->receiving`), `batch`,
+`emails` (with nested `emails->receiving`), `batch`,
 `domains`, `audiences`, `contacts`, `contactProperties`, `campaigns`, `segments`,
 `topics`, `templates`, `automations`, `webhooks`, `logs`, `events`,
 `apiKeys` (list only — see below), `polls`.
@@ -120,14 +120,14 @@ $mailblastr->emails->list(['limit' => 20, 'after' => $cursor]); // cursor pagina
 $mailblastr->emails->list(['status' => 'bounced', 'search' => 'ada@']); // server-side filters
 $mailblastr->emails->get($id);
 $mailblastr->emails->sources();                                 // per-campaign/automation send metrics
-$mailblastr->emails->attachments->list(emailId: $id);
-$mailblastr->emails->attachments->get(emailId: $id, attachmentId: $attachmentId);
+$mailblastr->emails->listAttachments(id: $id);
+$mailblastr->emails->getAttachment(id: $id, attachmentId: $attachmentId);
 $mailblastr->emails->update($id, ['scheduled_at' => $ts]);      // reschedule
 $mailblastr->emails->cancel($id);
 
 // Inbound email
 $mailblastr->emails->receiving->list();
-$mailblastr->emails->receiving->addresses();                    // per-address inbound stats
+$mailblastr->emails->receiving->listAddresses();                    // per-address inbound stats
 $mailblastr->emails->receiving->get($id);
 $mailblastr->emails->receiving->forward($id, ['from' => 'me@yourdomain.com', 'to' => 'team@you.com']);
 $mailblastr->emails->receiving->reply($id, ['from' => 'me@yourdomain.com', 'text' => 'Thanks!']);
@@ -158,7 +158,7 @@ $mailblastr->contacts->remove(['id' => $contactId]);
 $mailblastr->contacts->batch(['audienceId' => $audienceId, 'contacts' => [ … ]]);
 $mailblastr->contacts->import(['audienceId' => $audienceId, 'csv' => $csvText]);
 // Large files: upload straight to storage, then import by key.
-$slot = $mailblastr->contacts->uploadUrl(['audienceId' => $audienceId, 'filename' => 'leads.csv', 'size' => $bytes]);
+$slot = $mailblastr->contacts->createImportUpload(['audienceId' => $audienceId, 'filename' => 'leads.csv', 'size' => $bytes]);
 $mailblastr->contacts->import(['audienceId' => $audienceId, 'storage_key' => $slot['storage_key']]);
 $mailblastr->contacts->addToSegment($contactId, $segmentId);
 $mailblastr->contacts->updateTopics($contactId, ['topics' => [['id' => 'top_1', 'subscription' => 'opt_in']]]);
@@ -250,7 +250,7 @@ $mailblastr->automations->update($automation['id'], ['status' => 'enabled']);
 
 // Or let AI draft the steps (the automation must be stopped and, without
 // 'attach', have no steps yet)
-$mailblastr->automations->ai($automation['id'], ['prompt' => 'Welcome new signups over 3 days']);
+$mailblastr->automations->createWithAi($automation['id'], ['prompt' => 'Welcome new signups over 3 days']);
 
 // Fire a custom event — only yourdomain.com's automations are triggered
 $mailblastr->events->send([
@@ -370,7 +370,7 @@ second resource. De-duplicate on your side instead.
 Only the `/emails` routes are rate limited: 30 requests per minute per IP,
 covering reads and the inbound subtree as well as sends. Those responses carry
 `RateLimit-Limit` / `RateLimit-Remaining` / `RateLimit-Reset` headers on success
-too. `automations->ai()` is separately limited to 20 requests per minute per
+too. `automations->createWithAi()` is separately limited to 20 requests per minute per
 account. The default transport retries a 429 or 503 automatically (honouring
 `Retry-After`) up to `maxRetries` times.
 

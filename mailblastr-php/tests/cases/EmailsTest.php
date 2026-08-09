@@ -79,11 +79,11 @@ check_same('emails.cancel: method', 'POST', $t->last()['method']);
 check_same('emails.cancel: path', '/emails/em_1/cancel', $t->lastPath());
 check_same('emails.cancel: no body', null, $t->last()['body']);
 
-// ---- attachments sub-resource ----
-$mb->emails->attachments->list(emailId: 'em_1');
-check_same('emails.attachments.list: path', '/emails/em_1/attachments', $t->lastPath());
-$mb->emails->attachments->get(emailId: 'em_1', attachmentId: 'att_9');
-check_same('emails.attachments.get: path', '/emails/em_1/attachments/att_9', $t->lastPath());
+// ---- sent-email attachments ----
+$mb->emails->listAttachments(id: 'em_1');
+check_same('emails.listAttachments: path', '/emails/em_1/attachments', $t->lastPath());
+$mb->emails->getAttachment(id: 'em_1', attachmentId: 'att_9');
+check_same('emails.getAttachment: path', '/emails/em_1/attachments/att_9', $t->lastPath());
 
 // ---- receiving sub-resource ----
 [$mb, $t] = make_client();
@@ -93,8 +93,8 @@ check_same('receiving.list: path', '/emails/receiving?limit=5', $t->lastPath());
 $mb->emails->receiving->get('rcv_1');
 check_same('receiving.get: path', '/emails/receiving/rcv_1', $t->lastPath());
 
-$mb->emails->receiving->addresses();
-check_same('receiving.addresses: path', '/emails/receiving/addresses', $t->lastPath());
+$mb->emails->receiving->listAddresses();
+check_same('receiving.listAddresses: path', '/emails/receiving/addresses', $t->lastPath());
 
 $mb->emails->receiving->listAttachments('rcv_1');
 check_same('receiving.listAttachments: path', '/emails/receiving/rcv_1/attachments', $t->lastPath());

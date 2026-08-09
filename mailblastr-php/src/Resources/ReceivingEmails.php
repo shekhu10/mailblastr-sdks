@@ -29,7 +29,7 @@ class ReceivingEmails extends Resource
      * Per-address inbound stats (totals, replies, last received).
      * Not paginated. GET /emails/receiving/addresses
      */
-    public function addresses(): array
+    public function listAddresses(): array
     {
         return $this->client->request('GET', '/emails/receiving/addresses');
     }

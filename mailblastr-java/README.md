@@ -13,14 +13,14 @@ Official Java SDK for the [MailBlastr](https://www.mailblastr.com) email API —
 <dependency>
   <groupId>com.mailblastr</groupId>
   <artifactId>mailblastr</artifactId>
-  <version>2.0.0</version>
+  <version>3.0.0</version>
 </dependency>
 ```
 
 ### Gradle
 
 ```groovy
-implementation 'com.mailblastr:mailblastr:2.0.0'
+implementation 'com.mailblastr:mailblastr:3.0.0'
 ```
 
 ## Usage
@@ -149,7 +149,7 @@ mailblastr.emails().cancel(id);
 
 // Inbound email
 mailblastr.emails().receiving().list();
-mailblastr.emails().receiving().addresses(); // per-address inbound stats
+mailblastr.emails().receiving().listAddresses(); // per-address inbound stats
 mailblastr.emails().receiving().get(id);
 byte[] file = mailblastr.emails().receiving().getAttachment(id, attachmentId);
 byte[] mime = mailblastr.emails().receiving().getRaw(id);
@@ -413,7 +413,7 @@ Mailblastr mailblastr = new Mailblastr(
         "mb_xxxxxxxxx", "https://www.mailblastr.com/api", Duration.ofSeconds(30), 0);
 ```
 
-No other resource is rate-limited at the mount level; `automations().ai(...)`
+No other resource is rate-limited at the mount level; `automations().createWithAi(...)`
 allows 20 requests/60s per account.
 
 ### Idempotency

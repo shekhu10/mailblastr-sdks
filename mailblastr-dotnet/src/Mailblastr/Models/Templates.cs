@@ -171,24 +171,33 @@ public class TemplateUpdateOptions
     [JsonPropertyName("name")]
     public string? Name { get; set; }
 
-    /// <summary>Optional stable handle for sending by alias.</summary>
+    /// <summary>
+    /// Optional stable handle for sending by alias. Clearable:
+    /// <c>Patch.Clear&lt;string&gt;()</c> removes it, a bare string sets it,
+    /// and leaving it null keeps the stored value.
+    /// </summary>
     [JsonPropertyName("alias")]
-    public string? Alias { get; set; }
+    public Patch<string>? Alias { get; set; }
 
+    /// <summary>Clearable — see <see cref="Patch{T}"/>.</summary>
     [JsonPropertyName("subject")]
-    public string? Subject { get; set; }
+    public Patch<string>? Subject { get; set; }
 
+    /// <summary>Clearable — see <see cref="Patch{T}"/>.</summary>
     [JsonPropertyName("from")]
-    public string? From { get; set; }
+    public Patch<string>? From { get; set; }
 
+    /// <summary>Clearable — see <see cref="Patch{T}"/>.</summary>
     [JsonPropertyName("reply_to")]
-    public EmailAddressList? ReplyTo { get; set; }
+    public Patch<EmailAddressList>? ReplyTo { get; set; }
 
+    /// <summary>Clearable — see <see cref="Patch{T}"/>.</summary>
     [JsonPropertyName("html")]
-    public string? HtmlBody { get; set; }
+    public Patch<string>? HtmlBody { get; set; }
 
+    /// <summary>Clearable — see <see cref="Patch{T}"/>.</summary>
     [JsonPropertyName("text")]
-    public string? TextBody { get; set; }
+    public Patch<string>? TextBody { get; set; }
 
     [JsonPropertyName("variables")]
     public List<TemplateVariableInput>? Variables { get; set; }

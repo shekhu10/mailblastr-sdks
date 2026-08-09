@@ -2,16 +2,16 @@
 
 Official client libraries and tools for the [MailBlastr](https://www.mailblastr.com) email API — one package per ecosystem, all mirroring the same resource surface (emails, receiving, domains, contacts, segments, topics, campaigns, templates, automations, webhooks, events, API keys, logs, polls) with the platform's domain-first model and Svix-style webhook signature verification.
 
-**v2.0.0 is published on every registry.** Grab your API key from the [MailBlastr dashboard](https://www.mailblastr.com) → API Keys, and you're one snippet away from the inbox.
+**v3.0.0 is published on every registry.** Grab your API key from the [MailBlastr dashboard](https://www.mailblastr.com) → API Keys, and you're one snippet away from the inbox.
 
 | Package | Language | Install | Registry |
 |---|---|---|---|
 | [`mailblastr-npm`](./mailblastr-npm) | Node.js ≥ 18 | `npm install mailblastr` | [npm](https://www.npmjs.com/package/mailblastr) |
 | [`mailblastr-python`](./mailblastr-python) | Python ≥ 3.8 | `pip install mailblastr` | [PyPI](https://pypi.org/project/mailblastr/) |
-| [`mailblastr-go`](./mailblastr-go) | Go ≥ 1.22 | `go get github.com/shekhu10/mailblastr-sdks/mailblastr-go/v2` | Go modules |
+| [`mailblastr-go`](./mailblastr-go) | Go ≥ 1.22 | `go get github.com/shekhu10/mailblastr-sdks/mailblastr-go/v3` | Go modules |
 | [`mailblastr-ruby`](./mailblastr-ruby) | Ruby ≥ 2.7 | `gem install mailblastr` | [RubyGems](https://rubygems.org/gems/mailblastr) |
 | [`mailblastr-php`](./mailblastr-php) | PHP ≥ 8.1 | `composer require mailblastr/mailblastr` | Packagist |
-| [`mailblastr-java`](./mailblastr-java) | Java ≥ 11 | `com.mailblastr:mailblastr:2.0.0` | Maven Central |
+| [`mailblastr-java`](./mailblastr-java) | Java ≥ 11 | `com.mailblastr:mailblastr:3.0.0` | Maven Central |
 | [`mailblastr-dotnet`](./mailblastr-dotnet) | .NET 8 | `dotnet add package Mailblastr` | [NuGet](https://www.nuget.org/packages/Mailblastr) |
 | [`mailblastr-rust`](./mailblastr-rust) | Rust ≥ 1.75 | `cargo add mailblastr` | [crates.io](https://crates.io/crates/mailblastr) |
 | [`mailblastr-cli`](./mailblastr-cli) | Node CLI | `npm i -g mailblastr-cli` | [npm](https://www.npmjs.com/package/mailblastr-cli) |
@@ -27,9 +27,9 @@ npm install mailblastr
 ```
 
 ```ts
-import { MailBlastr } from 'mailblastr';
+import { Mailblastr } from 'mailblastr';
 
-const mb = new MailBlastr('mb_xxxxxxxxx');
+const mb = new Mailblastr('mb_xxxxxxxxx');
 
 const { data, error } = await mb.emails.send({
   from: 'Acme <hello@yourdomain.com>',
@@ -64,7 +64,7 @@ print(email["id"])
 ### Go
 
 ```bash
-go get github.com/shekhu10/mailblastr-sdks/mailblastr-go/v2
+go get github.com/shekhu10/mailblastr-sdks/mailblastr-go/v3
 ```
 
 ```go
@@ -124,7 +124,7 @@ echo 'sent ' . $sent['id'];
 <dependency>
   <groupId>com.mailblastr</groupId>
   <artifactId>mailblastr</artifactId>
-  <version>2.0.0</version>
+  <version>3.0.0</version>
 </dependency>
 ```
 
@@ -171,13 +171,13 @@ cargo add tokio -F macros,rt-multi-thread
 ```
 
 ```rust
-use mailblastr::{CreateEmailBaseOptions, Mailblastr, Result};
+use mailblastr::{SendEmailOptions, Mailblastr, Result};
 
 #[tokio::main]
 async fn main() -> Result<()> {
     let mailblastr = Mailblastr::new("mb_xxxxxxxxx");
 
-    let email = CreateEmailBaseOptions::new(
+    let email = SendEmailOptions::new(
         "Acme <hello@yourdomain.com>", ["user@example.com"], "Hello from MailBlastr",
     ).with_html("<p>Your first email 🎉</p>");
 

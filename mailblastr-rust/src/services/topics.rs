@@ -84,8 +84,9 @@ impl CreateTopicOptions {
 pub struct UpdateTopicOptions {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
+    /// `Some(None)` serializes as `null` (clears the description).
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub description: Option<String>,
+    pub description: Option<Option<String>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub visibility: Option<TopicVisibility>,
 }
@@ -101,7 +102,13 @@ impl UpdateTopicOptions {
     }
 
     pub fn with_description(mut self, description: impl Into<String>) -> Self {
-        self.description = Some(description.into());
+        self.description = Some(Some(description.into()));
+        self
+    }
+
+    /// Clear the description (serializes `description: null`).
+    pub fn clear_description(mut self) -> Self {
+        self.description = Some(None);
         self
     }
 

@@ -432,10 +432,14 @@ pub struct ContactTopicSubscription {
     pub subscription: SubscriptionState,
 }
 
-/// `{ object: 'list', data }` returned by `contacts.get_topics`.
+/// `{ object: 'list', has_more, data }` returned by `contacts.get_topics`.
 #[derive(Debug, Clone, Deserialize)]
 pub struct ContactTopics {
     pub object: String,
+    /// Whether another page exists. The endpoint only pages when
+    /// `get_topics` is called with `PaginationParams`.
+    #[serde(default)]
+    pub has_more: bool,
     pub data: Vec<ContactTopicSubscription>,
 }
 

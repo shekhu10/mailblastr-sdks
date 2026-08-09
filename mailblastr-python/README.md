@@ -132,7 +132,7 @@ consent. That means:
 
 Each resource is a class with methods following a consistent
 `create` / `get` / `list` / `update` / `remove` shape (plus resource-specific verbs):
-`Emails` (with nested `Emails.Attachments` and `Emails.Receiving`), `Batch`,
+`Emails` (with nested `Emails.Receiving`), `Batch`,
 `Domains`, `Audiences`, `Contacts`, `ContactProperties`, `Campaigns`,
 `Segments`, `Topics`, `Templates`, `Automations`, `Webhooks`, `Events`,
 `ApiKeys` (list only — see below), `Logs`, `Polls`.
@@ -146,16 +146,16 @@ mailblastr.Emails.get(email_id)
 mailblastr.Emails.update(email_id, {"scheduled_at": "2026-08-01T09:00:00Z"})  # reschedule
 mailblastr.Emails.cancel(email_id)
 mailblastr.Emails.sources()                # per-campaign/automation send metrics
-mailblastr.Emails.Attachments.list(email_id)
-mailblastr.Emails.Attachments.get(email_id, attachment_id)
+mailblastr.Emails.list_attachments(email_id)
+mailblastr.Emails.get_attachment(email_id, attachment_id)
 
 # Inbound email
 mailblastr.Emails.Receiving.list()
-mailblastr.Emails.Receiving.addresses()    # per-address inbound stats
+mailblastr.Emails.Receiving.list_addresses()    # per-address inbound stats
 mailblastr.Emails.Receiving.get(email_id)
-mailblastr.Emails.Receiving.attachments(email_id)
+mailblastr.Emails.Receiving.list_attachments(email_id)
 mailblastr.Emails.Receiving.get_attachment(email_id, attachment_id)  # -> bytes
-mailblastr.Emails.Receiving.raw(email_id)                            # -> bytes (RFC822)
+mailblastr.Emails.Receiving.get_raw(email_id)                            # -> bytes (RFC822)
 mailblastr.Emails.Receiving.forward(email_id, {"from": "me@yourdomain.com", "to": "team@you.com"})
 mailblastr.Emails.Receiving.reply(email_id, {"from": "me@yourdomain.com", "html": "<p>Thanks!</p>"})
 mailblastr.Emails.Receiving.remove(email_id)
@@ -179,7 +179,7 @@ mailblastr.Contacts.update({"id": contact_id, "unsubscribed": True})
 mailblastr.Contacts.remove({"id": contact_id})
 mailblastr.Contacts.batch({"audience_id": aud_id, "contacts": [{"email": "a@b.com"}]})
 mailblastr.Contacts.import_csv({"audience_id": aud_id, "csv": "email,company\na@b.com,Acme"})
-mailblastr.Contacts.import_upload({"audience_id": aud_id, "filename": "big.csv", "size": 90_000_000})
+mailblastr.Contacts.create_import_upload({"audience_id": aud_id, "filename": "big.csv", "size": 90_000_000})
 mailblastr.Contacts.add_to_segment(contact_id, segment_id)
 mailblastr.Contacts.list_segments(contact_id)
 mailblastr.Contacts.update_topics(contact_id, {"topics": [{"id": topic_id, "subscription": "opt_in"}]})
@@ -272,7 +272,7 @@ The step graph is edited while the automation is **disabled** —
 extends the graph from a prompt:
 
 ```python
-mailblastr.Automations.ai(automation["id"], {"prompt": "Wait 2 days, then send the welcome email"})
+mailblastr.Automations.create_with_ai(automation["id"], {"prompt": "Wait 2 days, then send the welcome email"})
 ```
 
 ### Webhooks

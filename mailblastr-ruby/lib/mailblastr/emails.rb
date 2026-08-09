@@ -79,7 +79,7 @@ module Mailblastr
 
         # Per-address inbound stats (totals, replies, last received).
         # Not paginated. GET /emails/receiving/addresses
-        def addresses
+        def list_addresses
           Client.request(:get, "/emails/receiving/addresses")
         end
 
@@ -111,7 +111,7 @@ module Mailblastr
 
         # Download the original RFC822/MIME message as raw bytes (binary String).
         # GET /emails/receiving/:id/raw
-        def raw(email_id)
+        def get_raw(email_id)
           Client.request(:get, "/emails/receiving/#{Client.path_escape(email_id)}/raw", raw: true)
         end
 

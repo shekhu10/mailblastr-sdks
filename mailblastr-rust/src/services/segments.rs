@@ -142,11 +142,13 @@ pub struct SegmentFilterOptions {
     pub status: Option<SegmentStatus>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub email_contains: Option<String>,
+    /// Replace the property predicates; an empty vec clears them.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub property_filters: Option<Vec<PropertyFilter>>,
-    /// Narrow to contacts who did (or did not) engage with one campaign.
+    /// Narrow to contacts who did (or did not) engage with one campaign;
+    /// `Some(None)` serializes as `null` (clears the predicate).
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub engagement: Option<SegmentEngagement>,
+    pub engagement: Option<Option<SegmentEngagement>>,
 }
 
 impl SegmentFilterOptions {
@@ -173,7 +175,19 @@ impl SegmentFilterOptions {
 
     /// Narrow to contacts who did (or did not) engage with one campaign.
     pub fn with_engagement(mut self, engagement: SegmentEngagement) -> Self {
-        self.engagement = Some(engagement);
+        self.engagement = Some(Some(engagement));
+        self
+    }
+
+    /// Clear the engagement predicate (serializes `engagement: null`).
+    pub fn clear_engagement(mut self) -> Self {
+        self.engagement = Some(None);
+        self
+    }
+
+    /// Clear the property predicates (serializes `property_filters: []`).
+    pub fn clear_property_filters(mut self) -> Self {
+        self.property_filters = Some(Vec::new());
         self
     }
 }

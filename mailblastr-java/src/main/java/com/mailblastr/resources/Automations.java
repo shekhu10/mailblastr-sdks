@@ -94,13 +94,13 @@ public final class Automations extends Resource {
      * STOPPED automation and spends AI credits.
      * {@code POST /automations/:id/ai}
      */
-    public MailblastrResponse ai(String id, AutomationAiRequest request) {
+    public MailblastrResponse createWithAi(String id, AutomationAiRequest request) {
         return api.request("POST", "/automations/" + enc(id) + "/ai", request);
     }
 
-    /** Shorthand for {@link #ai(String, AutomationAiRequest)} with just a prompt. */
-    public MailblastrResponse ai(String id, String prompt) {
-        return ai(id, AutomationAiRequest.builder().prompt(prompt).build());
+    /** Shorthand for {@link #createWithAi(String, AutomationAiRequest)} with just a prompt. */
+    public MailblastrResponse createWithAi(String id, String prompt) {
+        return createWithAi(id, AutomationAiRequest.builder().prompt(prompt).build());
     }
 
     /** Stop an automation — prevents new runs; in-progress runs finish. {@code POST /automations/:id/stop} */

@@ -49,7 +49,7 @@ class UpdateTopicsParams(TypedDict):
 class ImportCsvParams(TypedDict, total=False):
     audience_id: str  # required
     csv: str  # inline CSV text (max 5 MB, 10,000 rows) — or pass storage_key
-    storage_key: str  # key from import_upload(), for files too big to inline
+    storage_key: str  # key from create_import_upload(), for files too big to inline
     file_name: str  # archived name for inline CSV; defaults to contacts.csv
     on_conflict: str  # 'upsert' (default) | 'skip'
     create_properties: bool  # False -> don't auto-register unseen columns
@@ -143,7 +143,7 @@ class Contacts:
         imported email to that segment. POST /audiences/:id/contacts/import
 
         Pass ``csv`` for inline text (max 5 MB and 10,000 rows), or a
-        ``storage_key`` from :meth:`import_upload` for anything larger."""
+        ``storage_key`` from :meth:`create_import_upload` for anything larger."""
         qs = build_query(
             {
                 "on_conflict": params.get("on_conflict"),
@@ -162,7 +162,7 @@ class Contacts:
         )
 
     @classmethod
-    def import_upload(cls, params):
+    def create_import_upload(cls, params):
         """Mint a presigned direct-upload URL for a CSV too large to inline
         (up to 256 MB) — ``{"audience_id", "filename", "size"}``. PUT the file
         to the returned ``upload_url``, then pass the returned ``storage_key``

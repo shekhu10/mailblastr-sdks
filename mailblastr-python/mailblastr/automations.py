@@ -116,7 +116,7 @@ class Automations:
         )
 
     @classmethod
-    def ai(cls, automation_id, params):
+    def create_with_ai(cls, automation_id, params):
         """Build or extend an automation's steps from a natural-language
         ``prompt`` ("Create with AI"). Pass ``attach`` to append to an existing
         graph; without it the automation must have no steps yet. The automation

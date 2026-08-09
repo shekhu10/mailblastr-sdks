@@ -95,9 +95,9 @@ impl TemplateRef {
 /// Options for sending an email (`POST /emails`).
 ///
 /// ```no_run
-/// use mailblastr::CreateEmailBaseOptions;
+/// use mailblastr::SendEmailOptions;
 ///
-/// let email = CreateEmailBaseOptions::new(
+/// let email = SendEmailOptions::new(
 ///     "Acme <hello@yourdomain.com>",
 ///     ["user@example.com"],
 ///     "Hello",
@@ -105,7 +105,7 @@ impl TemplateRef {
 /// .with_html("<p>Hi 👋</p>");
 /// ```
 #[derive(Debug, Clone, Default, Serialize)]
-pub struct CreateEmailBaseOptions {
+pub struct SendEmailOptions {
     pub from: String,
     pub to: Vec<String>,
     pub subject: String,
@@ -148,7 +148,7 @@ pub struct CreateEmailBaseOptions {
     pub variables: Option<Map<String, Value>>,
 }
 
-impl CreateEmailBaseOptions {
+impl SendEmailOptions {
     pub fn new(
         from: impl Into<String>,
         to: impl IntoIterator<Item = impl Into<String>>,
@@ -235,7 +235,7 @@ impl CreateEmailBaseOptions {
 }
 
 /// A single email in a batch send (`POST /emails/batch`). Identical to
-/// [`CreateEmailBaseOptions`] minus `attachments` and `scheduled_at` — the
+/// [`SendEmailOptions`] minus `attachments` and `scheduled_at` — the
 /// batch endpoint rejects both per item; send those individually via
 /// `emails.send`.
 #[derive(Debug, Clone, Default, Serialize)]

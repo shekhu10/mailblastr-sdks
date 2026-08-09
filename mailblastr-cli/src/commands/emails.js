@@ -227,7 +227,7 @@ function register({ group, leaf, act }) {
 
   act(
     leaf(receiving, 'addresses', 'Per-address inbound stats: one row per address you receive mail for'),
-    ({ client }) => client.emails.receiving.addresses(),
+    ({ client }) => client.emails.receiving.listAddresses(),
   );
 
   act(leaf(receiving, 'get <id>', 'Retrieve a received email'), ({ client, args: [id] }) =>

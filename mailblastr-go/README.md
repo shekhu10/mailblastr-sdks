@@ -5,7 +5,7 @@ Official Go SDK for the [MailBlastr](https://www.mailblastr.com) email API — s
 ## Install
 
 ```bash
-go get github.com/shekhu10/mailblastr-sdks/mailblastr-go/v2
+go get github.com/shekhu10/mailblastr-sdks/mailblastr-go/v3
 ```
 
 Requires Go 1.22+. The SDK depends only on the Go standard library.
@@ -20,7 +20,7 @@ package main
 import (
 	"fmt"
 
-	"github.com/shekhu10/mailblastr-sdks/mailblastr-go/v2"
+	"github.com/shekhu10/mailblastr-sdks/mailblastr-go/v3"
 )
 
 func main() {
@@ -179,7 +179,7 @@ client.Contacts.Batch(&mailblastr.BatchContactsRequest{AudienceId: audId, Contac
 client.Contacts.Import(&mailblastr.ImportContactsRequest{AudienceId: audId, Csv: csv})
 client.Contacts.AddToSegment(contactId, segmentId)
 client.Contacts.ListSegments(contactId, nil) // nil ⇒ every segment; pass ListParams to page
-client.Contacts.GetTopics(contactId)
+client.Contacts.GetTopics(contactId, nil)
 client.Contacts.UpdateTopics(contactId, &mailblastr.UpdateContactTopicsRequest{
 	Topics: []mailblastr.TopicSubscriptionUpdate{{Id: topicId, Subscription: "opt_in"}},
 })
@@ -197,7 +197,7 @@ client.Campaigns.Engagement(id) // who opened / clicked / replied
 client.Campaigns.Ab(id)         // A/B winner, lift, confidence
 client.Segments.Create(&mailblastr.CreateSegmentRequest{
 	Domain: "yourdomain.com", Name: "VIP",
-	Filter: &mailblastr.SegmentFilter{Status: "subscribed"},
+	Filter: &mailblastr.SegmentFilterInput{Status: "subscribed"},
 })
 client.Segments.List(&mailblastr.ListSegmentsRequest{Domain: "yourdomain.com"})
 client.Segments.Contacts(id, nil) // preview who matches

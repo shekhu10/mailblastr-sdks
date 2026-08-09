@@ -31,8 +31,8 @@ const RESOURCES = [
 function createContext(overrides = {}) {
   return {
     createClient(apiKey, options) {
-      const { MailBlastr } = require('mailblastr');
-      return new MailBlastr(apiKey, options);
+      const { Mailblastr } = require('mailblastr');
+      return new Mailblastr(apiKey, options);
     },
     stdout: (s) => process.stdout.write(s),
     stderr: (s) => process.stderr.write(s),

@@ -7,21 +7,17 @@ namespace Mailblastr\Resources;
 use Mailblastr\Client;
 
 /**
- * Emails — send, list, retrieve, reschedule, cancel. Sub-resources:
- * `$mailblastr->emails->attachments` (sent-email attachments) and
+ * Emails — send, list, retrieve, reschedule, cancel. Sub-resource:
  * `$mailblastr->emails->receiving` (inbound email).
  */
 class Emails extends Resource
 {
-    /** Sent-email attachments sub-resource. */
-    public readonly EmailAttachments $attachments;
     /** Inbound (received) email sub-resource. */
     public readonly ReceivingEmails $receiving;
 
     public function __construct(Client $client)
     {
         parent::__construct($client);
-        $this->attachments = new EmailAttachments($client);
         $this->receiving = new ReceivingEmails($client);
     }
 
@@ -92,6 +88,21 @@ class Emails extends Resource
     public function get(string $id): array
     {
         return $this->client->request('GET', '/emails/' . Client::e($id));
+    }
+
+    /** List a sent email's attachments. GET /emails/:id/attachments */
+    public function listAttachments(string $id): array
+    {
+        return $this->client->request('GET', '/emails/' . Client::e($id) . '/attachments');
+    }
+
+    /** Retrieve one attachment of a sent email (metadata + download_url). GET /emails/:id/attachments/:attachmentId */
+    public function getAttachment(string $id, string $attachmentId): array
+    {
+        return $this->client->request(
+            'GET',
+            '/emails/' . Client::e($id) . '/attachments/' . Client::e($attachmentId)
+        );
     }
 
     /**

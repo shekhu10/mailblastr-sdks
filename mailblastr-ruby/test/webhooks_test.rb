@@ -50,7 +50,7 @@ class WebhooksTest < Minitest::Test
     assert_nil result["error"]
   end
 
-  # --- verify_signature (pure local HMAC; no HTTP) ---
+  # --- verify (pure local HMAC; no HTTP) ---
 
   SECRET_BYTES = "super-secret-signing-key"
   WHSEC = "whsec_#{[SECRET_BYTES].pack('m0')}".freeze
@@ -63,7 +63,7 @@ class WebhooksTest < Minitest::Test
   def test_valid_signature_with_whsec_secret
     payload = '{"type":"email.delivered","data":{"id":"email_1"}}'
     sig, id, ts = sign(payload)
-    result = Mailblastr::Webhooks.verify_signature(
+    result = Mailblastr::Webhooks.verify(
       payload,
       { "svix-id" => id, "svix-timestamp" => ts, "svix-signature" => sig },
       WHSEC
@@ -75,7 +75,7 @@ class WebhooksTest < Minitest::Test
   def test_headers_are_read_case_insensitively_and_multi_sig_any_match_wins
     payload = "{}"
     sig, id, ts = sign(payload)
-    result = Mailblastr::Webhooks.verify_signature(
+    result = Mailblastr::Webhooks.verify(
       payload,
       { "Svix-Id" => id, "SVIX-TIMESTAMP" => ts, "Svix-Signature" => "v1,bogus #{sig}" },
       WHSEC
@@ -86,7 +86,7 @@ class WebhooksTest < Minitest::Test
   def test_raw_secret_without_whsec_prefix
     payload = "{}"
     sig, id, ts = sign(payload, key: "rawsecret")
-    result = Mailblastr::Webhooks.verify_signature(
+    result = Mailblastr::Webhooks.verify(
       payload,
       { "svix-id" => id, "svix-timestamp" => ts, "svix-signature" => sig },
       "rawsecret"
@@ -96,7 +96,7 @@ class WebhooksTest < Minitest::Test
 
   def test_tampered_payload_fails_with_no_match
     sig, id, ts = sign('{"amount":100}')
-    result = Mailblastr::Webhooks.verify_signature(
+    result = Mailblastr::Webhooks.verify(
       '{"amount":999}',
       { "svix-id" => id, "svix-timestamp" => ts, "svix-signature" => sig },
       WHSEC
@@ -106,10 +106,10 @@ class WebhooksTest < Minitest::Test
 
   def test_missing_headers_and_secret
     assert_equal "missing_headers",
-                 Mailblastr::Webhooks.verify_signature("{}", { "svix-id" => "msg_1" }, WHSEC)[:reason]
+                 Mailblastr::Webhooks.verify("{}", { "svix-id" => "msg_1" }, WHSEC)[:reason]
     sig, id, ts = sign("{}")
     assert_equal "missing_secret",
-                 Mailblastr::Webhooks.verify_signature(
+                 Mailblastr::Webhooks.verify(
                    "{}", { "svix-id" => id, "svix-timestamp" => ts, "svix-signature" => sig }, ""
                  )[:reason]
   end
@@ -121,14 +121,14 @@ class WebhooksTest < Minitest::Test
     headers = { "svix-id" => id, "svix-timestamp" => old_ts, "svix-signature" => sig }
 
     assert_equal "timestamp_out_of_tolerance",
-                 Mailblastr::Webhooks.verify_signature(payload, headers, WHSEC)[:reason]
-    assert Mailblastr::Webhooks.verify_signature(payload, headers, WHSEC, tolerance: 0)[:valid]
+                 Mailblastr::Webhooks.verify(payload, headers, WHSEC)[:reason]
+    assert Mailblastr::Webhooks.verify(payload, headers, WHSEC, tolerance: 0)[:valid]
   end
 
   def test_invalid_timestamp
     payload = "{}"
     sig, id, = sign(payload, timestamp: "not-a-number")
-    result = Mailblastr::Webhooks.verify_signature(
+    result = Mailblastr::Webhooks.verify(
       payload,
       { "svix-id" => id, "svix-timestamp" => "not-a-number", "svix-signature" => sig },
       WHSEC

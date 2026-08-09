@@ -252,6 +252,25 @@ Every CLI invocation authenticates with an API key, so keeping key lifecycle out
 
 `api-keys list` still shows everything you need to audit: each key's non-secret prefix, permission, domain scoping and `last_used_at`.
 
+## Command names vs. SDK method names
+
+The CLI's verbs are deliberately shorter than the corresponding SDK methods. A
+subcommand is already scoped by its resource path, so the CLI names every list
+after its plural noun and every download after the thing downloaded:
+
+| CLI command | SDK method (all 8 libraries) |
+|---|---|
+| `emails attachments <id>` | `emails.listAttachments` |
+| `emails receiving addresses` | `emails.receiving.listAddresses` |
+| `emails receiving attachments <id>` | `emails.receiving.listAttachments` |
+| `emails receiving raw <id>` | `emails.receiving.getRaw` |
+| `automations ai <id>` | `automations.createWithAi` |
+| `contacts import-upload <audienceId>` | `contacts.createImportUpload` |
+
+This is a shell-surface convention, not drift: the libraries agree with each
+other on one name per endpoint, and the CLI applies the same shortening rule to
+all of them rather than to some.
+
 ## Documentation
 
 Full API docs: <https://www.mailblastr.com/docs>

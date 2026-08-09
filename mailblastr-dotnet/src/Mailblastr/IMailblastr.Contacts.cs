@@ -114,8 +114,12 @@ public partial interface IMailblastr
     /// </summary>
     Task<ListResponse<ContactSegmentRef>> ContactListSegmentsAsync(string contactId, PaginationOptions? pagination = null, CancellationToken cancellationToken = default);
 
-    /// <summary>Get a contact's topic subscriptions. GET /contacts/:id/topics</summary>
-    Task<ContactTopics> ContactRetrieveTopicsAsync(string contactId, CancellationToken cancellationToken = default);
+    /// <summary>
+    /// Get a contact's topic subscriptions. Passing no
+    /// <paramref name="pagination"/> returns every topic: this endpoint only
+    /// pages when you supply pagination params. GET /contacts/:id/topics
+    /// </summary>
+    Task<ContactTopics> ContactRetrieveTopicsAsync(string contactId, PaginationOptions? pagination = null, CancellationToken cancellationToken = default);
 
     /// <summary>Update a contact's topic subscriptions. PATCH /contacts/:id/topics</summary>
     Task<IdResponse> ContactUpdateTopicsAsync(string contactId, ContactTopicsUpdateOptions options, CancellationToken cancellationToken = default);

@@ -135,14 +135,14 @@ await mailblastr.EmailListAsync(new EmailListOptions            // server-side f
 await mailblastr.EmailListSourcesAsync();                       // per-origin send counters
 await mailblastr.EmailRetrieveAsync(id);
 await mailblastr.EmailListAttachmentsAsync(id);
-await mailblastr.EmailRescheduleAsync(id, "2026-08-01T09:00:00Z");
+await mailblastr.EmailUpdateAsync(id, "2026-08-01T09:00:00Z"); // reschedule a queued send
 await mailblastr.EmailCancelAsync(id);
 
 // Inbound email
 await mailblastr.ReceivedEmailListAsync();
 await mailblastr.ReceivedEmailListAddressesAsync();             // per-address inbound stats
 await mailblastr.ReceivedEmailRetrieveAsync(id);
-byte[] file = await mailblastr.ReceivedEmailDownloadAttachmentAsync(id, attachmentId);
+byte[] file = await mailblastr.ReceivedEmailGetAttachmentAsync(id, attachmentId);
 await mailblastr.ReceivedEmailForwardAsync(id, new ReceivedEmailForwardOptions
 {
     From = "you@yourdomain.com", To = "team@you.com",
@@ -155,7 +155,7 @@ await mailblastr.DomainClaimAsync(new DomainClaimOptions { Name = "example.com" 
 await mailblastr.DomainVerifyClaimAsync(domain.Id);
 await mailblastr.DomainDetectDnsAsync(domain.Id);              // one-click DNS options
 await mailblastr.DomainApplyCloudflareDnsAsync(domain.Id, cloudflareToken);
-await mailblastr.DomainCheckMxAsync("example.com");            // MX preflight for inbound
+await mailblastr.DomainMxCheckAsync("example.com");            // MX preflight for inbound
 string csv = await mailblastr.DomainRetrieveRecordsCsvAsync(domain.Id);
 ```
 
@@ -211,7 +211,7 @@ var segment = await mailblastr.SegmentCreateAsync(new SegmentCreateOptions
 {
     Domain = "example.com",
     Name = "Subscribed",
-    Filter = new SegmentFilter { Status = "subscribed" },
+    Filter = new SegmentFilterOptions { Status = "subscribed" },
 });
 await mailblastr.SegmentListAsync("example.com");
 await mailblastr.SegmentListContactsAsync(segment.Id);            // preview who matches
@@ -321,7 +321,7 @@ var result = WebhookSignature.Verify(rawBody, new Dictionary<string, string>
 if (!result.Valid) return Unauthorized(result.Reason);
 ```
 
-(Also available as `mailblastr.WebhookVerifySignature(...)` on the client.)
+(Also available as `mailblastr.WebhookVerify(...)` on the client.)
 
 ### Logs, API keys, polls
 

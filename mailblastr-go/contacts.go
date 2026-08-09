@@ -92,13 +92,13 @@ type BatchContactsRequest struct {
 //
 // Provide Csv for an inline import (max MaxInlineImportBytes of UTF-8 and
 // MaxImportContacts rows), or StorageKey to import a file already uploaded
-// via Contacts.ImportUpload.
+// via Contacts.CreateImportUpload.
 type ImportContactsRequest struct {
 	AudienceId string
 	Csv        string
 	// FileName labels the archived source file (default "contacts.csv").
 	FileName string
-	// StorageKey imports a file uploaded through Contacts.ImportUpload
+	// StorageKey imports a file uploaded through Contacts.CreateImportUpload
 	// instead of inline Csv text.
 	StorageKey string
 	// OnConflict "skip" leaves existing contacts untouched (default "upsert").
@@ -409,16 +409,16 @@ func (s *ContactsService) ImportWithContext(ctx context.Context, params *ImportC
 	return request[ImportContactsResponse](ctx, s.client, http.MethodPost, path, body, nil)
 }
 
-// ImportUpload mints a presigned direct-upload URL for a CSV too large to send
+// CreateImportUpload mints a presigned direct-upload URL for a CSV too large to send
 // inline. Upload the bytes to the returned UploadUrl, then call Import with
 // the returned StorageKey. POST /audiences/:id/contacts/import/upload
-func (s *ContactsService) ImportUpload(params *ImportContactsUploadRequest) (*ImportContactsUploadResponse, error) {
-	return s.ImportUploadWithContext(context.Background(), params)
+func (s *ContactsService) CreateImportUpload(params *ImportContactsUploadRequest) (*ImportContactsUploadResponse, error) {
+	return s.CreateImportUploadWithContext(context.Background(), params)
 }
 
-// ImportUploadWithContext mints a presigned direct-upload URL for a CSV.
+// CreateImportUploadWithContext mints a presigned direct-upload URL for a CSV.
 // POST /audiences/:id/contacts/import/upload
-func (s *ContactsService) ImportUploadWithContext(ctx context.Context, params *ImportContactsUploadRequest) (*ImportContactsUploadResponse, error) {
+func (s *ContactsService) CreateImportUploadWithContext(ctx context.Context, params *ImportContactsUploadRequest) (*ImportContactsUploadResponse, error) {
 	path := "/audiences/" + esc(params.AudienceId) + "/contacts/import/upload"
 	return request[ImportContactsUploadResponse](ctx, s.client, http.MethodPost, path, params, nil)
 }
@@ -493,14 +493,16 @@ func (s *ContactsService) ListSegmentsWithContext(ctx context.Context, id string
 	return request[ListResponse[ContactSegmentRef]](ctx, s.client, http.MethodGet, listPath("/contacts/"+esc(id)+"/segments", params), nil, nil)
 }
 
-// GetTopics gets a contact's topic subscriptions. GET /contacts/:id/topics
-func (s *ContactsService) GetTopics(id string) (*ContactTopics, error) {
-	return s.GetTopicsWithContext(context.Background(), id)
+// GetTopics gets a contact's topic subscriptions. Passing nil params returns
+// every topic: this endpoint only pages when you supply pagination params.
+// GET /contacts/:id/topics
+func (s *ContactsService) GetTopics(id string, params *ListParams) (*ContactTopics, error) {
+	return s.GetTopicsWithContext(context.Background(), id, params)
 }
 
 // GetTopicsWithContext gets a contact's topic subscriptions.
-func (s *ContactsService) GetTopicsWithContext(ctx context.Context, id string) (*ContactTopics, error) {
-	return request[ContactTopics](ctx, s.client, http.MethodGet, "/contacts/"+esc(id)+"/topics", nil, nil)
+func (s *ContactsService) GetTopicsWithContext(ctx context.Context, id string, params *ListParams) (*ContactTopics, error) {
+	return request[ContactTopics](ctx, s.client, http.MethodGet, listPath("/contacts/"+esc(id)+"/topics", params), nil, nil)
 }
 
 // UpdateTopics updates a contact's topic subscriptions; returns { id } (the

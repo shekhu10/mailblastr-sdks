@@ -329,6 +329,13 @@ public class ContactTopics
     [JsonPropertyName("object")]
     public string Object { get; set; } = "list";
 
+    /// <summary>
+    /// Whether another page exists. The endpoint only pages when
+    /// ContactRetrieveTopicsAsync is called with a <see cref="PaginationOptions"/>.
+    /// </summary>
+    [JsonPropertyName("has_more")]
+    public bool HasMore { get; set; }
+
     [JsonPropertyName("data")]
     public List<ContactTopicSubscription> Data { get; set; } = new();
 }

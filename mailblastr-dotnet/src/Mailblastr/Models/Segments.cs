@@ -33,8 +33,11 @@ public class SegmentEngagementFilter
 }
 
 /// <summary>
-/// A segment's filter: subscription status + email substring + property
-/// predicates + an optional campaign-engagement predicate.
+/// The RESPONSE-side filter carried on a <see cref="Segment"/>: subscription
+/// status + email substring + property predicates + an optional
+/// campaign-engagement predicate. <see cref="Status"/> is always present and
+/// <see cref="PropertyFilters"/> is always an array. Use
+/// <see cref="SegmentFilterOptions"/> to create or update a segment.
 /// </summary>
 public class SegmentFilter
 {
@@ -43,17 +46,49 @@ public class SegmentFilter
     /// (<c>members_only</c> matches only explicitly added members).
     /// </summary>
     [JsonPropertyName("status")]
-    public string? Status { get; set; }
+    public string Status { get; set; } = "all";
 
     [JsonPropertyName("email_contains")]
     public string? EmailContains { get; set; }
 
     [JsonPropertyName("property_filters")]
-    public List<PropertyFilter>? PropertyFilters { get; set; }
+    public List<PropertyFilter> PropertyFilters { get; set; } = new();
 
     /// <summary>Campaign-engagement predicate; null ⇒ no engagement filtering.</summary>
     [JsonPropertyName("engagement")]
     public SegmentEngagementFilter? Engagement { get; set; }
+}
+
+/// <summary>
+/// The REQUEST-side filter for SegmentCreateAsync and SegmentUpdateAsync.
+/// Every property is optional; the two replaceable predicates are three-state
+/// (omit = unchanged, value = replace, clear = remove).
+/// </summary>
+public class SegmentFilterOptions
+{
+    /// <summary>
+    /// <c>all</c> | <c>subscribed</c> | <c>unsubscribed</c> | <c>members_only</c>.
+    /// </summary>
+    [JsonPropertyName("status")]
+    public string? Status { get; set; }
+
+    [JsonPropertyName("email_contains")]
+    public string? EmailContains { get; set; }
+
+    /// <summary>
+    /// Replaces the property predicates wholesale. An EMPTY list clears them;
+    /// null leaves them unchanged.
+    /// </summary>
+    [JsonPropertyName("property_filters")]
+    public List<PropertyFilter>? PropertyFilters { get; set; }
+
+    /// <summary>
+    /// Campaign-engagement predicate. Clearable:
+    /// <c>Patch.Clear&lt;SegmentEngagementFilter&gt;()</c> removes it — see
+    /// <see cref="Patch{T}"/>.
+    /// </summary>
+    [JsonPropertyName("engagement")]
+    public Patch<SegmentEngagementFilter>? Engagement { get; set; }
 }
 
 /// <summary>A saved segment of a domain's contact pool.</summary>
@@ -141,7 +176,7 @@ public class SegmentCreateOptions
     public string Name { get; set; } = null!;
 
     [JsonPropertyName("filter")]
-    public SegmentFilter? Filter { get; set; }
+    public SegmentFilterOptions? Filter { get; set; }
 }
 
 /// <summary>Payload for updating a segment (PATCH /segments/:id).</summary>
@@ -151,5 +186,5 @@ public class SegmentUpdateOptions
     public string? Name { get; set; }
 
     [JsonPropertyName("filter")]
-    public SegmentFilter? Filter { get; set; }
+    public SegmentFilterOptions? Filter { get; set; }
 }

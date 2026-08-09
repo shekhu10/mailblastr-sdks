@@ -95,23 +95,6 @@ class Emails:
     ListParams = ListParams
     Attachment = Attachment
 
-    class Attachments:
-        """Attachments of SENT emails — ``mailblastr.Emails.Attachments``."""
-
-        @classmethod
-        def list(cls, email_id):
-            """List a sent email's attachments (not paginated — every
-            attachment is returned). GET /emails/:id/attachments"""
-            return http_client.request("GET", f"/emails/{_e(email_id)}/attachments")
-
-        @classmethod
-        def get(cls, email_id, attachment_id):
-            """Retrieve one attachment of a sent email.
-            GET /emails/:id/attachments/:attachment_id"""
-            return http_client.request(
-                "GET", f"/emails/{_e(email_id)}/attachments/{_e(attachment_id)}"
-            )
-
     class Receiving:
         """Inbound (received) email — ``mailblastr.Emails.Receiving``."""
 
@@ -139,7 +122,7 @@ class Emails:
             return http_client.request("GET", f"/emails/receiving{qs}")
 
         @classmethod
-        def addresses(cls):
+        def list_addresses(cls):
             """Per-address inbound stats (total, replies, interested and the
             last received time for each receiving address). Not paginated.
             GET /emails/receiving/addresses"""
@@ -151,7 +134,7 @@ class Emails:
             return http_client.request("GET", f"/emails/receiving/{_e(email_id)}")
 
         @classmethod
-        def attachments(cls, email_id, params=None):
+        def list_attachments(cls, email_id, params=None):
             """List a received email's attachments.
             GET /emails/receiving/:id/attachments
 
@@ -170,7 +153,7 @@ class Emails:
             )
 
         @classmethod
-        def raw(cls, email_id):
+        def get_raw(cls, email_id):
             """Download the original RFC822/MIME message as raw ``bytes``.
             GET /emails/receiving/:id/raw (streams message/rfc822)."""
             return http_client.request_raw("GET", f"/emails/receiving/{_e(email_id)}/raw")
@@ -252,6 +235,20 @@ class Emails:
     def get(cls, email_id):
         """Retrieve a sent email and its events. GET /emails/:id"""
         return http_client.request("GET", f"/emails/{_e(email_id)}")
+
+    @classmethod
+    def list_attachments(cls, email_id):
+        """List a sent email's attachments (not paginated — every attachment
+        is returned). GET /emails/:id/attachments"""
+        return http_client.request("GET", f"/emails/{_e(email_id)}/attachments")
+
+    @classmethod
+    def get_attachment(cls, email_id, attachment_id):
+        """Retrieve one attachment of a sent email.
+        GET /emails/:id/attachments/:attachment_id"""
+        return http_client.request(
+            "GET", f"/emails/{_e(email_id)}/attachments/{_e(attachment_id)}"
+        )
 
     @classmethod
     def update(cls, email_id, params):

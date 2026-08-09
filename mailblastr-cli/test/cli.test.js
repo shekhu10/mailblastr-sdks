@@ -933,7 +933,7 @@ test('emails sources maps to emails.sources (no params, not paginated)', async (
 
 test('emails receiving addresses maps to the receiving sub-resource', async () => {
   const call = lastCall(await runCli(['emails', 'receiving', 'addresses']));
-  assert.deepEqual([call.resource, call.method, call.args], ['emails.receiving', 'addresses', []]);
+  assert.deepEqual([call.resource, call.method, call.args], ['emails.receiving', 'listAddresses', []]);
 });
 
 test('emails receiving attachments forwards pagination flags', async () => {
@@ -1028,7 +1028,7 @@ test('automations runs filters by --status (repeatable or comma-separated)', asy
 test('automations ai maps the prompt, allow-lists and the attach slot', async () => {
   let call = lastCall(await runCli(['automations', 'ai', 'auto_1', '--prompt', 'welcome new signups']));
   assert.deepEqual([call.resource, call.method, call.args], [
-    'automations', 'ai', ['auto_1', { prompt: 'welcome new signups' }],
+    'automations', 'createWithAi', ['auto_1', { prompt: 'welcome new signups' }],
   ]);
 
   call = lastCall(

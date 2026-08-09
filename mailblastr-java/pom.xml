@@ -6,7 +6,7 @@
 
   <groupId>com.mailblastr</groupId>
   <artifactId>mailblastr</artifactId>
-  <version>2.0.0</version>
+  <version>3.0.0</version>
   <packaging>jar</packaging>
 
   <name>mailblastr</name>
@@ -31,7 +31,7 @@
     <url>https://github.com/shekhu10/mailblastr-sdks</url>
     <connection>scm:git:https://github.com/shekhu10/mailblastr-sdks.git</connection>
     <developerConnection>scm:git:git@github.com:shekhu10/mailblastr-sdks.git</developerConnection>
-    <tag>v2.0.0</tag>
+    <tag>v3.0.0</tag>
   </scm>
   <developers>
     <developer>

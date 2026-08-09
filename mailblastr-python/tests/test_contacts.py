@@ -87,8 +87,8 @@ class TestContacts(RecordingTestCase):
             "POST", "/audiences/aud_1/contacts/import", {"storage_key": "imports/x.csv"}
         )
 
-    def test_import_upload(self):
-        mailblastr.Contacts.import_upload(
+    def test_create_import_upload(self):
+        mailblastr.Contacts.create_import_upload(
             {"audience_id": "aud_1", "filename": "big.csv", "size": 90000000}
         )
         self.assertCall(

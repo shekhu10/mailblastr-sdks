@@ -164,7 +164,7 @@ public class ReceivedEmailListOptions
 /// Inbound counters for one receiving address (GET /emails/receiving/addresses).
 /// Not paginated; sorted by <see cref="LastReceivedAt"/> descending.
 /// </summary>
-public class ReceivedEmailAddressStats
+public class ReceivingAddressStats
 {
     [JsonPropertyName("address")]
     public string Address { get; set; } = null!;

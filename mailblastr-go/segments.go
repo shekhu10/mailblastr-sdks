@@ -25,16 +25,35 @@ type SegmentEngagement struct {
 	CampaignId string `json:"campaign_id"`
 }
 
-// SegmentFilter describes which contacts a segment matches.
+// SegmentFilter is the RESPONSE-side filter carried on a Segment. Status is
+// always present and PropertyFilters is always an array (possibly empty).
+// Use SegmentFilterInput to create or patch a segment.
 type SegmentFilter struct {
 	// Status is "all" | "subscribed" | "unsubscribed" | "members_only"
 	// ("members_only" keeps just the explicitly added contacts).
-	Status          string           `json:"status,omitempty"`
-	EmailContains   string           `json:"email_contains,omitempty"`
-	PropertyFilters []PropertyFilter `json:"property_filters,omitempty"`
-	// Engagement narrows the segment by campaign engagement; nil leaves it
-	// unset.
-	Engagement *SegmentEngagement `json:"engagement,omitempty"`
+	Status          string           `json:"status"`
+	EmailContains   string           `json:"email_contains"`
+	PropertyFilters []PropertyFilter `json:"property_filters"`
+	// Engagement narrows the segment by campaign engagement; nil means the
+	// segment has no engagement predicate.
+	Engagement *SegmentEngagement `json:"engagement"`
+}
+
+// SegmentFilterInput is the REQUEST-side filter for Segments.Create and
+// Segments.Update. Every field is optional, and the two clearable fields are
+// three-state: leave them nil to keep the stored predicate.
+type SegmentFilterInput struct {
+	// Status is "all" | "subscribed" | "unsubscribed" | "members_only".
+	Status        string `json:"status,omitempty"`
+	EmailContains string `json:"email_contains,omitempty"`
+	// PropertyFilters replaces the property predicates wholesale. Point it at
+	// an empty slice (&[]mailblastr.PropertyFilter{}) to clear them; a plain
+	// empty slice value cannot express "clear", which is why this is a
+	// pointer.
+	PropertyFilters *[]PropertyFilter `json:"property_filters,omitempty"`
+	// Engagement re-targets the campaign-engagement predicate;
+	// Clear[SegmentEngagement]() removes it.
+	Engagement *Null[SegmentEngagement] `json:"engagement,omitempty"`
 }
 
 // Segment is a saved contact filter within a domain's contact pool.
@@ -55,9 +74,9 @@ type Segment struct {
 type CreateSegmentRequest struct {
 	// Domain is REQUIRED — the sending domain this segment belongs to (e.g.
 	// "yourdomain.com" — one of your domains).
-	Domain string         `json:"domain"`
-	Name   string         `json:"name"`
-	Filter *SegmentFilter `json:"filter,omitempty"`
+	Domain string              `json:"domain"`
+	Name   string              `json:"name"`
+	Filter *SegmentFilterInput `json:"filter,omitempty"`
 }
 
 // ListSegmentsRequest lists a domain's segments. Domain is REQUIRED.
@@ -74,8 +93,8 @@ type ListSegmentsRequest struct {
 // A segment's domain is immutable: there is deliberately no Domain field, and
 // sending one (or audience_id) is a 422 validation_error.
 type UpdateSegmentRequest struct {
-	Name   string         `json:"name,omitempty"`
-	Filter *SegmentFilter `json:"filter,omitempty"`
+	Name   string              `json:"name,omitempty"`
+	Filter *SegmentFilterInput `json:"filter,omitempty"`
 }
 
 // SegmentContact is the reduced contact shape returned by Segments.Contacts —

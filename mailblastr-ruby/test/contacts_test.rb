@@ -94,8 +94,8 @@ class ContactsTest < Minitest::Test
     assert_equal({ "storage_key" => "imports/abc.csv" }, last_body)
   end
 
-  def test_import_upload_mints_a_presigned_slot
-    Mailblastr::Contacts.import_upload({ audience_id: "aud_1", filename: "list.csv", size: 2048 })
+  def test_create_import_upload_mints_a_presigned_slot
+    Mailblastr::Contacts.create_import_upload({ audience_id: "aud_1", filename: "list.csv", size: 2048 })
     assert_request :post, "/audiences/aud_1/contacts/import/upload"
     assert_equal "list.csv", last_body["filename"]
     assert_equal 2048, last_body["size"]

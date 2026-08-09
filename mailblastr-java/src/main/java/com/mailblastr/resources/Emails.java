@@ -164,7 +164,7 @@ public final class Emails extends Resource {
          * Per-address inbound stats (totals, replies, last received).
          * Not paginated. {@code GET /emails/receiving/addresses}
          */
-        public MailblastrResponse addresses() {
+        public MailblastrResponse listAddresses() {
             return api.request("GET", "/emails/receiving/addresses");
         }
 

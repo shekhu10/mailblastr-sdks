@@ -12,7 +12,7 @@ use Mailblastr\Transport\TransportInterface;
  * The MailBlastr API client. Construct via {@see Mailblastr::client()}.
  *
  * Exposes one property per resource:
- * `emails` (with nested `emails->attachments` and `emails->receiving`),
+ * `emails` (with nested `emails->receiving`),
  * `batch`, `domains`, `audiences`, `contacts`, `contactProperties`,
  * `campaigns`, `segments`, `topics`, `templates`, `automations`, `webhooks`,
  * `logs`, `events`, `apiKeys` (list only — key lifecycle is dashboard-only),

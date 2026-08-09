@@ -86,7 +86,7 @@ public partial class MailblastrClient
     public Task<ListResponse<EventDefinition>> EventListAsync(PaginationOptions? pagination = null, CancellationToken cancellationToken = default)
         => RequestAsync<ListResponse<EventDefinition>>(HttpMethod.Get, "/events" + Paginate(pagination), null, null, cancellationToken);
 
-    public Task<EventDefinition> EventUpdateSchemaAsync(string eventId, IDictionary<string, string>? schema, CancellationToken cancellationToken = default)
+    public Task<EventDefinition> EventUpdateAsync(string eventId, IDictionary<string, string>? schema, CancellationToken cancellationToken = default)
     {
         // Always written, so an explicit null clears the schema.
         var body = new Dictionary<string, object?> { ["schema"] = schema };
@@ -116,7 +116,7 @@ public partial class MailblastrClient
         return RequestAsync<ObjectRef>(HttpMethod.Patch, $"/webhooks/{E(webhookId)}", options, null, cancellationToken);
     }
 
-    public Task<WebhookCreated> WebhookRotateSecretAsync(string webhookId, CancellationToken cancellationToken = default)
+    public Task<WebhookCreated> WebhookRotateAsync(string webhookId, CancellationToken cancellationToken = default)
         => RequestAsync<WebhookCreated>(HttpMethod.Post, $"/webhooks/{E(webhookId)}/rotate", null, null, cancellationToken);
 
     public Task<WebhookTestResult> WebhookTestAsync(string webhookId, CancellationToken cancellationToken = default)
@@ -125,6 +125,6 @@ public partial class MailblastrClient
     public Task<RemovedResponse> WebhookDeleteAsync(string webhookId, CancellationToken cancellationToken = default)
         => RequestAsync<RemovedResponse>(HttpMethod.Delete, $"/webhooks/{E(webhookId)}", null, null, cancellationToken);
 
-    public WebhookVerificationResult WebhookVerifySignature(string payload, IReadOnlyDictionary<string, string> headers, string secret, int toleranceSeconds = 300)
+    public VerifyWebhookResult WebhookVerify(string payload, IReadOnlyDictionary<string, string> headers, string secret, int toleranceSeconds = 300)
         => WebhookSignature.Verify(payload, headers, secret, toleranceSeconds);
 }

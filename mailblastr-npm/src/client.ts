@@ -1,9 +1,9 @@
-import type { MailBlastrError, Result, RequestOptions } from './types';
+import type { MailblastrError, Result, RequestOptions } from './types';
 
 export const DEFAULT_BASE_URL = 'https://www.mailblastr.com/api';
 
 /** Keep in sync with package.json "version". */
-export const VERSION = '2.0.0';
+export const VERSION = '3.0.0';
 export const USER_AGENT = `mailblastr-node/${VERSION}`;
 
 /**
@@ -53,7 +53,7 @@ function parseBody(text: string): unknown {
 }
 
 /**
- * Normalize an error response into {@link MailBlastrError}.
+ * Normalize an error response into {@link MailblastrError}.
  *
  * The API's envelope is `{ statusCode, name, message }`, but some errors carry
  * additive fields — `limit` on plan/quota rejections, `reputation` on
@@ -66,7 +66,7 @@ function parseBody(text: string): unknown {
  * went out but omits the count, so a caller deciding what NOT to resend never
  * has to compute it. It stays absent on errors that carry no `sent` list.
  */
-function toError(parsed: unknown, status: number): MailBlastrError {
+function toError(parsed: unknown, status: number): MailblastrError {
   const body = (parsed && typeof parsed === 'object' ? parsed : {}) as Record<string, unknown>;
   const { statusCode, name, message, error, ...rest } = body;
   const sent = rest.sent;
@@ -91,7 +91,7 @@ export class HttpClient {
 
   constructor(apiKey: string, config: ClientConfig = {}) {
     if (!apiKey || typeof apiKey !== 'string') {
-      throw new Error('MailBlastr: an API key is required, e.g. new MailBlastr("mb_...").');
+      throw new Error('MailBlastr: an API key is required, e.g. new Mailblastr("mb_...").');
     }
     this.apiKey = apiKey;
     this.baseUrl = (config.baseUrl ?? DEFAULT_BASE_URL).replace(/\/$/, '');

@@ -119,7 +119,7 @@ class Automations extends Resource
      *                       Without 'attach' the automation must have no steps
      *                       yet; with it, the generated steps are spliced in.
      */
-    public function ai(string $id, array $payload): array
+    public function createWithAi(string $id, array $payload): array
     {
         return $this->client->request('POST', '/automations/' . Client::e($id) . '/ai', $payload);
     }

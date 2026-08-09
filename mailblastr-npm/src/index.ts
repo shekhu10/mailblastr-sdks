@@ -81,7 +81,7 @@ class ReceivingEmails {
    * Per-address inbound stats — one row per address you receive mail for.
    * GET /emails/receiving/addresses (not paginated).
    */
-  addresses(): Promise<Result<ListResponse<ReceivingAddressStats>>> {
+  listAddresses(): Promise<Result<ListResponse<ReceivingAddressStats>>> {
     return this.http.request('GET', '/emails/receiving/addresses');
   }
   /** Retrieve a received email. GET /emails/receiving/:id */
@@ -687,7 +687,7 @@ class Automations {
    * yet. Consumes AI credits and is limited to 20 calls per minute per account.
    * POST /automations/:id/ai
    */
-  ai(id: string, payload: AutomationAiOptions): Promise<Result<AutomationAiResult>> {
+  createWithAi(id: string, payload: AutomationAiOptions): Promise<Result<AutomationAiResult>> {
     return this.http.request('POST', p`/automations/${id}/ai`, payload);
   }
   remove(id: string): Promise<Result<RemovedResponse>> {
@@ -908,14 +908,14 @@ class ApiKeys {
   }
 }
 
-export interface MailBlastrOptions extends ClientConfig {}
+export interface MailblastrOptions extends ClientConfig {}
 
 /**
  * The MailBlastr API client.
  *
  * ```ts
- * import { MailBlastr } from 'mailblastr';
- * const mb = new MailBlastr('mb_xxxxxxxxx');
+ * import { Mailblastr } from 'mailblastr';
+ * const mb = new Mailblastr('mb_xxxxxxxxx');
  * const { data, error } = await mb.emails.send({
  *   from: 'you@yourdomain.com',
  *   to: ['user@example.com'],
@@ -924,7 +924,7 @@ export interface MailBlastrOptions extends ClientConfig {}
  * });
  * ```
  */
-export class MailBlastr {
+export class Mailblastr {
   readonly emails: Emails;
   readonly batch: Batch;
   readonly domains: Domains;
@@ -942,7 +942,7 @@ export class MailBlastr {
   readonly apiKeys: ApiKeys;
   readonly polls: Polls;
 
-  constructor(apiKey: string, options: MailBlastrOptions = {}) {
+  constructor(apiKey: string, options: MailblastrOptions = {}) {
     const http = new HttpClient(apiKey, options);
     this.emails = new Emails(http);
     this.batch = new Batch(http);
@@ -963,4 +963,4 @@ export class MailBlastr {
   }
 }
 
-export default MailBlastr;
+export default Mailblastr;

@@ -153,8 +153,8 @@ public partial class MailblastrClient
     public Task<ListResponse<ContactSegmentRef>> ContactListSegmentsAsync(string contactId, PaginationOptions? pagination = null, CancellationToken cancellationToken = default)
         => RequestAsync<ListResponse<ContactSegmentRef>>(HttpMethod.Get, $"/contacts/{E(contactId)}/segments" + Paginate(pagination), null, null, cancellationToken);
 
-    public Task<ContactTopics> ContactRetrieveTopicsAsync(string contactId, CancellationToken cancellationToken = default)
-        => RequestAsync<ContactTopics>(HttpMethod.Get, $"/contacts/{E(contactId)}/topics", null, null, cancellationToken);
+    public Task<ContactTopics> ContactRetrieveTopicsAsync(string contactId, PaginationOptions? pagination = null, CancellationToken cancellationToken = default)
+        => RequestAsync<ContactTopics>(HttpMethod.Get, $"/contacts/{E(contactId)}/topics" + Paginate(pagination), null, null, cancellationToken);
 
     public Task<IdResponse> ContactUpdateTopicsAsync(string contactId, ContactTopicsUpdateOptions options, CancellationToken cancellationToken = default)
     {

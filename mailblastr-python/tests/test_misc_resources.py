@@ -79,7 +79,7 @@ class TestAutomations(RecordingTestCase):
 
     def test_ai(self):
         params = {"prompt": "Wait 2 days then send the welcome email"}
-        mailblastr.Automations.ai("auto_1", params)
+        mailblastr.Automations.create_with_ai("auto_1", params)
         self.assertCall("POST", "/automations/auto_1/ai", params)
 
     def test_runs(self):

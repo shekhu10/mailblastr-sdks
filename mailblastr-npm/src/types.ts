@@ -1,6 +1,6 @@
 // Public types for the MailBlastr SDK. These mirror the REST API shapes.
 
-/** The plan/quota detail attached to a limit rejection (see {@link MailBlastrError.limit}). */
+/** The plan/quota detail attached to a limit rejection (see {@link MailblastrError.limit}). */
 export interface PlanLimitDetail {
   kind:
     | 'emails_daily' | 'emails_monthly' | 'domains' | 'automation_runs'
@@ -25,7 +25,7 @@ export interface PlanLimitDetail {
 /**
  * The reputation-gate detail attached to `reputation_paused` /
  * `reputation_limit_exceeded` and the platform-wide
- * `sending_service_unavailable` (see {@link MailBlastrError.reputation}).
+ * `sending_service_unavailable` (see {@link MailblastrError.reputation}).
  *
  * Everything beyond `retryable` and `scope` is optional. The index signature
  * keeps any reputation field newer than this SDK version reachable.
@@ -61,7 +61,7 @@ export interface ReputationDetail {
  * `limit` on plan/quota rejections, `reputation` on reputation gates, and
  * `sent`/`sent_count` on a partial `batch.send` failure.
  */
-export interface MailBlastrError {
+export interface MailblastrError {
   statusCode: number;
   name: string;
   message: string;
@@ -81,7 +81,7 @@ export interface MailBlastrError {
 }
 
 /** Every method returns either { data, error: null } or { data: null, error }. */
-export type Result<T> = { data: T; error: null } | { data: null; error: MailBlastrError };
+export type Result<T> = { data: T; error: null } | { data: null; error: MailblastrError };
 
 /** Slim acknowledgement shape returned by several create/update routes. */
 export interface ObjectRef<O extends string> { object: O; id: string }
@@ -250,7 +250,7 @@ export interface EmailSource {
   last_sent_at: string | null;
 }
 
-/** One row of `mb.emails.receiving.addresses()` — per-address inbound stats. */
+/** One row of `mb.emails.receiving.listAddresses()` — per-address inbound stats. */
 export interface ReceivingAddressStats {
   address: string;
   total: number;
@@ -1337,7 +1337,7 @@ export interface ListAutomationRunsParams extends PaginationParams {
    */
   status?: string | string[];
 }
-/** Body for `automations.ai()` — "Create with AI". */
+/** Body for `automations.createWithAi()` — "Create with AI". */
 export interface AutomationAiOptions {
   /** Required, max 2000 characters. */
   prompt: string;
@@ -1357,7 +1357,7 @@ export interface AutomationAiOptions {
     before?: string;
   };
 }
-/** `automations.ai()` result — the updated automation plus what AI did. */
+/** `automations.createWithAi()` result — the updated automation plus what AI did. */
 export type AutomationAiResult = Automation & {
   ai: { added_steps: number; mode: 'workflow' | 'append' };
 };

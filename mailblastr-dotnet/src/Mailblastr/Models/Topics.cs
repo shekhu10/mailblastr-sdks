@@ -63,8 +63,12 @@ public class TopicUpdateOptions
     [JsonPropertyName("name")]
     public string? Name { get; set; }
 
+    /// <summary>
+    /// Clearable: <c>Patch.Clear&lt;string&gt;()</c> removes the description
+    /// server-side — see <see cref="Patch{T}"/>.
+    /// </summary>
     [JsonPropertyName("description")]
-    public string? Description { get; set; }
+    public Patch<string>? Description { get; set; }
 
     /// <summary><c>public</c> | <c>private</c>.</summary>
     [JsonPropertyName("visibility")]

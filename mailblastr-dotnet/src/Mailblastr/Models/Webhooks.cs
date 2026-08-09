@@ -122,7 +122,7 @@ public class WebhookTestResult
 }
 
 /// <summary>Outcome of verifying a webhook delivery signature.</summary>
-public class WebhookVerificationResult
+public class VerifyWebhookResult
 {
     /// <summary>True when the signature matches and (when checked) the timestamp is fresh.</summary>
     public bool Valid { get; set; }

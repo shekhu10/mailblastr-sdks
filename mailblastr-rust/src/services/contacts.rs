@@ -282,12 +282,20 @@ impl ContactsSvc {
         self.config.send(req).await
     }
 
-    /// Get a contact's topic subscriptions. `GET /contacts/:id/topics`
-    pub async fn get_topics(&self, contact_id: &str) -> Result<ContactTopics> {
+    /// Get a contact's topic subscriptions. Passing `None` returns every
+    /// topic: this endpoint only pages when you supply pagination params.
+    /// `GET /contacts/:id/topics`
+    pub async fn get_topics(
+        &self,
+        contact_id: &str,
+        params: Option<PaginationParams>,
+    ) -> Result<ContactTopics> {
         let path = format!("/contacts/{}/topics", seg(contact_id));
-        self.config
-            .send(self.config.request(Method::GET, &path))
-            .await
+        let req = self
+            .config
+            .request(Method::GET, &path)
+            .query(&page_query(params.as_ref()));
+        self.config.send(req).await
     }
 
     /// Update a contact's topic subscriptions. Returns `{ id }` (the contact

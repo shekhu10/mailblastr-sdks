@@ -88,9 +88,9 @@ type ListReceivedEmailsRequest struct {
 	ReceivedFor string
 }
 
-// ReceivedAddressStats is one row of Receiving.ListAddresses: inbound volume
+// ReceivingAddressStats is one row of Receiving.ListAddresses: inbound volume
 // per receiving address.
-type ReceivedAddressStats struct {
+type ReceivingAddressStats struct {
 	Address string `json:"address"`
 	Total   int    `json:"total"`
 	Replies int    `json:"replies"`
@@ -148,14 +148,14 @@ func (s *ReceivingService) ListFilteredWithContext(ctx context.Context, params *
 
 // ListAddresses reports inbound volume per receiving address. Not paginated —
 // HasMore is always false. GET /emails/receiving/addresses
-func (s *ReceivingService) ListAddresses() (*ListResponse[ReceivedAddressStats], error) {
+func (s *ReceivingService) ListAddresses() (*ListResponse[ReceivingAddressStats], error) {
 	return s.ListAddressesWithContext(context.Background())
 }
 
 // ListAddressesWithContext reports inbound volume per receiving address.
 // GET /emails/receiving/addresses
-func (s *ReceivingService) ListAddressesWithContext(ctx context.Context) (*ListResponse[ReceivedAddressStats], error) {
-	return request[ListResponse[ReceivedAddressStats]](ctx, s.client, http.MethodGet, "/emails/receiving/addresses", nil, nil)
+func (s *ReceivingService) ListAddressesWithContext(ctx context.Context) (*ListResponse[ReceivingAddressStats], error) {
+	return request[ListResponse[ReceivingAddressStats]](ctx, s.client, http.MethodGet, "/emails/receiving/addresses", nil, nil)
 }
 
 // Get retrieves a received email. GET /emails/receiving/:id

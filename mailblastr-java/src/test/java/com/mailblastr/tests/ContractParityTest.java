@@ -44,7 +44,7 @@ public final class ContractParityTest {
         Check.eq("emails sources method", "GET", t.lastMethod);
 
         // --- GET /emails/receiving/addresses (must NOT collide with /receiving/:id) ---
-        mb.emails().receiving().addresses();
+        mb.emails().receiving().listAddresses();
         Check.eq("receiving addresses url", "https://api.test/emails/receiving/addresses", t.lastUrl);
 
         // --- received attachments are paginated (forceLimit=false upstream) ---
@@ -102,7 +102,7 @@ public final class ContractParityTest {
         Check.eq("runs single status url",
                 "https://api.test/automations/auto_1/runs?status=completed", t.lastUrl);
 
-        mb.automations().ai("auto_1", "welcome new signups over three days");
+        mb.automations().createWithAi("auto_1", "welcome new signups over three days");
         Check.eq("ai url", "https://api.test/automations/auto_1/ai", t.lastUrl);
         Check.eq("ai body", "{\"prompt\":\"welcome new signups over three days\"}", t.lastBody);
 

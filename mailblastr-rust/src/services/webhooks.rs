@@ -1,6 +1,6 @@
 //! `mailblastr.webhooks` — webhook endpoints plus a pure, local
 //! Svix-style signature verification helper
-//! ([`verify_webhook_signature`] / `webhooks.verify_signature`).
+//! ([`verify_webhook_signature`] / `webhooks.verify`).
 
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -382,7 +382,7 @@ impl WebhooksSvc {
 
     /// Verify a delivery's signature — see [`verify_webhook_signature`].
     /// Pure local computation; no HTTP request.
-    pub fn verify_signature(
+    pub fn verify(
         &self,
         payload: &str,
         headers: &WebhookHeaders,

@@ -96,7 +96,7 @@ public partial interface IMailblastr
     /// it). The event NAME is immutable — automations reference it, so changing
     /// it is a 422; create a new event instead. PATCH /events/:id
     /// </summary>
-    Task<EventDefinition> EventUpdateSchemaAsync(string eventId, IDictionary<string, string>? schema, CancellationToken cancellationToken = default);
+    Task<EventDefinition> EventUpdateAsync(string eventId, IDictionary<string, string>? schema, CancellationToken cancellationToken = default);
 
     /// <summary>Delete a custom-event definition. DELETE /events/:id</summary>
     Task<RemovedResponse> EventDeleteAsync(string eventId, CancellationToken cancellationToken = default);
@@ -119,7 +119,7 @@ public partial interface IMailblastr
     /// Rotate the signing secret. The new plaintext secret is returned ONCE;
     /// the old secret stops verifying immediately. POST /webhooks/:id/rotate
     /// </summary>
-    Task<WebhookCreated> WebhookRotateSecretAsync(string webhookId, CancellationToken cancellationToken = default);
+    Task<WebhookCreated> WebhookRotateAsync(string webhookId, CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Send a synchronous test delivery and return the endpoint's live result.
@@ -147,5 +147,5 @@ public partial interface IMailblastr
     /// <param name="headers">The delivery's headers; svix-id / svix-timestamp / svix-signature are read case-insensitively.</param>
     /// <param name="secret">Your endpoint's signing secret (typically <c>whsec_…</c>).</param>
     /// <param name="toleranceSeconds">Max allowed clock skew in seconds (default 300). Pass 0 to skip the check.</param>
-    WebhookVerificationResult WebhookVerifySignature(string payload, IReadOnlyDictionary<string, string> headers, string secret, int toleranceSeconds = 300);
+    VerifyWebhookResult WebhookVerify(string payload, IReadOnlyDictionary<string, string> headers, string secret, int toleranceSeconds = 300);
 }

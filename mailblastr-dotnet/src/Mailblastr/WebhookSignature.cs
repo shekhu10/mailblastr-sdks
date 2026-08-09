@@ -22,7 +22,7 @@ public static class WebhookSignature
     /// <param name="headers">The delivery's headers; svix-id / svix-timestamp / svix-signature are read case-insensitively.</param>
     /// <param name="secret">Your endpoint's signing secret (typically <c>whsec_…</c>).</param>
     /// <param name="toleranceSeconds">Max allowed clock skew in seconds (default 300). Pass 0 to skip the check.</param>
-    public static WebhookVerificationResult Verify(string payload, IReadOnlyDictionary<string, string> headers, string secret, int toleranceSeconds = 300)
+    public static VerifyWebhookResult Verify(string payload, IReadOnlyDictionary<string, string> headers, string secret, int toleranceSeconds = 300)
     {
         ArgumentNullException.ThrowIfNull(headers);
         return Verify(
@@ -35,7 +35,7 @@ public static class WebhookSignature
     }
 
     /// <summary>Verify a delivery given the three svix header values directly.</summary>
-    public static WebhookVerificationResult Verify(string payload, string? svixId, string? svixTimestamp, string? svixSignature, string secret, int toleranceSeconds = 300)
+    public static VerifyWebhookResult Verify(string payload, string? svixId, string? svixTimestamp, string? svixSignature, string secret, int toleranceSeconds = 300)
     {
         ArgumentNullException.ThrowIfNull(payload);
 
@@ -75,7 +75,7 @@ public static class WebhookSignature
             var candidate = part.StartsWith("v1,", StringComparison.Ordinal) ? part["v1,".Length..] : part;
             if (FixedTimeEquals(candidate, expected))
             {
-                return new WebhookVerificationResult { Valid = true };
+                return new VerifyWebhookResult { Valid = true };
             }
         }
         return Invalid("no_match");
@@ -128,5 +128,5 @@ public static class WebhookSignature
         return null;
     }
 
-    private static WebhookVerificationResult Invalid(string reason) => new() { Valid = false, Reason = reason };
+    private static VerifyWebhookResult Invalid(string reason) => new() { Valid = false, Reason = reason };
 }

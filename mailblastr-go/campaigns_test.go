@@ -226,3 +226,72 @@ func TestCampaignsListReturnsReducedRows(t *testing.T) {
 		t.Errorf("reduced row not decoded: %+v", row)
 	}
 }
+
+// The PATCH endpoints key off whether a JSON key is PRESENT: absent leaves the
+// field untouched, present-with-null clears it. Before 3.0.0 the clearable
+// fields were plain strings/ints with omitempty, so "clear this" was
+// unreachable — the zero value was indistinguishable from "leave alone".
+func TestCampaignsUpdateClearsFieldsWithExplicitNull(t *testing.T) {
+	client := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPatch || r.URL.Path != "/campaigns/cmp_1" {
+			t.Errorf("%s %s, want PATCH /campaigns/cmp_1", r.Method, r.URL.Path)
+		}
+		body := decodeBody(t, r)
+		for _, key := range []string{"segment_id", "topic_id", "preview_text", "reply_to", "schedule_timezone", "daily_batch_size"} {
+			value, present := body[key]
+			if !present {
+				t.Errorf("%s missing from body, want present with null", key)
+				continue
+			}
+			if value != nil {
+				t.Errorf("%s = %v, want null", key, value)
+			}
+		}
+		// Untouched fields must stay out of the body entirely.
+		if _, present := body["name"]; present {
+			t.Errorf("name present in body, want omitted")
+		}
+		w.Write([]byte(`{"id":"cmp_1"}`))
+	})
+
+	_, err := client.Campaigns.Update("cmp_1", &UpdateCampaignRequest{
+		SegmentId:        Clear[string](),
+		TopicId:          Clear[string](),
+		PreviewText:      Clear[string](),
+		ReplyTo:          Clear[[]string](),
+		ScheduleTimezone: Clear[string](),
+		DailyBatchSize:   Clear[int](),
+	})
+	if err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+}
+
+func TestCampaignsUpdateSendsSetValues(t *testing.T) {
+	client := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		body := decodeBody(t, r)
+		if body["segment_id"] != "seg_2" {
+			t.Errorf("segment_id = %v, want seg_2", body["segment_id"])
+		}
+		if body["daily_batch_size"] != float64(500) {
+			t.Errorf("daily_batch_size = %v, want 500", body["daily_batch_size"])
+		}
+		replyTo, ok := body["reply_to"].([]any)
+		if !ok || len(replyTo) != 1 || replyTo[0] != "ops@example.com" {
+			t.Errorf("reply_to = %v", body["reply_to"])
+		}
+		if _, present := body["topic_id"]; present {
+			t.Errorf("topic_id present in body, want omitted")
+		}
+		w.Write([]byte(`{"id":"cmp_1"}`))
+	})
+
+	_, err := client.Campaigns.Update("cmp_1", &UpdateCampaignRequest{
+		SegmentId:      Set("seg_2"),
+		DailyBatchSize: Set(500),
+		ReplyTo:        Set([]string{"ops@example.com"}),
+	})
+	if err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+}

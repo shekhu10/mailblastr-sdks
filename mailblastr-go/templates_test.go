@@ -42,3 +42,32 @@ func TestTemplatesListReturnsReducedRows(t *testing.T) {
 		t.Errorf("reduced row not decoded: %+v", row)
 	}
 }
+
+func TestTemplatesUpdateClearsFieldsWithExplicitNull(t *testing.T) {
+	client := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		body := decodeBody(t, r)
+		for _, key := range []string{"alias", "subject", "from", "reply_to", "html", "text"} {
+			value, present := body[key]
+			if !present || value != nil {
+				t.Errorf("%s = %v (present=%v), want null", key, value, present)
+			}
+		}
+		if body["name"] != "Receipt" {
+			t.Errorf("name = %v, want Receipt", body["name"])
+		}
+		w.Write([]byte(`{"id":"tpl_1"}`))
+	})
+
+	_, err := client.Templates.Update("tpl_1", &UpdateTemplateRequest{
+		Name:    "Receipt",
+		Alias:   Clear[string](),
+		Subject: Clear[string](),
+		From:    Clear[string](),
+		ReplyTo: Clear[[]string](),
+		Html:    Clear[string](),
+		Text:    Clear[string](),
+	})
+	if err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+}

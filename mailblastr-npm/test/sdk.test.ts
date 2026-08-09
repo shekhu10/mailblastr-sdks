@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { createHmac } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import {
-  MailBlastr,
+  Mailblastr,
   verifyWebhookSignature,
   VERSION,
   USER_AGENT,
@@ -39,7 +39,7 @@ function mockFetch(status: number, responseBody: unknown) {
 
 test('constructor requires an API key', () => {
   // @ts-expect-error intentionally missing key
-  assert.throws(() => new MailBlastr());
+  assert.throws(() => new Mailblastr());
 });
 
 test('VERSION tracks package.json', () => {
@@ -51,7 +51,7 @@ test('every request carries a non-empty User-Agent and a Bearer token', async ()
   // A request without a User-Agent is rejected with 403 validation_error
   // BEFORE authentication, masking every other error — so this is load-bearing.
   const { fn, calls } = mockFetch(200, { object: 'list', has_more: false, data: [] });
-  const mb = new MailBlastr('mb_test', { baseUrl: 'https://api.test', fetch: fn });
+  const mb = new Mailblastr('mb_test', { baseUrl: 'https://api.test', fetch: fn });
   await mb.domains.list();
   await mb.emails.receiving.getRaw('r1');   // the raw-bytes path sets its own headers
   await mb.domains.recordsCsv('d1');        // …and so does the text path
@@ -64,7 +64,7 @@ test('every request carries a non-empty User-Agent and a Bearer token', async ()
 
 test('emails.send issues POST /emails with auth + body and returns { data }', async () => {
   const { fn, calls } = mockFetch(200, { id: 'e-1' });
-  const mb = new MailBlastr('mb_test', { baseUrl: 'https://api.test', fetch: fn });
+  const mb = new Mailblastr('mb_test', { baseUrl: 'https://api.test', fetch: fn });
   const res = await mb.emails.send({ from: 'a@x.com', to: 'b@y.com', subject: 'Hi', html: '<p>x</p>' });
   assert.equal(calls[0].method, 'POST');
   assert.equal(calls[0].url, 'https://api.test/emails');
@@ -75,7 +75,7 @@ test('emails.send issues POST /emails with auth + body and returns { data }', as
 
 test('emails.send forwards the Idempotency-Key header', async () => {
   const { fn, calls } = mockFetch(200, { id: 'e-2' });
-  const mb = new MailBlastr('mb_test', { baseUrl: 'https://api.test', fetch: fn });
+  const mb = new Mailblastr('mb_test', { baseUrl: 'https://api.test', fetch: fn });
   await mb.emails.send({ from: 'a@x.com', to: 'b@y.com', subject: 'Hi', text: 't' }, { idempotencyKey: 'k1' });
   assert.equal(calls[0].headers['Idempotency-Key'], 'k1');
 });
@@ -88,7 +88,7 @@ test('the Idempotency-Key bound is exported, and the key is sent verbatim', asyn
   assert.equal(IDEMPOTENCY_KEY_MAX_LENGTH, 255);
 
   const { fn, calls } = mockFetch(200, { id: 'e-3' });
-  const mb = new MailBlastr('mb_test', { baseUrl: 'https://api.test', fetch: fn });
+  const mb = new Mailblastr('mb_test', { baseUrl: 'https://api.test', fetch: fn });
   const tooLong = 'k'.repeat(IDEMPOTENCY_KEY_MAX_LENGTH + 1);
   const res = await mb.emails.send(
     { from: 'a@x.com', to: 'b@y.com', subject: 'Hi', text: 't' },
@@ -103,7 +103,7 @@ test('the Idempotency-Key bound is exported, and the key is sent verbatim', asyn
 // it there — the method's doc comment says so.
 test('events.send still forwards an idempotency key the API will ignore', async () => {
   const { fn, calls } = mockFetch(200, { object: 'event', id: 'ev-1' });
-  const mb = new MailBlastr('mb_test', { baseUrl: 'https://api.test', fetch: fn });
+  const mb = new Mailblastr('mb_test', { baseUrl: 'https://api.test', fetch: fn });
   await mb.events.send(
     { event: 'signup.completed', domain: 'yourdomain.com', email: 'a@b.com' },
     { idempotencyKey: 'evt-1' },
@@ -122,7 +122,7 @@ test('retries a 429 (honoring Retry-After) then succeeds; a 422 is not retried',
     }
     return { ok: true, status: 200, headers: { get: () => null }, text: async () => JSON.stringify({ id: 'ok' }) } as unknown as Response;
   }) as unknown as typeof fetch;
-  const mb = new MailBlastr('mb_test', { baseUrl: 'https://api.test', fetch: fn, maxRetries: 2 });
+  const mb = new Mailblastr('mb_test', { baseUrl: 'https://api.test', fetch: fn, maxRetries: 2 });
   const res = await mb.emails.send({ from: 'a@x.com', to: 'b@y.com', subject: 'Hi', html: 'x' });
   assert.equal(n, 2, 'the 429 was retried exactly once');
   assert.deepEqual(res, { data: { id: 'ok' }, error: null });
@@ -135,7 +135,7 @@ test('gives up after maxRetries on a persistent 429 and returns the error', asyn
     n += 1;
     return { ok: false, status: 429, headers: { get: () => '0' }, text: async () => JSON.stringify({ statusCode: 429, name: 'rate_limited', message: 'slow down' }) } as unknown as Response;
   }) as unknown as typeof fetch;
-  const mb = new MailBlastr('mb_test', { baseUrl: 'https://api.test', fetch: fn, maxRetries: 2 });
+  const mb = new Mailblastr('mb_test', { baseUrl: 'https://api.test', fetch: fn, maxRetries: 2 });
   const res = await mb.emails.send({ from: 'a@x.com', to: 'b@y.com', subject: 'Hi', html: 'x' });
   assert.equal(n, 3, 'initial attempt + 2 retries');
   assert.equal(res.error?.statusCode, 429);
@@ -144,14 +144,14 @@ test('gives up after maxRetries on a persistent 429 and returns the error', asyn
 test('maxRetries: 0 disables retries', async () => {
   let n = 0;
   const fn = (async () => { n += 1; return { ok: false, status: 503, headers: { get: () => null }, text: async () => '' } as unknown as Response; }) as unknown as typeof fetch;
-  const mb = new MailBlastr('mb_test', { baseUrl: 'https://api.test', fetch: fn, maxRetries: 0 });
+  const mb = new Mailblastr('mb_test', { baseUrl: 'https://api.test', fetch: fn, maxRetries: 0 });
   await mb.emails.send({ from: 'a@x.com', to: 'b@y.com', subject: 'Hi', html: 'x' });
   assert.equal(n, 1, 'no retries when maxRetries is 0');
 });
 
 test('a non-2xx returns { error } with the MailBlastr error shape', async () => {
   const { fn } = mockFetch(422, { statusCode: 422, name: 'validation_error', message: 'bad' });
-  const mb = new MailBlastr('mb_test', { baseUrl: 'https://api.test', fetch: fn });
+  const mb = new Mailblastr('mb_test', { baseUrl: 'https://api.test', fetch: fn });
   const res = await mb.emails.send({ from: 'a@x.com', to: 'b@y.com', subject: 'Hi', html: 'x' });
   assert.equal(res.data, null);
   assert.deepEqual(res.error, { statusCode: 422, name: 'validation_error', message: 'bad' });
@@ -167,7 +167,7 @@ test('a plan/quota error keeps its additive `limit` object', async () => {
   const { fn } = mockFetch(429, {
     statusCode: 429, name: 'daily_quota_exceeded', message: 'over quota', limit,
   });
-  const mb = new MailBlastr('mb_test', { baseUrl: 'https://api.test', fetch: fn, maxRetries: 0 });
+  const mb = new Mailblastr('mb_test', { baseUrl: 'https://api.test', fetch: fn, maxRetries: 0 });
   const res = await mb.emails.send({ from: 'a@x.com', to: 'b@y.com', subject: 'Hi', html: 'x' });
   assert.equal(res.error?.name, 'daily_quota_exceeded');
   assert.deepEqual(res.error?.limit, limit);
@@ -186,7 +186,7 @@ test('a reputation gate keeps its additive `reputation` object, typed', async ()
   const { fn } = mockFetch(429, {
     statusCode: 429, name: 'reputation_limit_exceeded', message: 'Warm-up capacity reached.', reputation,
   });
-  const mb = new MailBlastr('mb_test', { baseUrl: 'https://api.test', fetch: fn, maxRetries: 0 });
+  const mb = new Mailblastr('mb_test', { baseUrl: 'https://api.test', fetch: fn, maxRetries: 0 });
   const res = await mb.emails.send({ from: 'a@x.com', to: 'b@y.com', subject: 'Hi', html: 'x' });
   assert.equal(res.error?.name, 'reputation_limit_exceeded');
   const rep: ReputationDetail | undefined = res.error?.reputation;
@@ -202,7 +202,7 @@ test('a reputation gate keeps its additive `reputation` object, typed', async ()
 
 test('`reputation` stays absent on an error that is not a reputation gate', async () => {
   const { fn } = mockFetch(422, { statusCode: 422, name: 'validation_error', message: 'bad' });
-  const mb = new MailBlastr('mb_test', { baseUrl: 'https://api.test', fetch: fn, maxRetries: 0 });
+  const mb = new Mailblastr('mb_test', { baseUrl: 'https://api.test', fetch: fn, maxRetries: 0 });
   const res = await mb.emails.send({ from: 'a@x.com', to: 'b@y.com', subject: 'Hi', html: 'x' });
   assert.equal(res.error?.reputation, undefined);
   assert.equal(res.error?.limit, undefined);
@@ -213,7 +213,7 @@ test('a partial batch failure keeps `sent` / `sent_count`', async () => {
     statusCode: 429, name: 'daily_quota_exceeded', message: 'over quota',
     sent: [{ id: 'e-1' }], sent_count: 1,
   });
-  const mb = new MailBlastr('mb_test', { baseUrl: 'https://api.test', fetch: fn, maxRetries: 0 });
+  const mb = new Mailblastr('mb_test', { baseUrl: 'https://api.test', fetch: fn, maxRetries: 0 });
   const res = await mb.batch.send([{ from: 'a@x.com', to: 'b@y.com', subject: 's', text: 't' }]);
   assert.equal(res.error?.sent_count, 1);
   assert.deepEqual(res.error?.sent, [{ id: 'e-1' }]);
@@ -226,7 +226,7 @@ test('`sent_count` falls back to `sent.length` when the body omits it', async ()
     statusCode: 429, name: 'daily_quota_exceeded', message: 'over quota',
     sent: [{ id: 'e-1' }, { id: 'e-2' }],
   });
-  const mb = new MailBlastr('mb_test', { baseUrl: 'https://api.test', fetch: fn, maxRetries: 0 });
+  const mb = new Mailblastr('mb_test', { baseUrl: 'https://api.test', fetch: fn, maxRetries: 0 });
   const res = await mb.batch.send([{ from: 'a@x.com', to: 'b@y.com', subject: 's', text: 't' }]);
   assert.equal(res.error?.sent_count, 2);
 });
@@ -237,7 +237,7 @@ test('`sent_count` stays absent on an error that sent nothing', async () => {
   const { fn } = mockFetch(422, {
     statusCode: 422, name: 'validation_error', message: 'bad payload',
   });
-  const mb = new MailBlastr('mb_test', { baseUrl: 'https://api.test', fetch: fn, maxRetries: 0 });
+  const mb = new Mailblastr('mb_test', { baseUrl: 'https://api.test', fetch: fn, maxRetries: 0 });
   const res = await mb.batch.send([{ from: 'a@x.com', to: 'b@y.com', subject: 's', text: 't' }]);
   assert.equal(res.error?.sent_count, undefined);
   assert.equal(res.error?.sent, undefined);
@@ -247,7 +247,7 @@ test('a non-envelope error body lifts `error` into `name`', async () => {
   // The rate-limited public mounts and the CSRF guard answer with
   // {"error":"..."} instead of {statusCode,name,message}.
   const { fn } = mockFetch(403, { error: 'csrf_failed' });
-  const mb = new MailBlastr('mb_test', { baseUrl: 'https://api.test', fetch: fn });
+  const mb = new Mailblastr('mb_test', { baseUrl: 'https://api.test', fetch: fn });
   const res = await mb.domains.list();
   assert.equal(res.error?.statusCode, 403);
   assert.equal(res.error?.name, 'csrf_failed');
@@ -255,7 +255,7 @@ test('a non-envelope error body lifts `error` into `name`', async () => {
 
 test('emails: batch / get / update / cancel map to the right routes', async () => {
   const { fn, calls } = mockFetch(200, { ok: true });
-  const mb = new MailBlastr('mb_test', { baseUrl: 'https://api.test', fetch: fn });
+  const mb = new Mailblastr('mb_test', { baseUrl: 'https://api.test', fetch: fn });
   await mb.emails.batch([{ from: 'a@x.com', to: 'b@y.com', subject: 's', text: 't' }]);
   await mb.emails.get('e1');
   await mb.emails.update('e1', { scheduled_at: '2030-01-01T00:00:00Z' });
@@ -270,7 +270,7 @@ test('emails: batch / get / update / cancel map to the right routes', async () =
 
 test('receiving.reply + audiences.importSheet map to the right routes', async () => {
   const { fn, calls } = mockFetch(200, { ok: true });
-  const mb = new MailBlastr('mb_test', { baseUrl: 'https://api.test', fetch: fn });
+  const mb = new Mailblastr('mb_test', { baseUrl: 'https://api.test', fetch: fn });
   await mb.emails.receiving.reply('r-1', { from: 'me@my.test', text: 'hi' });
   await mb.audiences.importSheet('aud-1', { url: 'https://docs.google.com/spreadsheets/d/x' });
   assert.deepEqual(calls.map((c) => `${c.method} ${c.url}`), [
@@ -281,7 +281,7 @@ test('receiving.reply + audiences.importSheet map to the right routes', async ()
 
 test('polls resource maps list + get to the right routes', async () => {
   const { fn, calls } = mockFetch(200, { object: 'list', has_more: false, data: [] });
-  const mb = new MailBlastr('mb_test', { baseUrl: 'https://api.test', fetch: fn });
+  const mb = new Mailblastr('mb_test', { baseUrl: 'https://api.test', fetch: fn });
   await mb.polls.list();
   await mb.polls.get('e-42');
   assert.deepEqual(calls.map((c) => `${c.method} ${c.url}`), [
@@ -292,7 +292,7 @@ test('polls resource maps list + get to the right routes', async () => {
 
 test('domains resource maps every method', async () => {
   const { fn, calls } = mockFetch(200, {});
-  const mb = new MailBlastr('mb_test', { baseUrl: 'https://api.test', fetch: fn });
+  const mb = new Mailblastr('mb_test', { baseUrl: 'https://api.test', fetch: fn });
   await mb.domains.create({ name: 'example.com' });
   await mb.domains.list();
   await mb.domains.get('d1');
@@ -311,7 +311,7 @@ test('domains resource maps every method', async () => {
 
 test('audiences + contacts (nested) map to the right routes', async () => {
   const { fn, calls } = mockFetch(200, {});
-  const mb = new MailBlastr('mb_test', { baseUrl: 'https://api.test', fetch: fn });
+  const mb = new Mailblastr('mb_test', { baseUrl: 'https://api.test', fetch: fn });
   await mb.audiences.create({ name: 'Newsletter' });
   await mb.contacts.create({ audienceId: 'a1', email: 'x@y.com', first_name: 'X' });
   await mb.contacts.get({ audienceId: 'a1', id: 'x@y.com' });
@@ -332,7 +332,7 @@ test('audiences + contacts (nested) map to the right routes', async () => {
 
 test('contacts (flat, no audienceId) hit the top-level /contacts routes with domain', async () => {
   const { fn, calls } = mockFetch(200, {});
-  const mb = new MailBlastr('mb_test', { baseUrl: 'https://api.test', fetch: fn });
+  const mb = new Mailblastr('mb_test', { baseUrl: 'https://api.test', fetch: fn });
   await mb.contacts.create({ domain: 'x.com', email: 'x@y.com', first_name: 'X' });
   await mb.contacts.get({ id: 'x@y.com', domain: 'x.com' });
   await mb.contacts.update({ id: 'c1', unsubscribed: true });
@@ -360,7 +360,7 @@ test('contacts (flat, no audienceId) hit the top-level /contacts routes with dom
 
 test('contacts.batch / import / paginated list map to the right routes', async () => {
   const { fn, calls } = mockFetch(201, { object: 'list', imported: 2, updated: 0, skipped: 0, total: 2 });
-  const mb = new MailBlastr('mb_test', { baseUrl: 'https://api.test', fetch: fn });
+  const mb = new Mailblastr('mb_test', { baseUrl: 'https://api.test', fetch: fn });
   await mb.contacts.batch({ audienceId: 'a1', contacts: [{ email: 'a@x.com' }, { email: 'b@x.com', first_name: 'B' }] });
   await mb.contacts.import({ audienceId: 'a1', csv: 'email\nc@x.com\n' });
   await mb.contacts.list({ audienceId: 'a1', limit: 50, after: 'cur1' });
@@ -375,7 +375,7 @@ test('contacts.batch / import / paginated list map to the right routes', async (
 
 test('contacts batch/import on_conflict + audience-scoped segment_id', async () => {
   const { fn, calls } = mockFetch(200, {});
-  const mb = new MailBlastr('mb_test', { baseUrl: 'https://api.test', fetch: fn });
+  const mb = new Mailblastr('mb_test', { baseUrl: 'https://api.test', fetch: fn });
   await mb.contacts.batch({ audienceId: 'a1', contacts: [{ email: 'a@x.com' }], on_conflict: 'skip' });
   await mb.contacts.import({ audienceId: 'a1', csv: 'email\nc@x.com\n', on_conflict: 'skip' });
   await mb.contacts.list({ audienceId: 'a1', segment_id: 'seg1' });
@@ -388,7 +388,7 @@ test('contacts batch/import on_conflict + audience-scoped segment_id', async () 
 
 test('segments resource maps every method (incl. contacts preview)', async () => {
   const { fn, calls } = mockFetch(200, {});
-  const mb = new MailBlastr('mb_test', { baseUrl: 'https://api.test', fetch: fn });
+  const mb = new Mailblastr('mb_test', { baseUrl: 'https://api.test', fetch: fn });
   await mb.segments.create({ domain: 'x.com', name: 'Gmail users', filter: { status: 'subscribed', email_contains: '@gmail.com' } });
   await mb.segments.list({ domain: 'x.com' });
   await mb.segments.list({ domain: 'x.com', limit: 5 });
@@ -411,14 +411,14 @@ test('segments resource maps every method (incl. contacts preview)', async () =>
 
 test('campaigns.create forwards segment_id', async () => {
   const { fn, calls } = mockFetch(200, { id: 'b-1' });
-  const mb = new MailBlastr('mb_test', { baseUrl: 'https://api.test', fetch: fn });
+  const mb = new Mailblastr('mb_test', { baseUrl: 'https://api.test', fetch: fn });
   await mb.campaigns.create({ domain: 'x.com', from: 'f@x.com', subject: 's', html: 'x', segment_id: 's1' });
   assert.equal(calls[0].body.segment_id, 's1');
 });
 
 test('templates resource maps every method', async () => {
   const { fn, calls } = mockFetch(200, {});
-  const mb = new MailBlastr('mb_test', { baseUrl: 'https://api.test', fetch: fn });
+  const mb = new Mailblastr('mb_test', { baseUrl: 'https://api.test', fetch: fn });
   await mb.templates.create({ name: 'Welcome', subject: 'Hi {{name}}', html: '<p>Hello {{name}}</p>' });
   await mb.templates.list();
   await mb.templates.get('t1');
@@ -435,7 +435,7 @@ test('templates resource maps every method', async () => {
 
 test('emails.send forwards template_id + variables in the body', async () => {
   const { fn, calls } = mockFetch(200, { id: 'e-9' });
-  const mb = new MailBlastr('mb_test', { baseUrl: 'https://api.test', fetch: fn });
+  const mb = new Mailblastr('mb_test', { baseUrl: 'https://api.test', fetch: fn });
   await mb.emails.send({ from: 'a@x.com', to: 'b@y.com', subject: 'ignored', template_id: 't1', variables: { name: 'Ada' } });
   assert.equal(calls[0].body.template_id, 't1');
   assert.deepEqual(calls[0].body.variables, { name: 'Ada' });
@@ -443,7 +443,7 @@ test('emails.send forwards template_id + variables in the body', async () => {
 
 test('campaigns map to the right routes', async () => {
   const { fn, calls } = mockFetch(200, {});
-  const mb = new MailBlastr('mb_test', { baseUrl: 'https://api.test', fetch: fn });
+  const mb = new Mailblastr('mb_test', { baseUrl: 'https://api.test', fetch: fn });
   await mb.campaigns.create({ domain: 'x.com', from: 'f@x.com', subject: 's', html: 'x' });
   await mb.campaigns.send('b1', { scheduled_at: '2030-01-01T00:00:00Z' });
   await mb.campaigns.cancel('b1');
@@ -456,7 +456,7 @@ test('campaigns map to the right routes', async () => {
 
 test('emails.list + sent-attachments map to the right routes', async () => {
   const { fn, calls } = mockFetch(200, {});
-  const mb = new MailBlastr('mb_test', { baseUrl: 'https://api.test', fetch: fn });
+  const mb = new Mailblastr('mb_test', { baseUrl: 'https://api.test', fetch: fn });
   await mb.emails.list({ limit: 10, after: 'cur1' });
   await mb.emails.listAttachments('e1');
   await mb.emails.getAttachment('e1', 'att1');
@@ -469,7 +469,7 @@ test('emails.list + sent-attachments map to the right routes', async () => {
 
 test('emails.list forwards the status + search filters', async () => {
   const { fn, calls } = mockFetch(200, { object: 'list', has_more: false, data: [] });
-  const mb = new MailBlastr('mb_test', { baseUrl: 'https://api.test', fetch: fn });
+  const mb = new Mailblastr('mb_test', { baseUrl: 'https://api.test', fetch: fn });
   await mb.emails.list({ status: 'delivered', search: 'ada@', domain_id: 'd1' });
   assert.equal(
     calls[0].url,
@@ -477,11 +477,11 @@ test('emails.list forwards the status + search filters', async () => {
   );
 });
 
-test('emails.sources + receiving.addresses map to the right routes', async () => {
+test('emails.sources + receiving.listAddresses map to the right routes', async () => {
   const { fn, calls } = mockFetch(200, { object: 'list', has_more: false, data: [] });
-  const mb = new MailBlastr('mb_test', { baseUrl: 'https://api.test', fetch: fn });
+  const mb = new Mailblastr('mb_test', { baseUrl: 'https://api.test', fetch: fn });
   await mb.emails.sources();
-  await mb.emails.receiving.addresses();
+  await mb.emails.receiving.listAddresses();
   assert.deepEqual(calls.map((c) => `${c.method} ${c.url}`), [
     'GET https://api.test/emails/sources',
     'GET https://api.test/emails/receiving/addresses',
@@ -490,7 +490,7 @@ test('emails.sources + receiving.addresses map to the right routes', async () =>
 
 test('emails.receiving maps every method', async () => {
   const { fn, calls } = mockFetch(200, {});
-  const mb = new MailBlastr('mb_test', { baseUrl: 'https://api.test', fetch: fn });
+  const mb = new Mailblastr('mb_test', { baseUrl: 'https://api.test', fetch: fn });
   await mb.emails.receiving.list({ limit: 5 });
   await mb.emails.receiving.get('r1');
   await mb.emails.receiving.listAttachments('r1');
@@ -510,7 +510,7 @@ test('emails.receiving maps every method', async () => {
 
 test('emails.receiving.getAttachment returns raw bytes (ArrayBuffer)', async () => {
   const { fn } = mockFetch(200, 'BINARY');
-  const mb = new MailBlastr('mb_test', { baseUrl: 'https://api.test', fetch: fn });
+  const mb = new Mailblastr('mb_test', { baseUrl: 'https://api.test', fetch: fn });
   const res = await mb.emails.receiving.getAttachment('r1', 'att2');
   assert.equal(res.error, null);
   assert.ok(res.data instanceof ArrayBuffer);
@@ -518,7 +518,7 @@ test('emails.receiving.getAttachment returns raw bytes (ArrayBuffer)', async () 
 
 test('batch.send posts the payload array to /emails/batch', async () => {
   const { fn, calls } = mockFetch(200, { data: [] });
-  const mb = new MailBlastr('mb_test', { baseUrl: 'https://api.test', fetch: fn });
+  const mb = new Mailblastr('mb_test', { baseUrl: 'https://api.test', fetch: fn });
   await mb.batch.send([{ from: 'a@x.com', to: 'b@y.com', subject: 's', text: 't' }]);
   assert.equal(calls[0].method, 'POST');
   assert.equal(calls[0].url, 'https://api.test/emails/batch');
@@ -527,7 +527,7 @@ test('batch.send posts the payload array to /emails/batch', async () => {
 
 test('domains claim methods map to the right routes', async () => {
   const { fn, calls } = mockFetch(200, {});
-  const mb = new MailBlastr('mb_test', { baseUrl: 'https://api.test', fetch: fn });
+  const mb = new Mailblastr('mb_test', { baseUrl: 'https://api.test', fetch: fn });
   await mb.domains.claim({ name: 'example.com' });
   await mb.domains.getClaim('d1');
   await mb.domains.verifyClaim('d1');
@@ -540,7 +540,7 @@ test('domains claim methods map to the right routes', async () => {
 
 test('contacts segment + topic methods map to the right routes', async () => {
   const { fn, calls } = mockFetch(200, {});
-  const mb = new MailBlastr('mb_test', { baseUrl: 'https://api.test', fetch: fn });
+  const mb = new Mailblastr('mb_test', { baseUrl: 'https://api.test', fetch: fn });
   await mb.contacts.addToSegment('c1', 's1');
   await mb.contacts.removeFromSegment('c1', 's1');
   await mb.contacts.listSegments('c1');
@@ -558,7 +558,7 @@ test('contacts segment + topic methods map to the right routes', async () => {
 
 test('contactProperties resource maps every method', async () => {
   const { fn, calls } = mockFetch(200, {});
-  const mb = new MailBlastr('mb_test', { baseUrl: 'https://api.test', fetch: fn });
+  const mb = new Mailblastr('mb_test', { baseUrl: 'https://api.test', fetch: fn });
   await mb.contactProperties.create({ name: 'Plan', type: 'string' });
   await mb.contactProperties.list();
   await mb.contactProperties.get('p1');
@@ -575,7 +575,7 @@ test('contactProperties resource maps every method', async () => {
 
 test('topics resource maps every method', async () => {
   const { fn, calls } = mockFetch(200, {});
-  const mb = new MailBlastr('mb_test', { baseUrl: 'https://api.test', fetch: fn });
+  const mb = new Mailblastr('mb_test', { baseUrl: 'https://api.test', fetch: fn });
   await mb.topics.create({ domain: 'x.com', name: 'Product updates', default_subscription: 'opt_in' });
   await mb.topics.list({ domain: 'x.com' });
   await mb.topics.get('t1');
@@ -592,7 +592,7 @@ test('topics resource maps every method', async () => {
 
 test('templates duplicate + publish map to the right routes', async () => {
   const { fn, calls } = mockFetch(200, {});
-  const mb = new MailBlastr('mb_test', { baseUrl: 'https://api.test', fetch: fn });
+  const mb = new Mailblastr('mb_test', { baseUrl: 'https://api.test', fetch: fn });
   await mb.templates.duplicate('t1');
   await mb.templates.publish('t1');
   assert.deepEqual(calls.map((c) => `${c.method} ${c.url}`), [
@@ -603,7 +603,7 @@ test('templates duplicate + publish map to the right routes', async () => {
 
 test('automations resource maps every method', async () => {
   const { fn, calls } = mockFetch(200, {});
-  const mb = new MailBlastr('mb_test', { baseUrl: 'https://api.test', fetch: fn });
+  const mb = new Mailblastr('mb_test', { baseUrl: 'https://api.test', fetch: fn });
   await mb.automations.create({ name: 'Onboarding', domain: 'x.com', trigger: 'contact.created' });
   await mb.automations.list();
   await mb.automations.get('au1');
@@ -631,7 +631,7 @@ test('automations resource maps every method', async () => {
 
 test('webhooks resource maps every method', async () => {
   const { fn, calls } = mockFetch(200, {});
-  const mb = new MailBlastr('mb_test', { baseUrl: 'https://api.test', fetch: fn });
+  const mb = new Mailblastr('mb_test', { baseUrl: 'https://api.test', fetch: fn });
   await mb.webhooks.create({ endpoint: 'https://hooks.x.com/mb', events: ['email.delivered'] });
   await mb.webhooks.list();
   await mb.webhooks.get('wh1');
@@ -648,7 +648,7 @@ test('webhooks resource maps every method', async () => {
 
 test('campaigns.stats + ab map to the right routes', async () => {
   const { fn, calls } = mockFetch(200, {});
-  const mb = new MailBlastr('mb_test', { baseUrl: 'https://api.test', fetch: fn });
+  const mb = new Mailblastr('mb_test', { baseUrl: 'https://api.test', fetch: fn });
   await mb.campaigns.stats('b1');
   await mb.campaigns.ab('b1');
   assert.deepEqual(calls.map((c) => `${c.method} ${c.url}`), [
@@ -659,7 +659,7 @@ test('campaigns.stats + ab map to the right routes', async () => {
 
 test('campaigns.create forwards recurrence + ab_test + new fields', async () => {
   const { fn, calls } = mockFetch(200, { id: 'b-1' });
-  const mb = new MailBlastr('mb_test', { baseUrl: 'https://api.test', fetch: fn });
+  const mb = new Mailblastr('mb_test', { baseUrl: 'https://api.test', fetch: fn });
   await mb.campaigns.create({
     domain: 'x.com', from: 'f@x.com', subject: 's', html: 'x',
     reply_to: 'r@x.com', preview_text: 'pv',
@@ -675,7 +675,7 @@ test('campaigns.create forwards recurrence + ab_test + new fields', async () => 
 
 test('audiences.update maps to PATCH /audiences/:id', async () => {
   const { fn, calls } = mockFetch(200, {});
-  const mb = new MailBlastr('mb_test', { baseUrl: 'https://api.test', fetch: fn });
+  const mb = new Mailblastr('mb_test', { baseUrl: 'https://api.test', fetch: fn });
   await mb.audiences.update('a1', { name: 'Renamed' });
   assert.equal(calls[0].method, 'PATCH');
   assert.equal(calls[0].url, 'https://api.test/audiences/a1');
@@ -684,7 +684,7 @@ test('audiences.update maps to PATCH /audiences/:id', async () => {
 
 test('domains dns helpers map to the right routes', async () => {
   const { fn, calls } = mockFetch(200, {});
-  const mb = new MailBlastr('mb_test', { baseUrl: 'https://api.test', fetch: fn });
+  const mb = new Mailblastr('mb_test', { baseUrl: 'https://api.test', fetch: fn });
   await mb.domains.detectDns('d1');
   await mb.domains.applyCloudflareDns('d1', { token: 'cf' });
   await mb.domains.applyGoDaddyDns('d1', { key: 'k', secret: 's' });
@@ -702,7 +702,7 @@ test('domains dns helpers map to the right routes', async () => {
 
 test('segments.create forwards filter.property_filters', async () => {
   const { fn, calls } = mockFetch(200, {});
-  const mb = new MailBlastr('mb_test', { baseUrl: 'https://api.test', fetch: fn });
+  const mb = new Mailblastr('mb_test', { baseUrl: 'https://api.test', fetch: fn });
   await mb.segments.create({
     domain: 'x.com', name: 'Pro users',
     filter: { status: 'subscribed', property_filters: [{ key: 'plan', operator: 'eq', value: 'pro' }] },
@@ -712,7 +712,7 @@ test('segments.create forwards filter.property_filters', async () => {
 
 test('emails.receiving.getRaw returns raw bytes (ArrayBuffer)', async () => {
   const { fn, calls } = mockFetch(200, 'RAWMIME');
-  const mb = new MailBlastr('mb_test', { baseUrl: 'https://api.test', fetch: fn });
+  const mb = new Mailblastr('mb_test', { baseUrl: 'https://api.test', fetch: fn });
   const res = await mb.emails.receiving.getRaw('r1');
   assert.equal(calls[0].url, 'https://api.test/emails/receiving/r1/raw');
   assert.equal(res.error, null);
@@ -721,7 +721,7 @@ test('emails.receiving.getRaw returns raw bytes (ArrayBuffer)', async () => {
 
 test('automations.deleteStep maps to DELETE /automations/:id/steps/:stepId', async () => {
   const { fn, calls } = mockFetch(200, { id: 'st1', deleted: true });
-  const mb = new MailBlastr('mb_test', { baseUrl: 'https://api.test', fetch: fn });
+  const mb = new Mailblastr('mb_test', { baseUrl: 'https://api.test', fetch: fn });
   await mb.automations.deleteStep('au1', 'st1');
   assert.equal(calls[0].method, 'DELETE');
   assert.equal(calls[0].url, 'https://api.test/automations/au1/steps/st1');
@@ -729,7 +729,7 @@ test('automations.deleteStep maps to DELETE /automations/:id/steps/:stepId', asy
 
 test('webhooks.rotate + test map to the right routes', async () => {
   const { fn, calls } = mockFetch(200, {});
-  const mb = new MailBlastr('mb_test', { baseUrl: 'https://api.test', fetch: fn });
+  const mb = new Mailblastr('mb_test', { baseUrl: 'https://api.test', fetch: fn });
   await mb.webhooks.rotate('wh1');
   await mb.webhooks.test('wh1');
   assert.deepEqual(calls.map((c) => `${c.method} ${c.url}`), [
@@ -739,7 +739,7 @@ test('webhooks.rotate + test map to the right routes', async () => {
 });
 
 test('webhooks.verify validates a correct Svix-style signature', () => {
-  const mb = new MailBlastr('mb_test', { baseUrl: 'https://api.test', fetch: mockFetch(200, {}).fn });
+  const mb = new Mailblastr('mb_test', { baseUrl: 'https://api.test', fetch: mockFetch(200, {}).fn });
   const secret = 'whsec_' + Buffer.from('supersecretkeybytes!!').toString('base64');
   const id = 'msg_123';
   const timestamp = String(Math.floor(Date.now() / 1000));
@@ -794,7 +794,7 @@ test('emails.list returns trimmed SentEmailListItem shape (no status; null cc/bc
     scheduled_at: null, created_at: '2026-07-04T00:00:00Z',
   };
   const { fn } = mockFetch(200, { object: 'list', has_more: false, data: [item] });
-  const mb = new MailBlastr('mb_test', { baseUrl: 'https://api.test', fetch: fn });
+  const mb = new Mailblastr('mb_test', { baseUrl: 'https://api.test', fetch: fn });
   const res = await mb.emails.list({ limit: 10 });
   const row = res.data!.data[0];
   assert.equal(row.last_event, 'sent');
@@ -816,7 +816,7 @@ test('apiKeys.list exposes token prefix, permission and last_used_at', async () 
     domain_id: null, created_at: '2026-07-04T00:00:00Z', last_used_at: null,
   };
   const { fn } = mockFetch(200, { object: 'list', has_more: false, data: [key] });
-  const mb = new MailBlastr('mb_test', { baseUrl: 'https://api.test', fetch: fn });
+  const mb = new Mailblastr('mb_test', { baseUrl: 'https://api.test', fetch: fn });
   const res = await mb.apiKeys.list();
   const k = res.data!.data[0];
   // These three fields are returned by the backend and must be typed.
@@ -827,7 +827,7 @@ test('apiKeys.list exposes token prefix, permission and last_used_at', async () 
 
 test('apiKeys.list accepts pagination', async () => {
   const { fn, calls } = mockFetch(200, { object: 'list', has_more: false, data: [] });
-  const mb = new MailBlastr('mb_test', { baseUrl: 'https://api.test', fetch: fn });
+  const mb = new Mailblastr('mb_test', { baseUrl: 'https://api.test', fetch: fn });
   await mb.apiKeys.list({ limit: 5 });
   assert.deepEqual(calls.map((c) => `${c.method} ${c.url}`), [
     'GET https://api.test/api-keys?limit=5',
@@ -835,7 +835,7 @@ test('apiKeys.list accepts pagination', async () => {
 });
 
 test('apiKeys exposes list only — key lifecycle is dashboard-only', async () => {
-  const mb = new MailBlastr('mb_test', { baseUrl: 'https://api.test' });
+  const mb = new Mailblastr('mb_test', { baseUrl: 'https://api.test' });
   // Creating, re-scoping and revoking keys require a signed-in dashboard
   // session, so the SDK ships no method for them: a leaked key cannot mint a
   // replacement or widen its own scope. Absent at compile time too — each
@@ -854,7 +854,7 @@ test('apiKeys exposes list only — key lifecycle is dashboard-only', async () =
 
 test('logs + events map to the right routes', async () => {
   const { fn, calls } = mockFetch(200, {});
-  const mb = new MailBlastr('mb_test', { baseUrl: 'https://api.test', fetch: fn });
+  const mb = new Mailblastr('mb_test', { baseUrl: 'https://api.test', fetch: fn });
   await mb.logs.list({ limit: 20, before: 'cur2' });
   await mb.logs.get('l1');
   await mb.events.send({ name: 'signup.completed', domain: 'x.com', email: 'c@x.com', data: { plan: 'pro' } });
@@ -881,7 +881,7 @@ test('contacts.remove returns the { object, id, deleted } ack', async () => {
   // `contact` key. Typing one would send callers looking for a field that
   // never arrives.
   const { fn } = mockFetch(200, { object: 'contact', id: 'c1', deleted: true });
-  const mb = new MailBlastr('mb_test', { baseUrl: 'https://api.test', fetch: fn });
+  const mb = new Mailblastr('mb_test', { baseUrl: 'https://api.test', fetch: fn });
   const res = await mb.contacts.remove({ id: 'c1' });
   assert.equal(res.data?.id, 'c1');
   assert.equal(res.data?.deleted, true);
@@ -894,7 +894,7 @@ test('contacts.listSegments returns id/name/created_at rows and accepts paging',
     object: 'list', has_more: false,
     data: [{ id: 's1', name: 'General', created_at: '2026-07-04T00:00:00Z' }],
   });
-  const mb = new MailBlastr('mb_test', { baseUrl: 'https://api.test', fetch: fn });
+  const mb = new Mailblastr('mb_test', { baseUrl: 'https://api.test', fetch: fn });
   const res = await mb.contacts.listSegments('c1', { limit: 5 });
   assert.equal(calls[0].url, 'https://api.test/contacts/c1/segments?limit=5');
   assert.equal(res.data!.data[0].name, 'General');
@@ -908,7 +908,7 @@ test('segments.contacts returns the reduced membership shape and accepts paging'
     unsubscribed: false, created_at: '2026-07-04T00:00:00Z',
   };
   const { fn, calls } = mockFetch(200, { object: 'list', has_more: false, data: [row] });
-  const mb = new MailBlastr('mb_test', { baseUrl: 'https://api.test', fetch: fn });
+  const mb = new Mailblastr('mb_test', { baseUrl: 'https://api.test', fetch: fn });
   const res = await mb.segments.contacts('s1', { limit: 25 });
   assert.equal(calls[0].url, 'https://api.test/segments/s1/contacts?limit=25');
   assert.equal(res.data!.data[0].email, 'a@x.com');
@@ -918,7 +918,7 @@ test('segments.contacts returns the reduced membership shape and accepts paging'
 
 test('segments accept a members_only status and an engagement filter', async () => {
   const { fn, calls } = mockFetch(201, {});
-  const mb = new MailBlastr('mb_test', { baseUrl: 'https://api.test', fetch: fn });
+  const mb = new Mailblastr('mb_test', { baseUrl: 'https://api.test', fetch: fn });
   await mb.segments.create({
     domain: 'x.com', name: 'Openers',
     filter: { status: 'members_only', engagement: { event: 'opened', campaign_id: 'cmp1' } },
@@ -929,7 +929,7 @@ test('segments accept a members_only status and an engagement filter', async () 
 
 test('campaigns.engagement maps to GET /campaigns/:id/engagement', async () => {
   const { fn, calls } = mockFetch(200, { object: 'campaign_engagement', campaign_id: 'b1', opened: [], clicked: [], replied: [] });
-  const mb = new MailBlastr('mb_test', { baseUrl: 'https://api.test', fetch: fn });
+  const mb = new Mailblastr('mb_test', { baseUrl: 'https://api.test', fetch: fn });
   const res = await mb.campaigns.engagement('b1');
   assert.equal(calls[0].url, 'https://api.test/campaigns/b1/engagement');
   assert.deepEqual(res.data?.opened, []);
@@ -937,7 +937,7 @@ test('campaigns.engagement maps to GET /campaigns/:id/engagement', async () => {
 
 test('automations.runs forwards a status filter as a comma-separated list', async () => {
   const { fn, calls } = mockFetch(200, {});
-  const mb = new MailBlastr('mb_test', { baseUrl: 'https://api.test', fetch: fn });
+  const mb = new Mailblastr('mb_test', { baseUrl: 'https://api.test', fetch: fn });
   await mb.automations.runs('au1', { status: ['failed', 'running'], limit: 10 });
   await mb.automations.runs('au1', { status: 'completed' });
   assert.deepEqual(calls.map((c) => c.url), [
@@ -946,10 +946,10 @@ test('automations.runs forwards a status filter as a comma-separated list', asyn
   ]);
 });
 
-test('automations.ai maps to POST /automations/:id/ai', async () => {
+test('automations.createWithAi maps to POST /automations/:id/ai', async () => {
   const { fn, calls } = mockFetch(200, { object: 'automation', id: 'au1', ai: { added_steps: 3, mode: 'workflow' } });
-  const mb = new MailBlastr('mb_test', { baseUrl: 'https://api.test', fetch: fn });
-  const res = await mb.automations.ai('au1', { prompt: 'welcome series', template_ids: ['t1'] });
+  const mb = new Mailblastr('mb_test', { baseUrl: 'https://api.test', fetch: fn });
+  const res = await mb.automations.createWithAi('au1', { prompt: 'welcome series', template_ids: ['t1'] });
   assert.equal(calls[0].url, 'https://api.test/automations/au1/ai');
   assert.deepEqual(calls[0].body, { prompt: 'welcome series', template_ids: ['t1'] });
   assert.equal(res.data?.ai.added_steps, 3);
@@ -960,7 +960,7 @@ test('domains.recordsCsv returns the CSV body as text', async () => {
   const fn = (async () => ({
     ok: true, status: 200, headers: { get: () => null }, text: async () => csv,
   })) as unknown as typeof fetch;
-  const mb = new MailBlastr('mb_test', { baseUrl: 'https://api.test', fetch: fn });
+  const mb = new Mailblastr('mb_test', { baseUrl: 'https://api.test', fetch: fn });
   const res = await mb.domains.recordsCsv('d1');
   assert.equal(res.error, null);
   assert.equal(res.data, csv);
@@ -968,7 +968,7 @@ test('domains.recordsCsv returns the CSV body as text', async () => {
 
 test('contacts.import supports storage_key + segment_id; createImportUpload maps correctly', async () => {
   const { fn, calls } = mockFetch(201, {});
-  const mb = new MailBlastr('mb_test', { baseUrl: 'https://api.test', fetch: fn });
+  const mb = new Mailblastr('mb_test', { baseUrl: 'https://api.test', fetch: fn });
   await mb.contacts.createImportUpload({ audienceId: 'a1', filename: 'big.csv', size: 1024 });
   await mb.contacts.import({ audienceId: 'a1', storage_key: 'uploads/a1/big.csv', segment_id: 'seg1' });
   assert.deepEqual(calls.map((c) => `${c.method} ${c.url}`), [
@@ -982,7 +982,7 @@ test('contacts.import supports storage_key + segment_id; createImportUpload maps
 test('webhooks.test surfaces a failed delivery as data.ok === false', async () => {
   // The route answers HTTP 200 even when the endpoint could not be reached.
   const { fn } = mockFetch(200, { object: 'webhook_test', id: 'wh1', ok: false, error: 'lookup_failed' });
-  const mb = new MailBlastr('mb_test', { baseUrl: 'https://api.test', fetch: fn });
+  const mb = new Mailblastr('mb_test', { baseUrl: 'https://api.test', fetch: fn });
   const res = await mb.webhooks.test('wh1');
   assert.equal(res.error, null);
   assert.equal(res.data?.ok, false);
@@ -991,7 +991,7 @@ test('webhooks.test surfaces a failed delivery as data.ok === false', async () =
 
 test('domains.mxCheck maps to GET /domains/mx-check', async () => {
   const { fn, calls } = mockFetch(200, { has_mx: false, ours: false, records: [] });
-  const mb = new MailBlastr('mb_test', { baseUrl: 'https://api.test', fetch: fn });
+  const mb = new Mailblastr('mb_test', { baseUrl: 'https://api.test', fetch: fn });
   await mb.domains.mxCheck('mail.example.com');
   assert.equal(calls[0].method, 'GET');
   assert.equal(calls[0].url, 'https://api.test/domains/mx-check?name=mail.example.com');

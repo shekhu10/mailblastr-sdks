@@ -31,7 +31,7 @@ import (
 
 const (
 	// Version is the SDK version, sent in the User-Agent header.
-	Version = "2.0.0"
+	Version = "3.0.0"
 	// DefaultBaseURL is the production MailBlastr API host.
 	DefaultBaseURL = "https://www.mailblastr.com/api"
 
@@ -285,6 +285,69 @@ func Int(i int) *int { return &i }
 
 // String returns a pointer to s.
 func String(s string) *string { return &s }
+
+// Null is a three-state PATCH field.
+//
+// The API's PATCH endpoints key off whether a JSON key is present: a key that
+// is absent leaves the field untouched, and a key present with an explicit
+// null CLEARS it. A plain Go pointer can only express two of those three
+// states, so the clearable fields use *Null[T]:
+//
+//	nil          -> the key is omitted; the server leaves the field alone
+//	Set(v)       -> the key is sent with v
+//	Clear[T]()   -> the key is sent as JSON null; the server clears the field
+//
+// For example, re-targeting and then un-targeting a campaign's segment:
+//
+//	client.Campaigns.Update(id, &mailblastr.UpdateCampaignRequest{
+//		SegmentId: mailblastr.Set("seg_123"),
+//	})
+//	client.Campaigns.Update(id, &mailblastr.UpdateCampaignRequest{
+//		SegmentId: mailblastr.Clear[string](),
+//	})
+type Null[T any] struct {
+	value *T
+}
+
+// Set builds a PATCH field that sends v.
+func Set[T any](v T) *Null[T] { return &Null[T]{value: &v} }
+
+// Clear builds a PATCH field that sends an explicit JSON null, clearing the
+// field server-side. The type parameter matches the struct field, e.g.
+// mailblastr.Clear[string]().
+func Clear[T any]() *Null[T] { return &Null[T]{} }
+
+// Value reports the value the field carries. ok is false when the field
+// clears the server-side value (or the receiver is nil).
+func (n *Null[T]) Value() (value T, ok bool) {
+	var zero T
+	if n == nil || n.value == nil {
+		return zero, false
+	}
+	return *n.value, true
+}
+
+// MarshalJSON emits the carried value, or JSON null when the field clears.
+func (n *Null[T]) MarshalJSON() ([]byte, error) {
+	if n == nil || n.value == nil {
+		return []byte("null"), nil
+	}
+	return json.Marshal(*n.value)
+}
+
+// UnmarshalJSON accepts a value or JSON null.
+func (n *Null[T]) UnmarshalJSON(data []byte) error {
+	if string(data) == "null" {
+		n.value = nil
+		return nil
+	}
+	var v T
+	if err := json.Unmarshal(data, &v); err != nil {
+		return err
+	}
+	n.value = &v
+	return nil
+}
 
 // esc percent-encodes a path segment so ids like "a/../b" can't traverse the
 // URL path.

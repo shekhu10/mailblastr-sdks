@@ -74,10 +74,10 @@ $mb->contacts->import(['audienceId' => 'aud_1', 'storage_key' => 'imports/abc.cs
 check_same('contacts.import: storage_key body', ['storage_key' => 'imports/abc.csv'], $t->lastJson());
 
 // ---- presigned direct upload ----
-$mb->contacts->uploadUrl(['audienceId' => 'aud_1', 'filename' => 'leads.csv', 'size' => 2048]);
-check_same('contacts.uploadUrl: method', 'POST', $t->last()['method']);
-check_same('contacts.uploadUrl: path', '/audiences/aud_1/contacts/import/upload', $t->lastPath());
-check_same('contacts.uploadUrl: body', ['filename' => 'leads.csv', 'size' => 2048], $t->lastJson());
+$mb->contacts->createImportUpload(['audienceId' => 'aud_1', 'filename' => 'leads.csv', 'size' => 2048]);
+check_same('contacts.createImportUpload: method', 'POST', $t->last()['method']);
+check_same('contacts.createImportUpload: path', '/audiences/aud_1/contacts/import/upload', $t->lastPath());
+check_same('contacts.createImportUpload: body', ['filename' => 'leads.csv', 'size' => 2048], $t->lastJson());
 
 // ---- update: flat by email keeps domain in body ----
 $mb->contacts->update([

@@ -260,3 +260,44 @@ func TestContactsListSegmentsReturnsReducedRows(t *testing.T) {
 		t.Errorf("reduced row not decoded: %+v", row)
 	}
 }
+
+// GetTopics is paginated exactly like its siblings (ListSegments,
+// Segments.Contacts, Receiving.ListAttachments): nil params returns every
+// topic, and supplying ListParams restores paging. Before 3.0.0 the method
+// took no params at all, so limit/after/before were unreachable from Go.
+func TestContactsGetTopicsPagination(t *testing.T) {
+	client := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/contacts/con_1/topics" {
+			t.Errorf("%s %s, want GET /contacts/con_1/topics", r.Method, r.URL.Path)
+		}
+		q := r.URL.Query()
+		if q.Get("limit") != "2" {
+			t.Errorf("limit = %q, want 2", q.Get("limit"))
+		}
+		if q.Get("after") != "top_9" {
+			t.Errorf("after = %q, want top_9", q.Get("after"))
+		}
+		w.Write([]byte(`{"object":"list","has_more":true,"data":[{"id":"top_1","name":"Product","description":"","subscription":"opt_in"}]}`))
+	})
+
+	topics, err := client.Contacts.GetTopics("con_1", &ListParams{Limit: 2, After: "top_9"})
+	if err != nil {
+		t.Fatalf("GetTopics: %v", err)
+	}
+	if !topics.HasMore || len(topics.Data) != 1 || topics.Data[0].Id != "top_1" {
+		t.Errorf("unexpected topics: %+v", topics)
+	}
+}
+
+func TestContactsGetTopicsNilParamsSendsNoQuery(t *testing.T) {
+	client := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.RawQuery != "" {
+			t.Errorf("query = %q, want empty", r.URL.RawQuery)
+		}
+		w.Write([]byte(`{"object":"list","has_more":false,"data":[]}`))
+	})
+
+	if _, err := client.Contacts.GetTopics("con_1", nil); err != nil {
+		t.Fatalf("GetTopics: %v", err)
+	}
+}

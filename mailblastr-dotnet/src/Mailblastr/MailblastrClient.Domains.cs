@@ -27,7 +27,7 @@ public partial class MailblastrClient
     public Task<ObjectRef> DomainVerifyAsync(string domainId, CancellationToken cancellationToken = default)
         => RequestAsync<ObjectRef>(HttpMethod.Post, $"/domains/{E(domainId)}/verify", null, null, cancellationToken);
 
-    public Task<MxCheckResult> DomainCheckMxAsync(string domainName, CancellationToken cancellationToken = default)
+    public Task<MxCheckResult> DomainMxCheckAsync(string domainName, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(domainName);
         return RequestAsync<MxCheckResult>(HttpMethod.Get, "/domains/mx-check" + Query(("name", domainName)), null, null, cancellationToken);

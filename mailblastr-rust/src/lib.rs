@@ -1,13 +1,13 @@
 //! Official Rust SDK for the [MailBlastr](https://www.mailblastr.com) email API.
 //!
 //! ```no_run
-//! use mailblastr::{CreateEmailBaseOptions, Mailblastr, Result};
+//! use mailblastr::{SendEmailOptions, Mailblastr, Result};
 //!
 //! #[tokio::main]
 //! async fn main() -> Result<()> {
 //!     let mailblastr = Mailblastr::new("mb_xxxxxxxxx");
 //!
-//!     let email = CreateEmailBaseOptions::new(
+//!     let email = SendEmailOptions::new(
 //!         "Acme <hello@yourdomain.com>",
 //!         ["user@example.com"],
 //!         "Hello from MailBlastr",
@@ -33,7 +33,7 @@
 //! already went out when a batch failed part way through.
 //!
 //! ```no_run
-//! # async fn run(mb: mailblastr::Mailblastr, email: mailblastr::CreateEmailBaseOptions) {
+//! # async fn run(mb: mailblastr::Mailblastr, email: mailblastr::SendEmailOptions) {
 //! match mb.emails.send(email).await {
 //!     Ok(sent) => println!("sent {}", sent.id),
 //!     Err(err) => match err.api() {

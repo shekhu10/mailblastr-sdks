@@ -70,9 +70,9 @@ module Mailblastr
       #
       # Returns { valid: true } or { valid: false, reason: "..." }.
       #
-      #   result = Mailblastr::Webhooks.verify_signature(request.raw_post, request.headers.to_h, secret)
+      #   result = Mailblastr::Webhooks.verify(request.raw_post, request.headers.to_h, secret)
       #   head :unauthorized unless result[:valid]
-      def verify_signature(payload, headers, secret, tolerance: 300)
+      def verify(payload, headers, secret, tolerance: 300)
         id = read_header(headers, "svix-id")
         timestamp = read_header(headers, "svix-timestamp")
         sig_header = read_header(headers, "svix-signature")
