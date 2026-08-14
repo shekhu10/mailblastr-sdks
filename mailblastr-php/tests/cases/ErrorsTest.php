@@ -177,7 +177,7 @@ check_same('client: custom baseUrl', 'https://api.staging.mailblastr.com/emails/
 $mb->emails->get('em_1');
 check('client: default base URL', str_starts_with($t->last()['url'], 'https://www.mailblastr.com/api/'));
 check('client: user-agent header present', in_array('User-Agent: mailblastr-php/' . \Mailblastr\Mailblastr::VERSION, $t->last()['headers'], true));
-check_same('client: version', '3.0.0', \Mailblastr\Mailblastr::VERSION);
+check_same('client: version', '3.0.1', \Mailblastr\Mailblastr::VERSION);
 
 // The API rejects a blank User-Agent with a 403 before authenticating, so every
 // request — JSON and raw/binary alike — must carry a non-empty one.
