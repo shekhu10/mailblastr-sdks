@@ -291,7 +291,8 @@ public class CampaignCreateOptions
     [JsonPropertyName("subject")]
     public string Subject { get; set; } = null!;
 
-    /// <summary>HTML body. Markdown-style links and bare URLs become tracked hyperlinks at send time.</summary>
+    /// <summary>HTML body. Ordinary links become tracked redirects at send time —
+    /// so do URLs in the <c>text</c> body. Your stored campaign is never modified.</summary>
     [JsonPropertyName("html")]
     public string? HtmlBody { get; set; }
 

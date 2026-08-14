@@ -122,12 +122,26 @@ export interface SendEmailOptions {
   cc?: string | string[];
   reply_to?: string | string[];
   /**
-   * HTML body. Markdown-style `[text](url)` links and bare URLs
-   * (`https://…` / `www.…`) in the body text are converted to tracked
-   * hyperlinks automatically at send time — content already inside `<a>` tags,
-   * attribute values, and `<pre>`/`<code>` blocks are left untouched.
+   * HTML body. Write ordinary links — every destination is converted to a
+   * tracked redirect AT SEND TIME (when the sending domain has click tracking
+   * on): `<a href>` targets, markdown-style `[text](url)` links, and bare URLs
+   * or domains (`https://…`, `www.…`, `acme.com`) in the body text. Link text
+   * is preserved; content already inside `<a>` tags, attribute values, and
+   * `<pre>`/`<code>` blocks are left untouched, and unsubscribe/preference
+   * links are never wrapped.
+   *
+   * The content you send is stored and returned to you UNCHANGED — only the
+   * copy delivered to the recipient carries the tracking URL.
    */
   html?: string;
+  /**
+   * Plain-text body, sent as the `text/plain` alternative. URLs in it are
+   * rewritten to tracked redirects at send time under the same rule as `html`,
+   * so a click is recorded no matter which alternative the recipient's mail
+   * client renders. Everything else is sent verbatim.
+   *
+   * Omit to derive the text part from `html`; pass `''` to send no text part.
+   */
   text?: string;
   /**
    * Inbox preview text (preheader) shown next to the subject in the
@@ -606,12 +620,26 @@ export interface CreateCampaignOptions {
   from: string;
   subject: string;
   /**
-   * HTML body. Markdown-style `[text](url)` links and bare URLs
-   * (`https://…` / `www.…`) in the body text are converted to tracked
-   * hyperlinks automatically at send time — content already inside `<a>` tags,
-   * attribute values, and `<pre>`/`<code>` blocks are left untouched.
+   * HTML body. Write ordinary links — every destination is converted to a
+   * tracked redirect AT SEND TIME (when the sending domain has click tracking
+   * on): `<a href>` targets, markdown-style `[text](url)` links, and bare URLs
+   * or domains (`https://…`, `www.…`, `acme.com`) in the body text. Link text
+   * is preserved; content already inside `<a>` tags, attribute values, and
+   * `<pre>`/`<code>` blocks are left untouched, and unsubscribe/preference
+   * links are never wrapped.
+   *
+   * The content you send is stored and returned to you UNCHANGED — only the
+   * copy delivered to the recipient carries the tracking URL.
    */
   html?: string;
+  /**
+   * Plain-text body, sent as the `text/plain` alternative. URLs in it are
+   * rewritten to tracked redirects at send time under the same rule as `html`,
+   * so a click is recorded no matter which alternative the recipient's mail
+   * client renders. Everything else is sent verbatim.
+   *
+   * Omit to derive the text part from `html`; pass `''` to send no text part.
+   */
   text?: string;
   reply_to?: string | string[];
   preview_text?: string;

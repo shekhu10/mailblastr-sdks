@@ -24,7 +24,15 @@ SendParams = TypedDict(
         "bcc": Union[str, List[str]],
         "cc": Union[str, List[str]],
         "reply_to": Union[str, List[str]],
+        # Ordinary links you write are converted to TRACKED redirects at send
+        # time (anchors, markdown links, and bare URLs/domains) when the sending
+        # domain has click tracking on. Link text is preserved and opt-out links
+        # are never wrapped. What you send is stored and returned UNCHANGED —
+        # only the delivered copy carries the tracking URL.
         "html": str,
+        # Plain-text alternative. URLs in it are rewritten to tracked redirects
+        # too, so a click counts whichever alternative the recipient's client
+        # renders. Omit to derive it from html; pass "" to send no text part.
         "text": str,
         "preview_text": str,  # inbox preheader, max 150 chars
         "headers": Dict[str, str],

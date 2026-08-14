@@ -42,8 +42,20 @@ public final class SendEmailRequest implements JsonPayload {
         public Builder cc(String... cc) { m.put("cc", Arrays.asList(cc)); return this; }
         public Builder bcc(String... bcc) { m.put("bcc", Arrays.asList(bcc)); return this; }
         public Builder replyTo(String... replyTo) { m.put("reply_to", Arrays.asList(replyTo)); return this; }
-        /** HTML body — markdown-style links and bare URLs become tracked hyperlinks at send time. */
+        /**
+         * HTML body. Write ordinary links — every destination becomes a tracked
+         * redirect at send time (when the sending domain has click tracking on):
+         * anchor targets, markdown-style links, and bare URLs or domains in the
+         * body text. Link text is preserved and opt-out links are never wrapped.
+         * The content you send is stored and returned UNCHANGED — only the
+         * delivered copy carries the tracking URL.
+         */
         public Builder html(String html) { m.put("html", html); return this; }
+        /**
+         * Plain-text body (the text/plain alternative). URLs in it are rewritten
+         * to tracked redirects at send time under the same rule as html, so a
+         * click counts whichever alternative the recipient's client renders.
+         */
         public Builder text(String text) { m.put("text", text); return this; }
         /** Inbox preview text (preheader), max 150 characters. */
         public Builder previewText(String previewText) { m.put("preview_text", previewText); return this; }

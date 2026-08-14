@@ -59,12 +59,24 @@ public class EmailMessage
     public EmailAddressList? ReplyTo { get; set; }
 
     /// <summary>
-    /// HTML body. Markdown-style <c>[text](url)</c> links and bare URLs in the
-    /// body text are converted to tracked hyperlinks automatically at send time.
+    /// HTML body. Write ordinary links — every destination becomes a tracked
+    /// redirect at send time (when the sending domain has click tracking on):
+    /// <c>&lt;a href&gt;</c> targets, markdown-style <c>[text](url)</c> links, and
+    /// bare URLs or domains (<c>https://…</c>, <c>www.…</c>, <c>acme.com</c>) in
+    /// the body text. Link text is preserved and opt-out links are never wrapped.
+    /// The content you send is stored and returned UNCHANGED — only the copy
+    /// delivered to the recipient carries the tracking URL.
     /// </summary>
     [JsonPropertyName("html")]
     public string? HtmlBody { get; set; }
 
+    /// <summary>
+    /// Plain-text body (the <c>text/plain</c> alternative). URLs in it are
+    /// rewritten to tracked redirects at send time under the same rule as
+    /// <c>html</c>, so a click counts whichever alternative the recipient's mail
+    /// client renders. Omit to derive it from <c>html</c>; pass <c>""</c> to send
+    /// no text part.
+    /// </summary>
     [JsonPropertyName("text")]
     public string? TextBody { get; set; }
 
@@ -126,12 +138,24 @@ public class BatchEmailMessage
     public EmailAddressList? ReplyTo { get; set; }
 
     /// <summary>
-    /// HTML body. Markdown-style <c>[text](url)</c> links and bare URLs in the
-    /// body text are converted to tracked hyperlinks automatically at send time.
+    /// HTML body. Write ordinary links — every destination becomes a tracked
+    /// redirect at send time (when the sending domain has click tracking on):
+    /// <c>&lt;a href&gt;</c> targets, markdown-style <c>[text](url)</c> links, and
+    /// bare URLs or domains (<c>https://…</c>, <c>www.…</c>, <c>acme.com</c>) in
+    /// the body text. Link text is preserved and opt-out links are never wrapped.
+    /// The content you send is stored and returned UNCHANGED — only the copy
+    /// delivered to the recipient carries the tracking URL.
     /// </summary>
     [JsonPropertyName("html")]
     public string? HtmlBody { get; set; }
 
+    /// <summary>
+    /// Plain-text body (the <c>text/plain</c> alternative). URLs in it are
+    /// rewritten to tracked redirects at send time under the same rule as
+    /// <c>html</c>, so a click counts whichever alternative the recipient's mail
+    /// client renders. Omit to derive it from <c>html</c>; pass <c>""</c> to send
+    /// no text part.
+    /// </summary>
     [JsonPropertyName("text")]
     public string? TextBody { get; set; }
 

@@ -1,6 +1,6 @@
 {
   "name": "mailblastr-cli",
-  "version": "3.0.0",
+  "version": "3.0.1",
   "description": "Official command-line interface for the MailBlastr email API.",
   "keywords": [
     "mailblastr",
@@ -38,6 +38,6 @@
   },
   "dependencies": {
     "commander": "^12.1.0",
-    "mailblastr": "^3.0.0"
+    "mailblastr": "^3.0.1"
   }
 }

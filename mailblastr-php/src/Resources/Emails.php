@@ -25,7 +25,9 @@ class Emails extends Resource
      * Send a single email. POST /emails
      *
      * @param array $payload from (<=320 chars), to (1-50 recipients), subject,
-     *                       html/text, cc (<=50), bcc (<=50), reply_to,
+     *                       html/text (ordinary links in BOTH are converted to
+     *                       tracked redirects at send time; your stored content
+     *                       is never modified), cc (<=50), bcc (<=50), reply_to,
      *                       preview_text (<=150 chars), headers, attachments
      *                       (each with 'filename' + 'content' base64 OR 'path'
      *                       URL; <=25MB decoded each, <=40MB decoded total),

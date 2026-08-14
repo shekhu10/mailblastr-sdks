@@ -261,7 +261,8 @@ pub struct CreateCampaignOptions {
     pub domain: String,
     pub from: String,
     pub subject: String,
-    /// HTML body (markdown-style links / bare URLs become tracked links).
+    /// HTML body. Ordinary links become tracked redirects at send time — so do
+    /// URLs in the `text` body. Your stored campaign is never modified.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub html: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]

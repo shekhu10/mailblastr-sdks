@@ -67,9 +67,17 @@ type SendEmailRequest struct {
 	// Cc holds at most MaxRecipients addresses.
 	Cc      []string `json:"cc,omitempty"`
 	ReplyTo []string `json:"reply_to,omitempty"`
-	// Html body. Markdown-style [text](url) links and bare URLs are converted
-	// to tracked hyperlinks automatically at send time.
+	// Html body. Write ordinary links — every destination becomes a tracked
+	// redirect at send time (when the sending domain has click tracking on):
+	// <a href> targets, markdown-style [text](url) links, and bare URLs or
+	// domains (https://…, www.…, acme.com) in the body text. Link text is
+	// preserved and opt-out links are never wrapped. The content you send is
+	// stored and returned UNCHANGED — only the delivered copy is rewritten.
 	Html string `json:"html,omitempty"`
+	// Text is the plain-text alternative. URLs in it are rewritten to tracked
+	// redirects at send time under the same rule as Html, so a click counts
+	// whichever alternative the recipient's client renders. Omit to derive it
+	// from Html; send an explicit empty text part by omitting Html instead.
 	Text string `json:"text,omitempty"`
 	// PreviewText is the inbox preview (preheader) shown next to the subject.
 	// Max MaxPreviewTextLength characters.
@@ -100,9 +108,17 @@ type BatchEmailRequest struct {
 	Bcc     []string `json:"bcc,omitempty"`
 	Cc      []string `json:"cc,omitempty"`
 	ReplyTo []string `json:"reply_to,omitempty"`
-	// Html body. Markdown-style [text](url) links and bare URLs are converted
-	// to tracked hyperlinks automatically at send time.
+	// Html body. Write ordinary links — every destination becomes a tracked
+	// redirect at send time (when the sending domain has click tracking on):
+	// <a href> targets, markdown-style [text](url) links, and bare URLs or
+	// domains (https://…, www.…, acme.com) in the body text. Link text is
+	// preserved and opt-out links are never wrapped. The content you send is
+	// stored and returned UNCHANGED — only the delivered copy is rewritten.
 	Html string `json:"html,omitempty"`
+	// Text is the plain-text alternative. URLs in it are rewritten to tracked
+	// redirects at send time under the same rule as Html, so a click counts
+	// whichever alternative the recipient's client renders. Omit to derive it
+	// from Html; send an explicit empty text part by omitting Html instead.
 	Text string `json:"text,omitempty"`
 	// PreviewText is the inbox preview (preheader) shown next to the subject.
 	// Max MaxPreviewTextLength characters.

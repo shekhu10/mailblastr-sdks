@@ -3,6 +3,44 @@
 All nine MailBlastr SDKs release in lockstep — one version, one tag, every registry.
 Dates are release dates; entries cover every package unless a language is called out.
 
+## 3.0.1 — 2026-08-14
+
+Documentation only. No API surface, request shape or behaviour changes in any SDK — you
+can upgrade or skip this one freely.
+
+**What actually changed is on the server, and it changes what your recipients receive.**
+MailBlastr rewrites the links in your email into tracked redirects at send time. That
+rewrite previously covered the `html` body only: the `text` body was transmitted verbatim,
+so a URL you put in it reached the recipient untracked. A click from a mail client
+rendering the plain-text alternative was therefore recorded as nothing, and your click
+rates were undercounts of an unknown size.
+
+URLs in the `text` body are now rewritten the same way as the ones in `html`. Nothing in
+your integration needs to change — you keep sending ordinary links, and the SDK keeps
+sending them to the API untouched:
+
+```ts
+await mb.emails.send({
+  from: 'you@yourdomain.com',
+  to: 'them@example.com',
+  subject: 'Spring sale',
+  html: '<p>Our <a href="https://acme.com/sale">deals</a> are live.</p>',
+  text: 'Our deals are live: https://acme.com/sale',   // now tracked too
+});
+```
+
+Two properties worth stating explicitly, because both are load-bearing and neither is
+obvious:
+
+- **Your content is never modified.** What you send is what `GET /emails/:id`, the
+  dashboard and your campaign editor keep showing you, forever. The tracked URL exists
+  only in the copy handed to the recipient.
+- **Every recipient gets their own link,** so "which of these people clicked?" has an
+  answer — and a delivered link keeps resolving to your destination indefinitely, on the
+  hundredth click as on the first, well past your log-retention window.
+
+The docstrings on `html` and `text` in every SDK now say all of this.
+
 ## 3.0.0 — 2026-08-09
 
 **3.0.0 lands one day after 2.0.0, and it is worth saying plainly why.** It ships no new

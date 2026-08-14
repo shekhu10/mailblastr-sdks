@@ -6,6 +6,13 @@ module Mailblastr
     class << self
       # Send a single email. POST /emails
       #   Mailblastr::Emails.send({ from: "...", to: ["..."], subject: "...", html: "..." })
+      #
+      # Write ordinary links. Anchors, markdown links and bare URLs/domains in
+      # BOTH the :html and :text bodies are converted to tracked redirects at
+      # send time (when the sending domain has click tracking on), so a click is
+      # recorded whichever alternative the recipient's mail client renders.
+      # Opt-out links are never wrapped, and the content you send is stored and
+      # returned UNCHANGED — only the delivered copy carries the tracking URL.
       # Pass { idempotency_key: "order-123" } as the second argument to retry safely.
       def send(params, options = {})
         Client.request(:post, "/emails", body: params, options: options)

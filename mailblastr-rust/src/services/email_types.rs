@@ -115,12 +115,20 @@ pub struct SendEmailOptions {
     pub bcc: Option<Vec<String>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub reply_to: Option<Vec<String>>,
-    /// HTML body. Markdown-style `[text](url)` links and bare URLs in the
-    /// body text are converted to tracked hyperlinks automatically at send
-    /// time (content inside `<a>` tags, attributes, and `<pre>`/`<code>`
-    /// blocks is left untouched).
+    /// HTML body. Write ordinary links — every destination becomes a tracked
+    /// redirect AT SEND TIME (when the sending domain has click tracking on):
+    /// `<a href>` targets, markdown-style `[text](url)` links, and bare URLs or
+    /// domains (`https://…`, `www.…`, `acme.com`) in the body text. Link text is
+    /// preserved; content inside `<a>` tags, attributes and `<pre>`/`<code>`
+    /// blocks is untouched, and opt-out links are never wrapped. The content you
+    /// send is stored and returned UNCHANGED — only the delivered copy carries
+    /// the tracking URL.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub html: Option<String>,
+    /// Plain-text body (the `text/plain` alternative). URLs in it are rewritten
+    /// to tracked redirects at send time under the same rule as `html`, so a
+    /// click counts whichever alternative the recipient's client renders.
+    /// Omit to derive it from `html`; pass `""` to send no text part.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub text: Option<String>,
     /// Inbox preview text (preheader) shown next to the subject in the
@@ -249,11 +257,20 @@ pub struct BatchEmailOptions {
     pub bcc: Option<Vec<String>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub reply_to: Option<Vec<String>>,
-    /// HTML body. Markdown-style `[text](url)` links and bare URLs in the
-    /// body text are converted to tracked hyperlinks automatically at send
-    /// time.
+    /// HTML body. Write ordinary links — every destination becomes a tracked
+    /// redirect AT SEND TIME (when the sending domain has click tracking on):
+    /// `<a href>` targets, markdown-style `[text](url)` links, and bare URLs or
+    /// domains (`https://…`, `www.…`, `acme.com`) in the body text. Link text is
+    /// preserved; content inside `<a>` tags, attributes and `<pre>`/`<code>`
+    /// blocks is untouched, and opt-out links are never wrapped. The content you
+    /// send is stored and returned UNCHANGED — only the delivered copy carries
+    /// the tracking URL.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub html: Option<String>,
+    /// Plain-text body (the `text/plain` alternative). URLs in it are rewritten
+    /// to tracked redirects at send time under the same rule as `html`, so a
+    /// click counts whichever alternative the recipient's client renders.
+    /// Omit to derive it from `html`; pass `""` to send no text part.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub text: Option<String>,
     /// Inbox preview text (preheader). Max 150 characters.

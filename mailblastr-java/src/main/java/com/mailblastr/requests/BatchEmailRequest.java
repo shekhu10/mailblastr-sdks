@@ -35,7 +35,10 @@ public final class BatchEmailRequest implements JsonPayload {
         public Builder cc(String... cc) { m.put("cc", Arrays.asList(cc)); return this; }
         public Builder bcc(String... bcc) { m.put("bcc", Arrays.asList(bcc)); return this; }
         public Builder replyTo(String... replyTo) { m.put("reply_to", Arrays.asList(replyTo)); return this; }
-        /** HTML body — markdown-style links and bare URLs become tracked hyperlinks at send time. */
+        /**
+         * HTML body. Ordinary links become tracked redirects at send time; so do
+         * URLs in the {@code text} body. Your stored content is never modified.
+         */
         public Builder html(String html) { m.put("html", html); return this; }
         public Builder text(String text) { m.put("text", text); return this; }
         /** Inbox preview text (preheader), max 150 characters. */
