@@ -367,8 +367,10 @@ second resource. De-duplicate on your side instead.
 
 ### Rate limits
 
-Only the `/emails` routes are rate limited: 30 requests per minute per IP,
-covering reads and the inbound subtree as well as sends. Those responses carry
+Only the `/emails` SEND routes are rate limited: 30 requests per minute per IP.
+Reads (`GET /emails`, `GET /emails/:id`, the `receiving` subtree and attachment
+listings) are NOT subject to that cap — paging a large list no longer risks a
+429. Capped responses carry
 `RateLimit-Limit` / `RateLimit-Remaining` / `RateLimit-Reset` headers on success
 too. `automations->createWithAi()` is separately limited to 20 requests per minute per
 account. The default transport retries a 429 or 503 automatically (honouring

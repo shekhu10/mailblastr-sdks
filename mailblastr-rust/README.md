@@ -371,7 +371,7 @@ Reusing a key with a different payload is `409 invalid_idempotent_request`; reus
 
 ### Rate limits
 
-Only the `/emails` surface is rate-limited: 30 requests / 60s per client IP, covering reads and the whole `emails.receiving` subtree. Those responses carry `RateLimit-Limit` / `RateLimit-Remaining` / `RateLimit-Reset` on success as well as on a 429, which is the supported way to pace yourself. The client already retries `429` and `503` automatically (honoring `Retry-After`, up to `DEFAULT_MAX_RETRIES` times) — tune it with `Mailblastr::builder(key).max_retries(n)`.
+Only the `/emails` **send** surface is rate-limited: 30 requests / 60s per client IP. Reads (`GET /emails`, `GET /emails/:id`, the whole `emails.receiving` subtree and attachment listings) are NOT subject to that cap, so paging a large list no longer risks a 429. Capped responses carry `RateLimit-Limit` / `RateLimit-Remaining` / `RateLimit-Reset` on success as well as on a 429, which is the supported way to pace yourself. The client already retries `429` and `503` automatically (honoring `Retry-After`, up to `DEFAULT_MAX_RETRIES` times) — tune it with `Mailblastr::builder(key).max_retries(n)`.
 
 ## Requirements
 

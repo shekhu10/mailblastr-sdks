@@ -402,7 +402,7 @@ Only `Emails.send` and `Batch.send` honour the header. Every other endpoint — 
 
 ## Rate limits
 
-Only the `/emails` routes are rate-limited: **30 requests per minute per IP**, covering reads as well as sends. Those responses carry `RateLimit-Limit`, `RateLimit-Remaining` and `RateLimit-Reset` headers (on successes too) so you can throttle before being rejected. The SDK retries a 429 or 503 automatically — up to `Mailblastr.max_retries` times (default 2), honouring `Retry-After`.
+Only the `/emails` **send** routes are rate-limited: **30 requests per minute per IP**. Reads (`GET /emails`, `GET /emails/:id`, the `receiving` subtree and attachment listings) are NOT subject to that cap, so paging a large list no longer risks a 429. Capped responses carry `RateLimit-Limit`, `RateLimit-Remaining` and `RateLimit-Reset` headers (on successes too) so you can throttle before being rejected. The SDK retries a 429 or 503 automatically — up to `Mailblastr.max_retries` times (default 2), honouring `Retry-After`.
 
 ## Documentation
 
