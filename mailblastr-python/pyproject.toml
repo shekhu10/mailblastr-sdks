@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "mailblastr"
-version = "3.0.1"
+version = "4.0.0"
 description = "Official MailBlastr Python SDK — send transactional and marketing email from your own verified domain."
 readme = "README.md"
 license = { text = "MIT" }

@@ -3,6 +3,44 @@
 All nine MailBlastr SDKs release in lockstep — one version, one tag, every registry.
 Dates are release dates; entries cover every package unless a language is called out.
 
+## 4.0.0 — 2026-08-19
+
+**No API surface, request shape or behaviour changes in any SDK.** Every client method,
+argument and return type is identical to 3.0.1. The major version was chosen
+deliberately for release hygiene, not because anything broke — with one real
+consequence for Go, below.
+
+Because this is a major, your dependency ranges will NOT pick it up automatically:
+`^3.0.1` (npm), `~> 3.0` (RubyGems), `"3"` (Cargo) and friends all stay on 3.0.1
+until you bump the constraint yourself. Nothing forces you to.
+
+#### Go: the module path is now `.../mailblastr-go/v4`
+
+Go encodes the major version in the import path for any major ≥ 2, so v4 is a genuine
+source change for Go users:
+
+```bash
+go get github.com/shekhu10/mailblastr-sdks/mailblastr-go/v4
+```
+
+```go
+import "github.com/shekhu10/mailblastr-sdks/mailblastr-go/v4"
+```
+
+Nothing else in the Go API moved — only the path. (Same migration shape as the v3 bump.)
+
+#### Corrected: the `/emails` rate limit covers SENDS only
+
+The php, ruby, rust, go and java READMEs each claimed the 30 requests/60s per-IP cap
+covered reads as well as sends. That described the old server behaviour, where the send
+limiter matched by mount prefix and therefore also caught the GETs. **The server changed:
+the enforced limiter now depends on the HTTP method**, so reads are not capped —
+`GET /emails`, `GET /emails/:id`, the `receiving` subtree and attachment listings.
+
+Practically: paging a large list no longer risks a 429, and any client-side throttling
+you added for reads can go. npm and python only ever documented retry handling
+(scope-agnostic, still accurate); the CLI and .NET READMEs never mentioned rate limits.
+
 ## 3.0.1 — 2026-08-14
 
 Documentation only. No API surface, request shape or behaviour changes in any SDK — you

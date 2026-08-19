@@ -5,7 +5,7 @@ Official Go SDK for the [MailBlastr](https://www.mailblastr.com) email API — s
 ## Install
 
 ```bash
-go get github.com/shekhu10/mailblastr-sdks/mailblastr-go/v3
+go get github.com/shekhu10/mailblastr-sdks/mailblastr-go/v4
 ```
 
 Requires Go 1.22+. The SDK depends only on the Go standard library.
@@ -20,7 +20,7 @@ package main
 import (
 	"fmt"
 
-	"github.com/shekhu10/mailblastr-sdks/mailblastr-go/v3"
+	"github.com/shekhu10/mailblastr-sdks/mailblastr-go/v4"
 )
 
 func main() {
