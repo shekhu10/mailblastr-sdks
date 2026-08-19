@@ -3,7 +3,7 @@
 
 use std::collections::HashMap;
 
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Serialize, Serializer};
 use serde_json::{Map, Value};
 
 // ── Options ──────────────────────────────────────────────────────────────────
@@ -92,6 +92,36 @@ impl TemplateRef {
     }
 }
 
+/// Which published template a payload references, or `None` when it references
+/// none.
+///
+/// Mirrors the server's own extraction EXACTLY (lib/send/resolve_template.ts
+/// `templateRefOf`): a nested `template` SHADOWS `template_id`, so a
+/// [`TemplateRef`] carrying neither `id` nor `alias` references nothing even
+/// when `template_id` is set.
+fn template_ref<'a>(
+    nested: Option<&'a TemplateRef>,
+    template_id: Option<&'a str>,
+) -> Option<&'a str> {
+    match nested {
+        Some(t) => t.id.as_deref().or(t.alias.as_deref()),
+        None => template_id,
+    }
+}
+
+/// Drop `from`/`subject` from an already-serialized send payload when they are
+/// empty strings. Only ever called for a payload that references a template.
+fn drop_empty_from_and_subject(mut value: Value) -> Value {
+    if let Some(map) = value.as_object_mut() {
+        for key in ["from", "subject"] {
+            if map.get(key).and_then(Value::as_str) == Some("") {
+                map.remove(key);
+            }
+        }
+    }
+    value
+}
+
 /// Options for sending an email (`POST /emails`).
 ///
 /// ```no_run
@@ -105,9 +135,16 @@ impl TemplateRef {
 /// .with_html("<p>Hi 👋</p>");
 /// ```
 #[derive(Debug, Clone, Default, Serialize)]
+#[serde(remote = "Self")]
 pub struct SendEmailOptions {
+    /// Sender — `"Name <addr@domain>"` or a bare address — on one of your
+    /// verified domains. Leave it empty ONLY when a template is referenced:
+    /// the key is then omitted and the template's own from address fills it.
     pub from: String,
     pub to: Vec<String>,
+    /// Required for an ordinary send. When a template is referenced an empty
+    /// value is omitted so the template's rendered subject fills it; without a
+    /// template `""` is a legal empty subject and is delivered as one.
     pub subject: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub cc: Option<Vec<String>>,
@@ -145,7 +182,9 @@ pub struct SendEmailOptions {
     /// Drop recipients unsubscribed from this topic (topic gating).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub topic_id: Option<String>,
-    /// Send using a saved template; its subject/html/text fill any omitted field.
+    /// Send using a saved template. Its rendered html/text become the body
+    /// (passing `html`/`text` as well is a 422), and its own `from`, `reply_to`
+    /// and `subject` fill whichever of those you leave empty or unset.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub template_id: Option<String>,
     /// Nested template reference (`template` OR `html`/`text`, not both).
@@ -242,14 +281,50 @@ impl SendEmailOptions {
     }
 }
 
+// Serialize the payload, omitting an EMPTY `from`/`subject` when — and only
+// when — a template is referenced.
+//
+// The API keys off key PRESENCE, not emptiness (lib/send/resolve_template.ts:
+// `body.from != null ? body.from : published.from`), so `"from":""` read as
+// "the caller supplied these": a template send with no explicit from was
+// rejected with 422 `missing_required_field`, and one with no explicit subject
+// went out with a BLANK subject line instead of the template's rendered one.
+// Non-template payloads are untouched — both keys are still always sent, so a
+// deliberately empty subject keeps working (only a NULL subject is "missing",
+// mailblastr_validate.ts:76) and a missing `from` still surfaces as the
+// server's own error rather than being silently reshaped here.
+//
+// `#[serde(remote = "Self")]` on the struct moves the derive onto an inherent
+// `serialize`, leaving the trait slot to this impl; the derive stays the single
+// source of truth for the field list, so a field added above needs no change
+// here.
+impl Serialize for SendEmailOptions {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        if template_ref(self.template.as_ref(), self.template_id.as_deref()).is_none() {
+            return SendEmailOptions::serialize(self, serializer);
+        }
+        let value = SendEmailOptions::serialize(self, serde_json::value::Serializer)
+            .map_err(serde::ser::Error::custom)?;
+        drop_empty_from_and_subject(value).serialize(serializer)
+    }
+}
+
 /// A single email in a batch send (`POST /emails/batch`). Identical to
 /// [`SendEmailOptions`] minus `attachments` and `scheduled_at` — the
 /// batch endpoint rejects both per item; send those individually via
 /// `emails.send`.
 #[derive(Debug, Clone, Default, Serialize)]
+#[serde(remote = "Self")]
 pub struct BatchEmailOptions {
+    /// Sender — see [`SendEmailOptions::from`]; empty is omitted when this item
+    /// references a template (the batch route resolves templates per item).
     pub from: String,
     pub to: Vec<String>,
+    /// See [`SendEmailOptions::subject`] — empty is omitted for a template
+    /// item, and sent as `""` otherwise.
     pub subject: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub cc: Option<Vec<String>>,
@@ -281,7 +356,9 @@ pub struct BatchEmailOptions {
     /// Drop recipients unsubscribed from this topic (topic gating).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub topic_id: Option<String>,
-    /// Send using a saved template; its subject/html/text fill any omitted field.
+    /// Send using a saved template. Its rendered html/text become the body
+    /// (passing `html`/`text` as well is a 422), and its own `from`, `reply_to`
+    /// and `subject` fill whichever of those you leave empty or unset.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub template_id: Option<String>,
     /// Nested template reference (`template` OR `html`/`text`, not both).
@@ -363,6 +440,25 @@ impl BatchEmailOptions {
             .get_or_insert_with(Map::new)
             .insert(key.into(), value.into());
         self
+    }
+}
+
+// One batch item follows the same rule as a single send — the batch route
+// resolves a template per item (app/api/emails/batch/route.ts), so an item that
+// references one must not pin `from`/`subject` to "". See the impl for
+// [`SendEmailOptions`] above for why key presence, not emptiness, is what
+// matters.
+impl Serialize for BatchEmailOptions {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        if template_ref(self.template.as_ref(), self.template_id.as_deref()).is_none() {
+            return BatchEmailOptions::serialize(self, serializer);
+        }
+        let value = BatchEmailOptions::serialize(self, serde_json::value::Serializer)
+            .map_err(serde::ser::Error::custom)?;
+        drop_empty_from_and_subject(value).serialize(serializer)
     }
 }
 

@@ -101,8 +101,21 @@ impl CampaignsSvc {
             .await
     }
 
-    /// Cancel a scheduled campaign (returns it to draft).
-    /// `POST /campaigns/:id/cancel`
+    /// Stop a campaign's remaining work. `POST /campaigns/:id/cancel`
+    ///
+    /// Accepted only on `scheduled`, `recurring`, `paused` and `queued`; any
+    /// other status is a `validation_error`. Which status you get back depends
+    /// on how far the send got:
+    /// - `scheduled` / `recurring` / `paused` → back to `draft`, editable and
+    ///   re-sendable; the pending job is dropped, and for a recurring template
+    ///   that also stops the recurrence.
+    /// - `queued` (already fanning out) → `canceled`, which is TERMINAL. Part
+    ///   of the audience has already been mailed, so it is deliberately not
+    ///   re-sendable; copies already handed to the mail service cannot be
+    ///   recalled. What stops is every remaining recipient — for a staggered
+    ///   campaign, every future batch-day.
+    ///
+    /// Read the returned [`Campaign::status`] to see which happened.
     pub async fn cancel(&self, campaign_id: &str) -> Result<Campaign> {
         let path = format!("/campaigns/{}/cancel", seg(campaign_id));
         self.config

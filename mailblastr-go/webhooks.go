@@ -221,12 +221,59 @@ func (s *WebhooksService) Verify(payload []byte, headers http.Header, secret str
 	return VerifyWebhookSignature(payload, headers, secret, opts)
 }
 
+// b64Alphabet is standard base64 (RFC 4648 §4). lenientB64 maps the URL-safe
+// '-'/'_' onto '+'/'/' before testing membership, so both spellings decode.
+const b64Alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
+
+// lenientB64 decodes base64 the way the signer does, not the way Go does.
+//
+// The backend derives its key with Node's Buffer.from(suffix, "base64")
+// (mailblastr_webapp/lib/crypto.ts secretToKey), which is LENIENT: it stops at
+// the first '=', ignores every other character outside the alphabet, accepts
+// the URL-safe '-'/'_' spellings, needs no padding, and drops a lone trailing
+// character that encodes no whole byte. base64.StdEncoding does none of that —
+// it rejects any length that is not a multiple of four and rejects '-'/'_'
+// outright. A caller-supplied secret (the optional `secret` field on POST
+// /webhooks, the path you take when mirroring a signing secret from another
+// provider) that is unpadded or URL-safe therefore derived a DIFFERENT key here
+// than at the signer, and secretToKey's err == nil guard then fell through to
+// the raw string INCLUDING the "whsec_" prefix — so every genuinely signed
+// delivery came back {Valid: false, Reason: "no_match"} and the handler 401'd
+// real MailBlastr events. Node, python (_b64_lenient) and php are all lenient;
+// this reproduces them byte for byte.
+func lenientB64(s string) []byte {
+	if i := strings.IndexByte(s, '='); i >= 0 {
+		s = s[:i] // Node's decoder treats '=' as a terminator, not as padding to skip
+	}
+	cleaned := strings.Map(func(r rune) rune {
+		switch {
+		case r == '-':
+			return '+'
+		case r == '_':
+			return '/'
+		case strings.ContainsRune(b64Alphabet, r):
+			return r
+		default:
+			return -1 // whitespace, punctuation, anything else: ignored, not fatal
+		}
+	}, s)
+	if len(cleaned)%4 == 1 {
+		cleaned = cleaned[:len(cleaned)-1] // a single leftover character encodes no byte
+	}
+	raw, err := base64.RawStdEncoding.DecodeString(cleaned)
+	if err != nil {
+		return nil // unreachable: cleaned is alphabet-only and never length%4 == 1
+	}
+	return raw
+}
+
 // secretToKey derives the HMAC key from a "whsec_"-prefixed secret
-// (base64-decodes the suffix); a secret without the prefix is used as raw
-// UTF-8 bytes.
+// (base64-decodes the suffix leniently, exactly as the signer does — see
+// lenientB64); a secret without the prefix, or one whose suffix decodes to
+// nothing, is used as raw UTF-8 bytes.
 func secretToKey(secret string) []byte {
-	if strings.HasPrefix(secret, "whsec_") {
-		if raw, err := base64.StdEncoding.DecodeString(strings.TrimPrefix(secret, "whsec_")); err == nil && len(raw) > 0 {
+	if suffix, ok := strings.CutPrefix(secret, "whsec_"); ok {
+		if raw := lenientB64(suffix); len(raw) > 0 {
 			return raw
 		}
 	}

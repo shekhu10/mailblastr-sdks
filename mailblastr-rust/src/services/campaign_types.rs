@@ -200,7 +200,9 @@ pub struct Campaign {
     pub reply_to: Option<String>,
     pub preview_text: Option<String>,
     /// `draft`, `queued` (the wire name for an in-flight `sending`),
-    /// `scheduled`, `recurring`, `paused`, `sent`, `failed`.
+    /// `scheduled`, `recurring`, `paused`, `canceled`, `sent`, `failed`.
+    /// `canceled` is terminal — a `queued` campaign stopped part-way; unlike a
+    /// canceled `scheduled` one (which returns to `draft`) it is not re-sendable.
     pub status: String,
     pub scheduled_at: Option<String>,
     /// IANA timezone the schedule + daily batching are evaluated in.
@@ -240,7 +242,8 @@ pub struct CampaignListItem {
     pub audience_id: String,
     /// Segment target (`None` ⇒ whole audience).
     pub segment_id: Option<String>,
-    /// `draft`, `queued`, `scheduled`, `recurring`, `paused`, `sent`, `failed`.
+    /// `draft`, `queued`, `scheduled`, `recurring`, `paused`, `canceled`,
+    /// `sent`, `failed`. `canceled` is terminal.
     pub status: String,
     /// Lightweight A/B marker — `enabled` plus metric/status/winner when
     /// enabled. Full A/B detail is on `campaigns.get` / `campaigns.ab`.

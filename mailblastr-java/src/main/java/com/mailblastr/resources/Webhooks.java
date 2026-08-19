@@ -98,8 +98,10 @@ public final class Webhooks extends Resource {
      * {@code svix-timestamp} and {@code svix-signature} headers (read
      * case-insensitively). A signature header may carry multiple
      * space-separated signatures; any one matching makes the delivery valid.
-     * A {@code whsec_}-prefixed secret is base64-decoded; other secrets are
-     * used as raw UTF-8 key bytes.
+     * A {@code whsec_}-prefixed secret is base64-decoded exactly as leniently
+     * as the signer decodes it — unpadded and URL-safe ({@code -}/{@code _})
+     * spellings all derive the same key; other secrets are used as raw UTF-8
+     * key bytes.
      *
      * <p>This is a pure local computation — it makes no HTTP request.
      *
@@ -155,18 +157,58 @@ public final class Webhooks extends Resource {
         return new VerifyWebhookResult(false, "no_match");
     }
 
+    /** Base64 alphabet, plus the URL-safe spellings of the last two characters. */
+    private static final String B64_ALPHABET =
+            "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/-_";
+
     /**
-     * Derive the HMAC key from a {@code whsec_}-prefixed secret (base64-decode
-     * the suffix); a secret without the prefix is used as raw UTF-8 bytes.
+     * Decode base64 the way the signer does, not the way Java does.
+     *
+     * <p>The backend derives its key with Node's {@code Buffer.from(suffix,
+     * 'base64')} (lib/crypto.ts {@code secretToKey}), which is LENIENT: it
+     * ignores characters outside the alphabet, accepts the URL-safe {@code -}
+     * and {@code _} spellings of {@code +} and {@code /}, needs no {@code =}
+     * padding, and drops a lone 1-character remainder (which carries no whole
+     * byte). {@code Base64.getDecoder()} tolerates only the missing padding: it
+     * throws on {@code -}/{@code _}, on any other out-of-alphabet character,
+     * and on a trailing 1-character group — and {@link #secretToKey(String)}
+     * then quietly fell back to the raw UTF-8 bytes of the whole
+     * {@code whsec_…} string. So a caller-supplied secret (the {@code secret}
+     * field on {@code POST /webhooks}, which is stored verbatim) written in the
+     * URL-safe alphabet produced a DIFFERENT key here than at the signer, and
+     * every authentic delivery came back {@code no_match} — silently dropping
+     * all real webhook traffic. This mirrors the signer instead, as the Node,
+     * Python and PHP SDKs already do.
+     */
+    private static byte[] b64Lenient(String text) {
+        StringBuilder cleaned = new StringBuilder(text.length());
+        for (int i = 0; i < text.length(); i++) {
+            char c = text.charAt(i);
+            if (B64_ALPHABET.indexOf(c) < 0) continue;
+            cleaned.append(c == '-' ? '+' : c == '_' ? '/' : c);
+        }
+        // A single leftover character encodes no whole byte; Node discards it
+        // rather than failing the decode. Java's MIME decoder would throw
+        // ("Last unit does not have enough valid bits") and lose the key.
+        if (cleaned.length() % 4 == 1) cleaned.setLength(cleaned.length() - 1);
+        try {
+            // The MIME decoder, unlike getDecoder(), tolerates absent padding.
+            return Base64.getMimeDecoder().decode(cleaned.toString());
+        } catch (IllegalArgumentException ignored) { // defensive — input is pre-cleaned
+            return new byte[0];
+        }
+    }
+
+    /**
+     * Derive the HMAC key from a {@code whsec_}-prefixed secret (leniently
+     * base64-decode the suffix, see {@link #b64Lenient(String)}); a secret
+     * without the prefix — or one whose suffix decodes to no bytes at all — is
+     * used as raw UTF-8 bytes.
      */
     private static byte[] secretToKey(String secret) {
         if (secret.startsWith("whsec_")) {
-            try {
-                byte[] decoded = Base64.getDecoder().decode(secret.substring("whsec_".length()));
-                if (decoded.length > 0) return decoded;
-            } catch (IllegalArgumentException ignored) {
-                // fall through to raw bytes
-            }
+            byte[] decoded = b64Lenient(secret.substring("whsec_".length()));
+            if (decoded.length > 0) return decoded;
         }
         return secret.getBytes(StandardCharsets.UTF_8);
     }

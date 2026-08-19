@@ -28,6 +28,15 @@
  *      major, so the failure is quiet.
  *   5. pom.xml <scm><tag>, which no grep for the current version ever touches —
  *      it sat three releases stale at v1.0.0.
+ *   6. mailblastr-php/tests/cases/ErrorsTest.php's hard-coded version literal —
+ *      the only such literal in any of the nine suites. It is here because
+ *      missing it is green-then-fatal: the PHP suite is packagist-split's
+ *      publish gate, and that job runs AFTER six registries have shipped.
+ *   7. The `go get` / import lines in the root and Go READMEs, which must carry
+ *      the same major suffix as go.mod. Unlike (4), a stale suffix here never
+ *      404s — the old major keeps resolving — so readers silently install the
+ *      previous version. Added in the 5.0.0 cycle; both (6) and (7) were found
+ *      by audit rather than by this guard, which is why they are now in it.
  *
  * WHERE IT RUNS
  *   .github/workflows/sdks.yml    — every push/PR (internal-consistency half)
@@ -187,6 +196,26 @@ const COORDINATES = [
       ),
   },
 
+  {
+    // The ONLY hard-coded version literal in any of the nine test suites, and it
+    // was not a coordinate until 5.0.0. Missing it is uniquely expensive: the
+    // guard stays green (the const it asserts against was bumped correctly), so
+    // every publish job starts — and the red PHP suite surfaces inside
+    // `packagist-split`, which runs `php tests/run.php` as its publish gate
+    // AFTER npm, PyPI, RubyGems, crates, NuGet and Maven have already shipped.
+    // The outcome is eight registries at the new version, Packagist stranded on
+    // the old one, and an immutable tag pointing at a commit whose PHP suite is
+    // red. Cheap to check here, unrecoverable to discover there.
+    label: 'php tests/cases/ErrorsTest.php version assertion',
+    file: 'mailblastr-php/tests/cases/ErrorsTest.php',
+    extract: () =>
+      capture(
+        'mailblastr-php/tests/cases/ErrorsTest.php',
+        /check_same\(\s*'client: version'\s*,\s*'([^']+)'/,
+        "check_same('client: version', ...) literal"
+      ),
+  },
+
   // ---- go (go.mod declares no version; the const is it) ----
   {
     label: 'go client.go Version const',
@@ -328,6 +357,41 @@ function checkGoModuleSuffix(version, failures) {
   }
 }
 
+/**
+ * Every `go get` / import line a user copies must carry the SAME major suffix as
+ * go.mod. checkGoModuleSuffix above only proves the module PUBLISHES correctly;
+ * it says nothing about the four README lines that tell people how to install it.
+ * That gap is worse than it sounds, because a stale suffix does not 404 — the
+ * previous major's path keeps resolving forever, so everyone who follows the
+ * README silently stays on the old major with no error to notice. The v4.0.0
+ * cycle shipped exactly this way and it was caught by hand.
+ */
+function checkGoPathReferences(version, failures) {
+  const major = Number.parseInt(version.split('.')[0], 10);
+  const expected =
+    capture('mailblastr-go/go.mod', /^module\s+(\S+)/m, 'module path');
+  const wanted = major >= 2 ? expected : expected.replace(/\/v\d+$/, '');
+
+  // Any occurrence of the module path, with or without a major suffix.
+  const anyPath = /github\.com\/shekhu10\/mailblastr-sdks\/mailblastr-go(?:\/v\d+)?/g;
+
+  for (const relPath of ['README.md', 'mailblastr-go/README.md']) {
+    const lines = read(relPath).split('\n');
+    lines.forEach((line, i) => {
+      for (const found of line.match(anyPath) ?? []) {
+        if (found !== wanted) {
+          failures.push(
+            `${relPath}:${i + 1}: Go module path is "${found}" but go.mod declares "${expected}" ` +
+              `(version ${version}). Expected "${wanted}".\n` +
+              '      A wrong major suffix here does NOT 404 — the old major keeps resolving, so ' +
+              'every reader silently installs the previous version.'
+          );
+        }
+      }
+    });
+  }
+}
+
 function main(argv) {
   const raw = argv.find((a) => a !== '--tag' && !a.startsWith('--')) ?? '';
   const tag = raw.trim();
@@ -388,6 +452,7 @@ function main(argv) {
   }
 
   checkGoModuleSuffix(expected, failures);
+  checkGoPathReferences(expected, failures);
 
   if (failures.length) {
     console.error(`FAIL: version coordinates disagree with ${referenceLabel}.\n`);

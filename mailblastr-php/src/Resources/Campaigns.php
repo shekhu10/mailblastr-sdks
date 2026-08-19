@@ -70,7 +70,21 @@ class Campaigns extends Resource
         return $this->client->request('POST', '/campaigns/' . Client::e($id) . '/send', $payload);
     }
 
-    /** Cancel a scheduled campaign (returns it to draft). POST /campaigns/:id/cancel */
+    /**
+     * Stop a campaign's remaining work. POST /campaigns/:id/cancel
+     *
+     * Accepted only on 'scheduled', 'recurring', 'paused' and 'queued'; any
+     * other status is a validation_error. The resulting status depends on how
+     * far the send got, so read ['status'] rather than assuming:
+     *  - 'scheduled' / 'recurring' / 'paused' → back to 'draft': the pending
+     *    job (next occurrence included) is dropped and the campaign can be
+     *    edited and sent again.
+     *  - 'queued' (already fanning out) → 'canceled', which is TERMINAL. Part
+     *    of the audience has been mailed and those copies cannot be recalled;
+     *    what this stops is every remaining recipient — for a staggered
+     *    campaign, every future batch-day. A canceled campaign can NOT be
+     *    re-sent.
+     */
     public function cancel(string $id): array
     {
         return $this->client->request('POST', '/campaigns/' . Client::e($id) . '/cancel');

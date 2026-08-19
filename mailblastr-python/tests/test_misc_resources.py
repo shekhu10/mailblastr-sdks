@@ -71,7 +71,9 @@ class TestAutomations(RecordingTestCase):
         step = {"type": "send_email", "config": {"template_id": "tmpl_1"}}
         mailblastr.Automations.add_step("auto_1", step)
         self.assertCall("POST", "/automations/auto_1/steps", step)
-        patch = {"config": {"template_id": "tmpl_2"}}
+        # `type` is required on every PATCH: the server re-validates the whole
+        # step, so a config-only body is a 422. `key` is create-only.
+        patch = {"type": "send_email", "config": {"template_id": "tmpl_2"}}
         mailblastr.Automations.update_step("auto_1", "step_1", patch)
         self.assertCall("PATCH", "/automations/auto_1/steps/step_1", patch)
         mailblastr.Automations.delete_step("auto_1", "step_1")

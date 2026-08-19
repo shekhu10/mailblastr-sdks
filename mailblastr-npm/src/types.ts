@@ -1104,7 +1104,18 @@ export interface ReceivedAttachment {
   id?: string;
   filename: string | null;
   content_type: string | null;
-  size: number;
+  /**
+   * Decoded size in bytes, or `null` when the stored ingest metadata carries
+   * none. The two shapes differ: a `listAttachments()` row serializes `size`
+   * straight off untyped jsonb and sends `null` when it is absent, while the
+   * copy embedded in {@link ReceivedEmail.attachments} substitutes 0 — this
+   * type covers both, so it is the union. Responses are cast through, never
+   * coerced, so guard before arithmetic: `size.toFixed(1)` throws on a nulled
+   * row. The sent-side sibling {@link AttachmentMeta.size} is nullable too, but
+   * for its own reason: it is derived from inline base64 `content`, so an
+   * attachment sent by `path` never has one.
+   */
+  size: number | null;
   content_id?: string;
   content_disposition?: string;
   downloadable: boolean;
@@ -1431,6 +1442,35 @@ export interface AddAutomationStepOptions {
   key?: string;
   [k: string]: unknown;
 }
+/**
+ * Body for `automations.updateStep()`. Separate from {@link AddAutomationStepOptions}
+ * because the two endpoints do not accept the same fields.
+ *
+ * The step is REPLACED, not merged: the route re-runs the add-step validator and
+ * overwrites type and config wholesale, so `type` is REQUIRED (omitting it is
+ * `422 validation_error`, "type must be one of: …") and any per-type field you
+ * leave out is dropped rather than preserved.
+ *
+ * `key` is create-only. Update forwards ONLY type and config to storage —
+ * deliberately, so the `connections` edges pointing at this step keep resolving
+ * — and a `key` in the body is discarded, with the response echoing the STORED
+ * key back so the re-key looks like it worked. Set the key on `addStep()`, or
+ * delete and re-add the step. `position` is server-assigned (steps append) and
+ * is settable on neither endpoint.
+ */
+export interface UpdateAutomationStepOptions {
+  /** The automation must be `disabled`. `'trigger'` is rejected here. */
+  type: AutomationStepType | (string & {});
+  /** Per-type fields may also sit at the top level of the body. */
+  config?: Record<string, unknown>;
+  /**
+   * Create-only — set it on `addStep()`. Declared `never` rather than simply
+   * omitted because the catch-all below would otherwise wave it through with no
+   * autocomplete and no error, which is how the silent no-op reads today.
+   */
+  key?: never;
+  [k: string]: unknown;
+}
 /** Params for `automations.runs()` — pagination plus a status filter. */
 export interface ListAutomationRunsParams extends PaginationParams {
   /**
@@ -1564,9 +1604,10 @@ export interface WebhookTestResult {
   error?: string;
 }
 /**
- * The Svix-style delivery headers MailBlastr sends with each webhook. Either the
- * lowercase header names or a Headers-like object can be passed to
- * `webhooks.verify` — it reads them case-insensitively.
+ * The Svix-style delivery headers MailBlastr sends with each webhook, as a plain
+ * object — Node's `req.headers` on Express and `node:http`. `webhooks.verify`
+ * reads them case-insensitively, so the capitalized spellings a proxy may hand
+ * you verify just the same.
  */
 export interface WebhookHeaders {
   'svix-id'?: string;
@@ -1574,6 +1615,22 @@ export interface WebhookHeaders {
   'svix-signature'?: string;
   [k: string]: string | string[] | undefined;
 }
+/**
+ * Every container `webhooks.verify` will read headers out of: a plain object, a
+ * Fetch `Headers` — which is what `request.headers` IS in Next.js App Router,
+ * Remix, Hono, Cloudflare Workers, Deno and Bun — or any `(name, value)`
+ * iterable such as a `Map`.
+ *
+ * A `Headers` holds its fields internally, so it is not assignable to
+ * {@link WebhookHeaders} and its own enumerable keys are `[]`. Verification used
+ * to enumerate those keys, so every genuinely signed delivery on a Fetch-based
+ * framework answered `missing_headers` — pointing the blame at MailBlastr for
+ * headers that were present and a signature that was valid.
+ */
+export type WebhookHeaderInput =
+  | WebhookHeaders
+  | Headers
+  | Iterable<[string, string]>;
 /** Outcome of verifying a webhook delivery signature. */
 export interface VerifyWebhookResult {
   /** True when the signature matches and (when checked) the timestamp is fresh. */

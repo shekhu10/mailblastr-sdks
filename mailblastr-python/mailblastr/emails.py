@@ -206,6 +206,18 @@ class Emails:
         individually via :meth:`send`. ``options={"idempotency_key": "..."}``
         is honoured here too (same 1-255 rule as :meth:`send`).
 
+        SUCCESS COMES IN TWO SHAPES, chosen by batch SIZE alone. Up to 40 emails
+        are sent while the request is open (200) and the response carries no
+        ``queued`` key at all — never ``queued: False``. From 41 to 100 they are
+        accepted and QUEUED instead (202): ``queued`` is ``True``,
+        ``queued_count == len(result["data"])``, and those ids are real but
+        still ``scheduled`` — nothing has been transmitted yet. Read
+        ``result.get("queued")`` before treating a batch as sent, and poll
+        :meth:`get` for the outcome. A batch carrying an ``@mailblastr.dev``
+        simulator recipient in ``to``, ``cc`` or ``bcc`` stays inline at any
+        size. See ``mailblastr.Batch.send`` for the timeout caveat on large
+        inline batches.
+
         A failure PART WAY THROUGH always names the emails that already went out
         on the raised error's ``sent`` / ``sent_count`` — with or without a key.
         Always read them before resending, or you re-deliver that prefix. The key

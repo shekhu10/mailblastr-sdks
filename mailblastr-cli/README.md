@@ -52,7 +52,7 @@ A few endpoints are deliberately unpaginated and take no cursor flags — `email
 
 ```bash
 mailblastr emails send --from 'Acme <hi@yourdomain.com>' --to 'delivered@mailblastr.dev' --subject 'hello' --html '<p>hi</p>'
-mailblastr emails send --from 'Acme <hi@yourdomain.com>' --to 'ada@yourdomain.com,rae@yourdomain.com' --subject 'hi' \
+mailblastr emails send --to 'ada@yourdomain.com,rae@yourdomain.com' \
   --template-id tmpl_welcome --variables '{"first_name":"Ada"}' --scheduled-at 2026-08-01T09:00:00Z
 mailblastr emails list --limit 20
 mailblastr emails list --status delivered --search 'invoice'
@@ -66,6 +66,8 @@ mailblastr emails attachment em_123 att_456
 
 `--to`, `--cc`, `--bcc` and `--reply-to` are repeatable and accept comma-separated values.
 
+`--from` and `--subject` are required for an ordinary send but **optional** with `--template-id` / `--template-alias`, as the two template examples in this section show: omit them and the template's own stored from and subject are used. Supply them and your values win for good — the flags are sent verbatim, so editing and republishing the template stops changing the from and subject that command sends. The body still re-renders from the template on every send; only those two fields stop tracking it. An empty value is a choice rather than an omission: `--subject ''` ships a blank subject line, and `--from ''` is rejected with `422 missing_required_field`.
+
 `delivered@mailblastr.dev` above is the mailbox simulator: it is intercepted before the provider is contacted and synthesizes the documented outcome (`bounced@`, `complained@` and `suppressed@` produce the other three; `delivered@`, `bounced@` and `complained@` also accept a `+label` suffix, `suppressed@` does not). Two things to know when you script against it — it only fires on an **immediate** send, so pairing it with a future `--scheduled-at` skips the simulator and the address is treated as suppressed (`422`); and quota is debited per recipient exactly like a real send. Documentation domains (`example.com`, `example.net`, `example.org`, anything under `.test` / `.invalid` / `.localhost` / `.example`) are blocked outright and never reach a mailbox, so do not use them as stand-in recipients.
 
 Attach files with `--attachment <path>` (read and base64-encoded locally) or `--attachment-url <url>` (fetched server-side). Both are repeatable; the API caps an attachment at 25 MB and a message at 40 MB decoded, and the CLI checks local files against those limits before sending.
@@ -73,7 +75,7 @@ Attach files with `--attachment <path>` (read and base64-encoded locally) or `--
 ```bash
 mailblastr emails send --from hi@yourdomain.com --to delivered@mailblastr.dev --subject 'Your invoice' \
   --text 'Attached.' --attachment ./invoice.pdf
-mailblastr emails send --from hi@yourdomain.com --to delivered@mailblastr.dev --subject 'Welcome' \
+mailblastr emails send --to delivered@mailblastr.dev \
   --template-alias welcome --variables '{"first_name":"Ada"}'
 ```
 

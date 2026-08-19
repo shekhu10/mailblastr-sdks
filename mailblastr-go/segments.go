@@ -157,9 +157,9 @@ func (s *SegmentsService) ListWithContext(ctx context.Context, params *ListSegme
 }
 
 // Contacts previews the contacts a segment currently resolves to (filter
-// matches plus explicit memberships). Passing nil params returns every
-// matching contact: this endpoint only pages when you supply pagination
-// params. GET /segments/:id/contacts
+// matches plus explicit memberships). Passing nil params caps the response at
+// 1,000 contacts with HasMore true — a segment can easily resolve to more, so
+// page with After while HasMore is true. GET /segments/:id/contacts
 func (s *SegmentsService) Contacts(id string, params *ListParams) (*ListResponse[SegmentContact], error) {
 	return s.ContactsWithContext(context.Background(), id, params)
 }

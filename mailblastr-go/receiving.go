@@ -107,9 +107,9 @@ type ReceivingService struct {
 // List lists received emails. GET /emails/receiving
 // For the received_for filter use ListFiltered.
 //
-// This endpoint's unpaged default is divergent: with no Limit and no cursor it
-// returns up to 1,000 rows in one response (HasMore reports the truncation).
-// Set Limit for normal 1-100 paging.
+// This endpoint's unpaged default differs from the 20-row one: with no Limit
+// and no cursor it returns up to 1,000 rows in one response (HasMore reports
+// the truncation). Set Limit for normal 1-100 paging.
 func (s *ReceivingService) List(params *ListParams) (*ListResponse[ReceivedEmail], error) {
 	return s.ListWithContext(context.Background(), params)
 }
@@ -173,8 +173,9 @@ func (s *ReceivingService) GetWithContext(ctx context.Context, id string) (*Rece
 }
 
 // ListAttachments lists a received email's attachments. Passing nil params
-// returns every attachment: this endpoint only pages when you supply
-// pagination params. GET /emails/receiving/:id/attachments
+// returns up to 1,000 attachments in one response (HasMore reports the
+// truncation); supply Limit or After for normal 1-100 paging.
+// GET /emails/receiving/:id/attachments
 func (s *ReceivingService) ListAttachments(id string, params *ListParams) (*ListResponse[ReceivedAttachment], error) {
 	return s.ListAttachmentsWithContext(context.Background(), id, params)
 }

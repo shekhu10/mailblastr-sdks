@@ -5,7 +5,7 @@ Official Go SDK for the [MailBlastr](https://www.mailblastr.com) email API — s
 ## Install
 
 ```bash
-go get github.com/shekhu10/mailblastr-sdks/mailblastr-go/v4
+go get github.com/shekhu10/mailblastr-sdks/mailblastr-go/v5
 ```
 
 Requires Go 1.22+. The SDK depends only on the Go standard library.
@@ -23,7 +23,7 @@ package main
 import (
 	"fmt"
 
-	"github.com/shekhu10/mailblastr-sdks/mailblastr-go/v4"
+	"github.com/shekhu10/mailblastr-sdks/mailblastr-go/v5"
 )
 
 func main() {
@@ -360,11 +360,14 @@ are item ids and are mutually exclusive. Responses are
 feeding the last `Data[].Id` back in as `After`. An unknown cursor returns an
 empty page, not an error.
 
-Watch the default: some endpoints return **everything** when you pass no
-pagination params at all — domains, API keys, topics, campaigns, contacts,
-contact properties, segments, segment contacts, contact segments/topics. The
-ones that always cap at 20 are templates, webhooks, audiences, automations,
-events, and automation runs.
+Watch the default: some endpoints skip the 20-row default when you pass no
+pagination params at all, returning the whole collection in one page — but
+**still capped at 1,000 rows**, with `HasMore` true when that ceiling bites, so
+keep paging with `After`. Those are domains, API keys, topics, campaigns,
+contacts, contact properties, segments, segment contacts, contact
+segments/topics, polls, and received emails plus their attachments. The ones
+that always cap at 20 are templates, webhooks, audiences, automations, events,
+and automation runs.
 
 ### Idempotency
 

@@ -88,7 +88,9 @@ type Campaign struct {
 	ReplyTo     string `json:"reply_to,omitempty"`
 	PreviewText string `json:"preview_text,omitempty"`
 	// Status is the campaign state: draft, queued (a send in flight),
-	// scheduled, recurring, paused, sent, or failed.
+	// scheduled, recurring, paused, canceled, sent, or failed. canceled is
+	// TERMINAL — a queued send stopped part-way; unlike a canceled scheduled
+	// campaign, which returns to draft, it cannot be resumed or re-sent.
 	Status      string `json:"status"`
 	ScheduledAt string `json:"scheduled_at"`
 	SentAt      string `json:"sent_at"`
@@ -136,7 +138,7 @@ type CampaignListItem struct {
 	// SegmentId is the segment target (empty => whole audience).
 	SegmentId string `json:"segment_id"`
 	// Status is the campaign state: draft, queued, scheduled, recurring,
-	// paused, sent, or failed.
+	// paused, canceled, sent, or failed. canceled is terminal.
 	Status string `json:"status"`
 	// AbTest is the lightweight A/B marker — Enabled plus Metric/Status/Winner
 	// when enabled. Full A/B detail is on Campaigns.Get / Campaigns.Ab.
@@ -292,10 +294,13 @@ type CampaignStats struct {
 // CampaignAbArm is one variant's performance in an A/B evaluation.
 type CampaignAbArm struct {
 	// Variant is "A" or "B".
-	Variant     string  `json:"variant"`
-	Sent        int     `json:"sent"`
-	Conversions int     `json:"conversions"`
-	Rate        float64 `json:"rate"`
+	Variant     string `json:"variant"`
+	Sent        int    `json:"sent"`
+	Conversions int    `json:"conversions"`
+	// Rate is Conversions/Sent as a FRACTION in 0..1 (0.2 = 20%), unlike
+	// CampaignStatsRates, which are already percentages (20 = 20%). Multiply
+	// this by 100 for display; do not multiply those. 0 when Sent is 0.
+	Rate float64 `json:"rate"`
 }
 
 // CampaignAbResult is the A/B winner evaluation from GET /campaigns/:id/ab.
@@ -311,8 +316,12 @@ type CampaignAbResult struct {
 	Winner string `json:"winner,omitempty"`
 	// Fallback is true when a variant had zero sends or the rates tied, in
 	// which case Winner defaults to "A".
-	Fallback bool    `json:"fallback"`
-	Lift     float64 `json:"lift"`
+	Fallback bool `json:"fallback"`
+	// Lift is the winner's relative lift over the loser as a FRACTION
+	// (0.25 = +25%), NOT a percentage — multiply by 100 for display. A loser
+	// that converted zero yields the stand-in 1 rather than infinity, and Lift
+	// is 0 whenever Fallback is true (an arm had no sends, or the rates tied).
+	Lift float64 `json:"lift"`
 	// ZScore and PValue are camelCase on the wire — deliberately, do not
 	// expect snake_case.
 	ZScore float64 `json:"zScore"`
@@ -400,9 +409,9 @@ func (s *CampaignsService) GetWithContext(ctx context.Context, id string) (*Camp
 
 // List lists campaigns, newest first. Rows are the reduced CampaignListItem
 // shape — no bodies, no From/TopicId/ReplyTo/PreviewText, no schedule detail,
-// follow-ups or statistics; use Get for those. Passing nil returns every
-// campaign: this endpoint only pages when you supply pagination params.
-// GET /campaigns
+// follow-ups or statistics; use Get for those. Passing nil skips the default
+// 20 but still caps the page at 1,000 campaigns, with HasMore true when that
+// ceiling bites — keep paging with After. GET /campaigns
 func (s *CampaignsService) List(params *ListParams) (*ListResponse[CampaignListItem], error) {
 	return s.ListWithContext(context.Background(), params)
 }
@@ -437,13 +446,29 @@ func (s *CampaignsService) SendWithContext(ctx context.Context, id string, param
 	return request[IdResponse](ctx, s.client, http.MethodPost, "/campaigns/"+esc(id)+"/send", body, nil)
 }
 
-// Cancel cancels a scheduled campaign (returns it to draft).
+// Cancel stops a campaign's remaining work. Accepted only on scheduled,
+// recurring, paused and queued; any other status is a validation_error.
+//
+// Which of the two outcomes you get depends on how far the send got, so read
+// the returned Campaign.Status instead of assuming:
+//
+//   - scheduled / recurring / paused -> back to draft. Nothing was mailed, so
+//     it can be edited and sent or scheduled again; the pending job (the next
+//     recurrence included) is dropped.
+//   - queued, i.e. already fanning out -> canceled, which is TERMINAL. Part of
+//     the audience has been mailed and those copies cannot be recalled; what
+//     this stops is every remaining recipient — for a staggered campaign,
+//     every future batch-day. Send rejects any non-draft campaign
+//     ("Campaign is already canceled."), so it can never be re-sent.
+//
 // POST /campaigns/:id/cancel
 func (s *CampaignsService) Cancel(id string) (*Campaign, error) {
 	return s.CancelWithContext(context.Background(), id)
 }
 
-// CancelWithContext cancels a scheduled campaign. POST /campaigns/:id/cancel
+// CancelWithContext stops a campaign's remaining work. scheduled/recurring/
+// paused return to draft; a queued campaign becomes the terminal canceled.
+// Read Campaign.Status for which happened. POST /campaigns/:id/cancel
 func (s *CampaignsService) CancelWithContext(ctx context.Context, id string) (*Campaign, error) {
 	return request[Campaign](ctx, s.client, http.MethodPost, "/campaigns/"+esc(id)+"/cancel", nil, nil)
 }

@@ -43,9 +43,15 @@ class AddStepParams(TypedDict, total=False):
 
 
 class UpdateStepParams(TypedDict, total=False):
+    # REQUIRED on every call: the PATCH re-validates the WHOLE step with the
+    # same validator the add path uses, so a body without `type` is a 422
+    # ("type must be one of: ...") — it does not mean "leave the type alone".
+    # Resend the step's current type even when only `config` changes.
     type: str
-    config: Dict[str, Any]
-    key: str
+    config: Dict[str, Any]  # REPLACES the stored config wholesale; omissions are dropped
+    # No `key` here: a step's graph key is fixed at creation so the connections
+    # referencing it keep working. Pass `key` to add_step, or delete and re-add
+    # the step to re-key it.
 
 
 class RunListParams(TypedDict, total=False):
@@ -105,8 +111,13 @@ class Automations:
 
     @classmethod
     def update_step(cls, automation_id, step_id, params):
-        """Update a step. The automation must be DISABLED.
-        PATCH /automations/:id/steps/:step_id"""
+        """Update a step. The automation must be DISABLED. The step is
+        REPLACED, not merged: ``type`` is required on every call (a body
+        without it is a 422, even when only ``config`` changes) and ``config``
+        overwrites the stored config wholesale. A step's graph ``key`` is
+        create-only — it is ignored here and the response echoes the STORED key
+        back, so use ``add_step`` with a ``key``, or delete and re-add the step,
+        to change it. PATCH /automations/:id/steps/:step_id"""
         return http_client.request(
             "PATCH", f"/automations/{_e(automation_id)}/steps/{_e(step_id)}", params
         )

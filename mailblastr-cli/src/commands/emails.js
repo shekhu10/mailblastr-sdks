@@ -94,9 +94,9 @@ function register({ group, leaf, act }) {
 
   act(
     leaf(emails, 'send', 'Send an email')
-      .requiredOption('--from <from>', "sender, e.g. 'Acme <hi@yourdomain.com>'")
+      .option('--from <from>', "sender, e.g. 'Acme <hi@yourdomain.com>' — omit to use the template's own from")
       .requiredOption('--to <address>', 'recipient (repeatable or comma-separated)', collect)
-      .requiredOption('--subject <subject>', 'subject line')
+      .option('--subject <subject>', "subject line — omit to use the template's own subject")
       .option('--html <html>', 'HTML body')
       .option('--text <text>', 'plain-text body')
       .option('--cc <address>', 'cc recipient (repeatable or comma-separated)', collect)
@@ -115,6 +115,22 @@ function register({ group, leaf, act }) {
     ({ client, opts }) => {
       if (opts.templateId && opts.templateAlias) {
         throw new CliError('Provide only one of --template-id or --template-alias.');
+      }
+      // `from`/`subject` are required only when no template supplies them, so
+      // they cannot be parser-level required options: declaring them so made the
+      // documented template one-liner unrunnable, and retyping the values the
+      // template already stores then overrides those two fields on every send
+      // (republishing the template no longer changes the from and subject,
+      // though the body still re-renders from it).
+      // The server falls back per field on `!= null`, so an ABSENT key takes the
+      // template's value while a key present as '' wins — which is why this
+      // tests `=== undefined` and not falsiness: `--subject ''` is a legitimate
+      // blank subject line, and `--from ''` must keep earning its 422 rather
+      // than being silently rewritten here. `clean()` drops only `undefined`,
+      // so an omitted flag never reaches the wire at all.
+      if (!opts.templateId && !opts.templateAlias
+        && (opts.from === undefined || opts.subject === undefined)) {
+        throw new CliError('--from and --subject are required unless you pass --template-id or --template-alias.');
       }
       const variables = parseJson(opts.variables, '--variables');
       return client.emails.send(

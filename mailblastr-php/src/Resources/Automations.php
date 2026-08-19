@@ -80,10 +80,21 @@ class Automations extends Resource
     }
 
     /**
-     * Update a step. The automation must be disabled first.
+     * Update a step. The automation must be disabled first. The step is
+     * REPLACED, not merged: the API re-validates the whole body and overwrites
+     * type + config, so send 'type' and the complete 'config' every time —
+     * anything left out of 'config' is dropped, not preserved.
      * PATCH /automations/:id/steps/:stepId
      *
-     * @param array $payload ['type' => …, 'config' => …, 'key' => …]
+     * @param array $payload ['type' => REQUIRED, same values as {@see addStep()};
+     *                                  omitting it is a 422 validation_error,
+     *                                  not "leave the type unchanged",
+     *                       'config' => …]
+     *                       A step's graph key is fixed at creation and is
+     *                       IGNORED here — set it via addStep(), or delete and
+     *                       re-add the step. Sending one changes nothing, and
+     *                       the response echoes the EXISTING key back, so a
+     *                       failed re-key is invisible.
      */
     public function updateStep(string $id, string $stepId, array $payload): array
     {

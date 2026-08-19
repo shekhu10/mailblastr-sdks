@@ -10,6 +10,10 @@ import java.util.Map;
  * An automation step input, used inline on automation create and as the body
  * of {@code POST /automations/:id/steps}. {@code key} is the handle
  * connections reference.
+ *
+ * <p>Create paths ONLY. Editing an existing step takes
+ * {@link UpdateAutomationStepRequest} instead, which has no {@code key}
+ * because {@code PATCH /automations/:id/steps/:stepId} ignores one.
  */
 public final class AutomationStep implements JsonPayload {
     private final Map<String, Object> body;
@@ -26,7 +30,13 @@ public final class AutomationStep implements JsonPayload {
 
         /** Step type, e.g. {@code trigger}, {@code send_email}, {@code wait}, {@code condition}. */
         public Builder type(String type) { m.put("type", type); return this; }
-        /** Handle used by connections to reference this step. */
+        /**
+         * Handle used by connections to reference this step. Defaults to the
+         * step id when omitted, and is CREATE-ONLY: {@code PATCH
+         * /automations/:id/steps/:stepId} forwards only {@code type} and
+         * {@code config} to storage, so a key sent there is silently dropped.
+         * Delete and re-add the step to re-key it.
+         */
         public Builder key(String key) { m.put("key", key); return this; }
 
         /** Set one config entry. */

@@ -889,6 +889,61 @@ test('emails send resolves a template by alias, and refuses both selectors', asy
   assert.match(bad.err, /--template-id or --template-alias/);
 });
 
+// A template send must be able to use the template's OWN from/subject, so those
+// flags cannot be required at the parser: resolveTemplate falls back per field
+// on `!= null`, which means the keys have to be ABSENT from the payload — a key
+// present as '' wins over the template. Declaring them `.requiredOption` made
+// this documented one-liner exit 1 before the handler ever ran, so the only way
+// through was to retype the template's values, which then override those two
+// fields on every send: republishing the template no longer changed the from and
+// subject the CLI sent (the body still re-renders from the template).
+test('emails send with a template omits from/subject rather than sending blanks', async () => {
+  const call = lastCall(await runCli(['emails', 'send', '--template-id', 'tmpl_1', '--to', 'a@b.com']));
+  assert.deepEqual([call.resource, call.method], ['emails', 'send']);
+  assert.equal('from' in call.args[0], false);
+  assert.equal('subject' in call.args[0], false);
+  assert.deepEqual(call.args[0], { to: ['a@b.com'], template_id: 'tmpl_1' });
+
+  const aliased = lastCall(
+    await runCli(['emails', 'send', '--template-alias', 'welcome', '--to', 'a@b.com']),
+  );
+  assert.equal('from' in aliased.args[0], false);
+  assert.equal('subject' in aliased.args[0], false);
+  assert.deepEqual(aliased.args[0].template, { alias: 'welcome' });
+});
+
+// Nothing supplies them without a template, so the CLI still refuses locally
+// instead of spending a round trip on a guaranteed 422. An EMPTY value is a
+// deliberate choice, not a missing one, and keeps reaching the wire verbatim:
+// `--subject ''` is the documented way to ship a blank subject line, and
+// `--from ''` must keep earning its own 422 rather than being rewritten here.
+test('emails send still requires from/subject with no template, but passes empties through', async () => {
+  const bad = await runCli(['emails', 'send', '--to', 'a@b.com', '--text', 'hi']);
+  assert.equal(bad.exitCode, 1);
+  assert.equal(bad.calls.length, 0);
+  assert.match(bad.err, /--from and --subject are required unless you pass --template-id or --template-alias/);
+
+  const call = lastCall(
+    await runCli(['emails', 'send', '--from', 'hi@yourdomain.com', '--to', 'a@b.com', '--subject', '', '--text', 'hi']),
+  );
+  assert.equal(call.args[0].subject, '');
+});
+
+// `canceled` is TERMINAL — it cannot be resumed or re-sent — and it is where an
+// already-`queued` campaign lands, not `draft`. The old help asserted the draft
+// outcome unconditionally, which is the reading an operator stops a live send
+// on; they only learn otherwise when `campaigns update` answers 422.
+test('campaigns cancel help names the terminal outcome, not just draft', async () => {
+  const r = await runCli(['campaigns', '--help']);
+  assert.equal(r.exitCode, 0);
+  // Commander wraps the description column to the terminal width, so collapse
+  // whitespace rather than pinning the assertion to one machine's line breaks.
+  assert.match(
+    r.out.replace(/\s+/g, ' '),
+    /cancel \[options\] <id> Stop a campaign \(back to draft, or terminal canceled if it is already queued\)/,
+  );
+});
+
 test('domains mx-check maps to domains.mxCheck', async () => {
   const call = lastCall(await runCli(['domains', 'mx-check', 'yourdomain.com']));
   assert.deepEqual([call.resource, call.method, call.args], ['domains', 'mxCheck', ['yourdomain.com']]);

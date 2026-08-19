@@ -75,6 +75,21 @@ public final class EmailsTest {
         mb.emails().batch(payloads);
         Check.eq("emails().batch alias url", "https://api.test/emails/batch", t.lastUrl);
 
+        // --- batch over 40 is ACCEPTED AND QUEUED (202), not sent ---
+        // Size alone routes the request (app/api/emails/batch/route.ts
+        // BATCH_SYNC_MAX = 40). The inline 200 above omits `queued` entirely,
+        // so getBoolean returns null there and a bare unboxed read would throw
+        // — the javadoc tells callers to branch on statusCode()/Boolean.TRUE
+        // instead, and 2xx never throws, so the 202 reaches them intact.
+        Check.isNull("inline 200 has no queued key", batchRes.getBoolean("queued"));
+        Check.eq("inline 200 leaves statusCode at 200", 200, batchRes.statusCode());
+        t.respond(202, "{\"data\":[{\"id\":\"em_1\"}],\"queued\":true,\"queued_count\":41}");
+        MailblastrResponse queuedRes = mb.batch().sendEmails(java.util.Collections.emptyList());
+        Check.eq("queued batch surfaces 202", 202, queuedRes.statusCode());
+        Check.eq("queued batch queued flag", Boolean.TRUE, queuedRes.getBoolean("queued"));
+        Check.eq("queued batch queued_count", 41, queuedRes.getInt("queued_count"));
+        t.respond(200, "{}");
+
         // --- list with pagination ---
         t.respond(200, "{\"object\":\"list\",\"has_more\":true,\"data\":[{\"id\":\"em_9\"}]}");
         MailblastrResponse listRes = mb.emails().list(ListParams.builder().limit(20).after("cur_1").build());

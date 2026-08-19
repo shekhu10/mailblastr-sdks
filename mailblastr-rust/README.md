@@ -55,7 +55,7 @@ Some errors are a superset of `{ statusCode, name, message }`. `ApiError` models
 | --- | --- | --- |
 | `limit` | `plan_limit_reached`, `daily_quota_exceeded`, `monthly_quota_exceeded`, `contact_limit_reached`, `ai_credits_exceeded`, `automation_quota_exceeded` | WHICH allowance ran out (`kind`), `used` / `limit` / `remaining`, the rolling `period`, the current `plan`, the cheapest `next_plan` that would fit (`None` when only Enterprise does), and prepaid `credits` for the email-quota kinds |
 | `reputation` | `reputation_paused`, `reputation_limit_exceeded`, `sending_service_unavailable` | whether it is `retryable`, the `scope` (`tenant` / `domain` / `platform`), hourly and daily counters, and `retry_at` |
-| `sent` / `sent_count` | a `POST /emails/batch` that failed part way through, sent with an `Idempotency-Key` | the emails that DID go out, so a retry does not send them twice. `sent_count` falls back to `sent.len()` when the server omits it |
+| `sent` / `sent_count` | any `POST /emails/batch` that failed part way through, with or without an `Idempotency-Key` | the emails that DID go out, so a retry does not send them twice. The key changes only the status — a keyless partial is downgraded to `422` so nothing auto-retries it. `sent_count` falls back to `sent.len()` when the server omits it |
 
 ```rust
 match mailblastr.emails.send(email).await {
@@ -227,10 +227,16 @@ mailblastr.templates.create(CreateTemplateOptions::new("Welcome").with_subject("
 mailblastr.templates.duplicate(id, None).await?;
 mailblastr.templates.publish(id).await?;
 mailblastr.emails.send(
-    SendEmailOptions::new(from, to, subject)
+    SendEmailOptions::new(from, to, subject)          // an explicit from/subject wins
         .with_template_id(template_id)
         .with_variable("first_name", "Ada"),
 ).await?;
+mailblastr.emails.send(SendEmailOptions {            // leave them empty and the
+    to: vec![to.into()],                             // template's own from and
+    template: Some(TemplateRef::by_id(template_id)   // rendered subject fill in
+        .with_variable("first_name", "Ada")),
+    ..Default::default()
+}).await?;
 
 // API keys — read-only, see "API keys are dashboard-only" below. `token` is
 // the 8-character display prefix, never the secret.

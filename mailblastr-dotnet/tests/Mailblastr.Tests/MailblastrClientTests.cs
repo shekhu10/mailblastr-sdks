@@ -247,6 +247,55 @@ public class MailblastrClientTests
     }
 
     [Fact]
+    public void AutomationUpdateStep_OptionsExposeNoKey_TheGraphKeyIsCreateOnly()
+    {
+        // PATCH /automations/:id/steps/:stepId forwards only `type` and `config`
+        // to storage so connection edges that reference the step keep working.
+        // A `key` sent on PATCH is silently dropped and the 200 response echoes
+        // the STORED key back, which reads as a re-key that never happened —
+        // so the update payload must not offer the member at all. Both surfaces
+        // are swept: MailblastrClient is public with a public constructor, so a
+        // stale signature there would be callable even if IMailblastr is clean.
+        foreach (var surface in new[] { typeof(IMailblastr), typeof(MailblastrClient) })
+        {
+            var optionsType = surface
+                .GetMethod(nameof(IMailblastr.AutomationUpdateStepAsync))!
+                .GetParameters()[2]
+                .ParameterType;
+
+            Assert.Null(optionsType.GetProperty("Key"));
+            Assert.NotNull(optionsType.GetProperty("Type"));
+            Assert.NotNull(optionsType.GetProperty("Config"));
+        }
+
+        // The append payload keeps it: POST is the only place a key is honoured.
+        Assert.NotNull(typeof(AutomationAddStepOptions).GetProperty("Key"));
+    }
+
+    [Fact]
+    public async Task AutomationUpdateStep_SendsTypeAlongsideConfig()
+    {
+        // The route runs the same validator as POST: a body without a `type` is
+        // coerced to "" and rejected as 422 validation_error before config is
+        // read. The update is a wholesale replace, never a merge, so the
+        // current type rides along even when only the config is changing.
+        var (client, stub) = CreateClient("""{"id":"step_1","key":"welcome","type":"delay","position":0,"config":{"duration":"2 days"}}""");
+
+        await client.AutomationUpdateStepAsync("auto_1", "step_1", new AutomationUpdateStepOptions
+        {
+            Type = "delay",
+            Config = new Dictionary<string, object?> { ["duration"] = "2 days" },
+        });
+
+        Assert.Equal(HttpMethod.Patch, stub.LastRequest.Method);
+        Assert.Equal("https://www.mailblastr.com/api/automations/auto_1/steps/step_1", stub.LastRequest.RequestUri!.AbsoluteUri);
+        using var body = JsonDocument.Parse(stub.LastRequestBody!);
+        Assert.Equal("delay", body.RootElement.GetProperty("type").GetString());
+        Assert.Equal("2 days", body.RootElement.GetProperty("config").GetProperty("duration").GetString());
+        Assert.False(body.RootElement.TryGetProperty("key", out _));
+    }
+
+    [Fact]
     public async Task DomainMxCheck_PassesTheNameQuery()
     {
         var (client, stub) = CreateClient("""{"has_mx":true,"ours":false,"records":[{"exchange":"mx.example.com","priority":10}]}""");

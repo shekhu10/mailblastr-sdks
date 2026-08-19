@@ -13,7 +13,7 @@ from .exceptions import MailblastrError
 DEFAULT_BASE_URL = "https://www.mailblastr.com/api"
 
 # Keep in sync with pyproject.toml "version".
-VERSION = "4.0.0"
+VERSION = "5.0.0"
 USER_AGENT = f"mailblastr-python/{VERSION}"
 
 # The API accepts an Idempotency-Key of 1-255 characters (measured after the
@@ -136,9 +136,30 @@ def _headers(api_key, json_body, options):
     # Sent verbatim: the server trims the value and owns the 1-255 bound
     # (IDEMPOTENCY_KEY_MAX_LENGTH), answering an out-of-range key with
     # 400 invalid_idempotency_key. Validating here would only risk drifting
-    # from the server. A falsy value means "no idempotency", not an error.
-    if options and options.get("idempotency_key"):
-        headers["Idempotency-Key"] = str(options["idempotency_key"])
+    # from the server.
+    #
+    # Stringify BEFORE testing emptiness. Only an absent/None or empty key
+    # means "no idempotency" -- integer 0 and the string "0" are both VALID
+    # 1-character keys (readIdemKey accepts any 1-255 char value). A bare
+    # truthiness gate sent 12345 but silently dropped 0, so a caller keying off
+    # a zero-based counter or an id of 0 got a plain send for that one email:
+    # an application retry, or this module's own 429/503 retry, then delivered
+    # it a SECOND time.
+    #
+    # What is DROPPED is enumerated, not what is allowed. An allow-list of
+    # (str, int, float) looks tidier and is a regression: str() used to accept
+    # anything, and a uuid.UUID -- what a Django UUIDField or a SQLAlchemy Uuid
+    # column actually hands you, and the idiomatic key for an order id -- is an
+    # OBJECT, not a str. Allow-listing silently dropped it, reintroducing this
+    # exact defect on a far more common input than the integer 0 that prompted
+    # the fix. Only bools (which stringify to a bogus "True") and containers (a
+    # bogus "[]"/"{}") are skipped; everything else is stringified as before, so
+    # uuid.UUID and Decimal keep working and ruby's `value.to_s` stays aligned.
+    raw = options.get("idempotency_key") if options else None
+    if raw is not None and not isinstance(raw, (bool, list, tuple, set, dict)):
+        key = str(raw)
+        if key != "":
+            headers["Idempotency-Key"] = key
     return headers
 
 

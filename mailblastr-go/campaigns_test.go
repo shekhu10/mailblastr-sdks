@@ -133,7 +133,7 @@ func TestCampaignsAbCamelCaseStats(t *testing.T) {
 		if r.URL.Path != "/campaigns/cmp_1/ab" {
 			t.Errorf("path = %s", r.URL.Path)
 		}
-		w.Write([]byte(`{"object":"campaign_ab","campaign_id":"cmp_1","metric":"open","a":{"variant":"A","sent":50,"conversions":10,"rate":20},"b":{"variant":"B","sent":50,"conversions":15,"rate":30},"winner":"B","fallback":false,"lift":50,"zScore":1.29,"pValue":0.197,"confidence":"low","reason":"B leads on open rate"}`))
+		w.Write([]byte(`{"object":"campaign_ab","campaign_id":"cmp_1","metric":"open","a":{"variant":"A","sent":50,"conversions":10,"rate":0.2},"b":{"variant":"B","sent":50,"conversions":15,"rate":0.3},"winner":"B","fallback":false,"lift":0.5,"zScore":1.29,"pValue":0.197,"confidence":"low","reason":"B leads on open rate"}`))
 	})
 
 	res, err := client.Campaigns.Ab("cmp_1")
@@ -146,6 +146,14 @@ func TestCampaignsAbCamelCaseStats(t *testing.T) {
 	// zScore / pValue are camelCase on the wire, deliberately.
 	if res.ZScore != 1.29 || res.PValue != 0.197 {
 		t.Errorf("camelCase stats not decoded: zScore=%v pValue=%v", res.ZScore, res.PValue)
+	}
+	// Rate and Lift arrive as FRACTIONS here (ab_winner.ts returns raw
+	// conversions/sent and (winner-loser)/loser), unlike CampaignStatsRates,
+	// which the server has already run through pct(). This fixture is pinned to
+	// the fraction form so nobody "corrects" it back to percentages and teaches
+	// the next reader to multiply by 100 twice.
+	if res.A.Rate != 0.2 || res.B.Rate != 0.3 || res.Lift != 0.5 {
+		t.Errorf("A/B rate and lift are fractions: a=%v b=%v lift=%v", res.A.Rate, res.B.Rate, res.Lift)
 	}
 }
 

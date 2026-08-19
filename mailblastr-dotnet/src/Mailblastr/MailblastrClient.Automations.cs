@@ -30,7 +30,7 @@ public partial class MailblastrClient
         return RequestAsync<AutomationStep>(HttpMethod.Post, $"/automations/{E(automationId)}/steps", options, null, cancellationToken);
     }
 
-    public Task<AutomationStep> AutomationUpdateStepAsync(string automationId, string stepId, AutomationAddStepOptions options, CancellationToken cancellationToken = default)
+    public Task<AutomationStep> AutomationUpdateStepAsync(string automationId, string stepId, AutomationUpdateStepOptions options, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(options);
         return RequestAsync<AutomationStep>(HttpMethod.Patch, $"/automations/{E(automationId)}/steps/{E(stepId)}", options, null, cancellationToken);

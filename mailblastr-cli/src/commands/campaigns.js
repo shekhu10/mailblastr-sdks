@@ -119,7 +119,11 @@ function register({ group, leaf, act }) {
   );
 
   act(
-    leaf(campaigns, 'cancel <id>', 'Cancel a scheduled campaign (returns it to draft)'),
+    leaf(
+      campaigns,
+      'cancel <id>',
+      'Stop a campaign (back to draft, or terminal canceled if it is already queued)',
+    ),
     ({ client, args: [id] }) => client.campaigns.cancel(id),
   );
 

@@ -12,6 +12,7 @@ import com.mailblastr.requests.ImportContactsRequest;
 import com.mailblastr.requests.ListAutomationRunsParams;
 import com.mailblastr.requests.ListEmailsParams;
 import com.mailblastr.requests.UpdateAutomationRequest;
+import com.mailblastr.requests.UpdateAutomationStepRequest;
 import com.mailblastr.requests.UpdateEventRequest;
 
 import java.nio.charset.StandardCharsets;
@@ -89,12 +90,41 @@ public final class ContractParityTest {
         Check.eq("engagement url", "https://api.test/campaigns/cmp_1/engagement", t.lastUrl);
 
         // --- automations: step edits, run filters, AI ---
-        mb.automations().updateStep("auto_1", "step_2", AutomationStep.builder()
+        mb.automations().updateStep("auto_1", "step_2", UpdateAutomationStepRequest.builder()
                 .type("delay").config("duration", "3 days").build());
         Check.eq("updateStep method", "PATCH", t.lastMethod);
         Check.eq("updateStep url", "https://api.test/automations/auto_1/steps/step_2", t.lastUrl);
         Check.eq("updateStep body",
                 "{\"type\":\"delay\",\"config\":{\"duration\":\"3 days\"}}", t.lastBody);
+        // updateStep must NOT take the create-time AutomationStep builder. The
+        // PATCH route forwards only type/config to storage (lib/automations/
+        // crud.ts updateStep) and validateStep never reads a top-level `key`,
+        // so a key sent there is a SILENT no-op — 200 back, with the STORED key
+        // echoed in the response, which reads as a successful re-key. Asserted
+        // reflectively so re-adding a key() setter fails here, not in prod.
+        Class<?> updateBody = null;
+        for (java.lang.reflect.Method m : com.mailblastr.resources.Automations.class.getMethods()) {
+            if (m.getName().equals("updateStep") && m.getParameterCount() == 3) {
+                updateBody = m.getParameterTypes()[2];
+            }
+        }
+        Check.isTrue("updateStep takes a dedicated body type, not create's AutomationStep",
+                updateBody != null && !AutomationStep.class.equals(updateBody));
+        boolean updateBodyHasKey = false;
+        if (updateBody != null) {
+            for (Class<?> nested : updateBody.getDeclaredClasses()) {
+                for (java.lang.reflect.Method m : nested.getMethods()) {
+                    if (m.getName().equals("key")) updateBodyHasKey = true;
+                }
+            }
+        }
+        Check.isTrue("updateStep's body exposes no key() setter — PATCH ignores key",
+                !updateBodyHasKey);
+        // The asymmetry is deliberate: POST /automations/:id/steps DOES honour
+        // `key` (crud.ts addStep inserts COALESCE(key, id)), so create keeps it.
+        mb.automations().addStep("auto_1", AutomationStep.builder()
+                .key("welcome_v2").type("wait").config("duration", "2 days").build());
+        Check.contains("addStep still sends key", t.lastBody, "\"key\":\"welcome_v2\"");
 
         mb.automations().runs("auto_1", ListAutomationRunsParams.builder()
                 .limit(50).status("failed", "running").build());

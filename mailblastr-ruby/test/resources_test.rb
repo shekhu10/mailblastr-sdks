@@ -114,9 +114,13 @@ class ResourcesTest < Minitest::Test
     assert_request :post, "/automations/auto_1/steps"
     assert_equal "send_email", last_body["type"]
 
-    Mailblastr::Automations.update_step("auto_1", "step_1", { config: { subject: "Hi" } })
+    # `type` must ride along: the server re-validates the whole step, so a
+    # type-less body is a 422 no matter how valid the config is.
+    Mailblastr::Automations.update_step("auto_1", "step_1",
+                                        { type: "send_email", config: { template_id: "tmpl_1", subject: "Hi" } })
     assert_request :patch, "/automations/auto_1/steps/step_1"
-    assert_equal({ "subject" => "Hi" }, last_body["config"])
+    assert_equal "send_email", last_body["type"]
+    assert_equal({ "template_id" => "tmpl_1", "subject" => "Hi" }, last_body["config"])
 
     Mailblastr::Automations.delete_step("auto_1", "step_1")
     assert_request :delete, "/automations/auto_1/steps/step_1"

@@ -70,6 +70,53 @@ public final class WebhooksTest {
         Check.isTrue("valid signature (whsec_ secret)",
                 Webhooks.verifyWebhookSignature(payload, headers(id, now, "v1," + sig), whsec).isValid());
 
+        // --- verify: the whsec_ suffix must decode as leniently as the signer ---
+        // The `secret` field on POST /webhooks is stored verbatim, so a caller
+        // can hand us any base64 spelling. Node's Buffer.from(suffix,'base64')
+        // at the signer (lib/crypto.ts secretToKey) ignores out-of-alphabet
+        // characters, needs no padding, reads "-"/"_" as "+"/"/", and drops a
+        // lone 1-char remainder. Java's Base64.getDecoder() throws on three of
+        // those four, and the raw-UTF-8 fallback then derived a DIFFERENT key
+        // than the signer — every authentic delivery came back no_match.
+        // Each fixture below signs with the RAW KEY BYTES, so a failure here
+        // means the SDK derived a different key, not that the HMAC drifted.
+        byte[] keyBytes = {(byte) 0xfb, (byte) 0xff, (byte) 0xbe, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13};
+        String keySig = sign(id, now, payload, keyBytes); // 0xfb/0xff/0xbe force "+" and "/"
+        Check.isTrue("whsec_ url-safe alphabet derives the signer's key",
+                Webhooks.verifyWebhookSignature(payload, headers(id, now, "v1," + keySig),
+                        "whsec_" + Base64.getUrlEncoder().withoutPadding().encodeToString(keyBytes)).isValid());
+        Check.isTrue("whsec_ unpadded standard alphabet derives the signer's key",
+                Webhooks.verifyWebhookSignature(payload, headers(id, now, "v1," + keySig),
+                        "whsec_" + Base64.getEncoder().withoutPadding().encodeToString(keyBytes)).isValid());
+        Check.isTrue("whsec_ url-safe WITH padding derives the signer's key",
+                Webhooks.verifyWebhookSignature(payload, headers(id, now, "v1," + keySig),
+                        "whsec_" + Base64.getUrlEncoder().encodeToString(keyBytes)).isValid());
+
+        // A 12-byte key encodes to 16 chars; one extra alphabet char makes the
+        // suffix length 1 mod 4. Node drops that char and returns the 12 bytes.
+        byte[] shortKey = {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12};
+        String shortSig = sign(id, now, payload, shortKey);
+        Check.isTrue("whsec_ lone trailing char is dropped, not fatal",
+                Webhooks.verifyWebhookSignature(payload, headers(id, now, "v1," + shortSig),
+                        "whsec_" + Base64.getEncoder().withoutPadding().encodeToString(shortKey) + "D").isValid());
+
+        // Whitespace inside the suffix (a wrapped copy-paste) is ignored, not fatal.
+        byte[] junkKey = {1, 2, 3, 4, 5, 6, 7, 8, 9};
+        String junkSig = sign(id, now, payload, junkKey);
+        String junkEnc = Base64.getEncoder().withoutPadding().encodeToString(junkKey);
+        Check.isTrue("whsec_ out-of-alphabet characters are ignored, not fatal",
+                Webhooks.verifyWebhookSignature(payload, headers(id, now, "v1," + junkSig),
+                        "whsec_" + junkEnc.substring(0, 4) + " " + junkEnc.substring(4, 8)
+                                + "\n" + junkEnc.substring(8)).isValid());
+
+        // A suffix that decodes to no bytes at all still falls back to the raw
+        // UTF-8 bytes of the whole whsec_ string, exactly as the signer does.
+        String emptySuffix = "whsec_A";
+        Check.isTrue("whsec_ suffix decoding to no bytes falls back to raw UTF-8",
+                Webhooks.verifyWebhookSignature(payload, headers(id, now,
+                        "v1," + sign(id, now, payload, emptySuffix.getBytes(StandardCharsets.UTF_8))),
+                        emptySuffix).isValid());
+
         // --- multiple space-separated signatures: any match wins ---
         Check.isTrue("any-of-many signatures matches",
                 Webhooks.verifyWebhookSignature(payload,

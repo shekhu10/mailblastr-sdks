@@ -76,6 +76,29 @@ mailblastr.Batch.send([
 ])  # up to 100 emails per request
 ```
 
+A batch succeeds in one of two ways, chosen by its **size** alone — branch on
+`queued`, not on the absence of an error:
+
+| Batch size | Status | Response | What happened |
+|---|---|---|---|
+| 1–40 | `200` | no `queued` key at all — never `queued: False` | every id in `data` is already handed to the mail service |
+| 41–100 | `202` | `queued: True`, `queued_count == len(result["data"])` | ids are real, but the emails are still `scheduled` — **nothing has been transmitted yet** |
+
+```python
+result = mailblastr.Batch.send(payloads)
+if result.get("queued"):
+    # Accepted, not sent. Poll mailblastr.Emails.get(id) for the outcome.
+    ...
+```
+
+Queuing is the only way the documented 100-email maximum can be accepted at all:
+100 inline sends run past the platform's request ceiling. A batch carrying an
+`@mailblastr.dev` simulator recipient in `to`, `cc` or `bcc` stays inline at any
+size. An inline batch near the 40-email boundary can take ~100s server-side, far
+past the 30s default `mailblastr.timeout` — raise it for batches that large, and
+always pass an `idempotency_key`, since a client that gives up mid-request cannot
+tell what was already sent.
+
 ### Options
 
 ```python

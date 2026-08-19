@@ -9,6 +9,7 @@ import {
   USER_AGENT,
   IDEMPOTENCY_KEY_MAX_LENGTH,
   type ReputationDetail,
+  type ReceivedAttachment,
 } from '../src/index';
 
 interface Captured { url: string; method: string; headers: Record<string, string>; body: any }
@@ -517,6 +518,28 @@ test('a received email exposes domain_id and list rows expose object/id', async 
   assert.equal(atts.data!.data[0].downloadable, true);
 });
 
+test('a listAttachments row may carry a null size', async () => {
+  // REGRESSION: `size` was typed `number`, but the list serializer emits it
+  // straight off untyped jsonb and sends `null` when the stored metadata has
+  // none — while the copy embedded in a received_email substitutes 0. The client
+  // casts the parsed body through without coercing it, so the declared type was
+  // a promise the runtime never kept: `size.toFixed(1)` type-checked clean and
+  // then threw the first time a row without a recorded size came back.
+  //
+  // Typing the fixture as the SDK's own row type is the type-level half of this
+  // test, enforced by `npm run typecheck:test` — while `size` was `number` the
+  // shape the server actually sends could not even be spelled (TS2322).
+  const legacy: ReceivedAttachment = {
+    object: 'attachment', id: '0', filename: 'legacy.pdf', size: null,
+    content_type: 'application/pdf', content_disposition: 'attachment',
+    downloadable: false,
+  };
+  const { fn } = mockFetch(200, { object: 'list', has_more: false, data: [{ ...legacy, content_id: null }] });
+  const mb = new Mailblastr('mb_test', { baseUrl: 'https://api.test', fetch: fn });
+  const atts = await mb.emails.receiving.listAttachments('r1');
+  assert.equal(atts.data!.data[0].size, null);
+});
+
 test('emails.receiving maps every method', async () => {
   const { fn, calls } = mockFetch(200, {});
   const mb = new Mailblastr('mb_test', { baseUrl: 'https://api.test', fetch: fn });
@@ -827,6 +850,54 @@ test('webhooks.verify validates a correct Svix-style signature', () => {
   assert.deepEqual(ci, { valid: true });
 });
 
+test('webhooks.verify reads a Fetch Headers / Map, not just a plain object', () => {
+  // REGRESSION: verification used to enumerate `Object.keys(headers)`, which is
+  // `[]` for a WHATWG `Headers` — and `request.headers` IS a `Headers` in Next.js
+  // App Router, Remix, Hono, Cloudflare Workers, Deno and Bun. Every genuinely
+  // signed delivery on those frameworks came back `missing_headers`, blaming
+  // MailBlastr for headers that were present and a signature that was valid.
+  const secret = 'whsec_' + Buffer.from('supersecretkeybytes!!').toString('base64');
+  const id = 'msg_123';
+  const timestamp = String(Math.floor(Date.now() / 1000));
+  const payload = JSON.stringify({ type: 'email.delivered', data: { id: 'e1' } });
+  const key = Buffer.from(secret.slice('whsec_'.length), 'base64');
+  const sig = 'v1,' + createHmac('sha256', key).update(`${id}.${timestamp}.${payload}`).digest('base64');
+
+  // A Fetch Headers — the container half the Node ecosystem hands its users.
+  const fetchHeaders = new Headers({ 'svix-id': id, 'svix-timestamp': timestamp, 'svix-signature': sig });
+  assert.equal(Object.keys(fetchHeaders).length, 0, 'a Headers exposes no own keys — that is the trap');
+  assert.deepEqual(verifyWebhookSignature(payload, fetchHeaders, secret), { valid: true });
+
+  // Any (name, value) iterable, e.g. a Map, reads the same way.
+  const asMap = new Map([['Svix-Id', id], ['Svix-Timestamp', timestamp], ['Svix-Signature', sig]]);
+  assert.deepEqual(verifyWebhookSignature(payload, asMap, secret), { valid: true });
+
+  // A null-prototype plain object (what `node:http` actually gives you) and
+  // array-valued headers (what a proxy may give you) still take the own-keys path.
+  const nodeStyle = Object.assign(Object.create(null), {
+    'svix-id': [id], 'svix-timestamp': timestamp, 'svix-signature': sig,
+  });
+  assert.deepEqual(verifyWebhookSignature(payload, nodeStyle, secret), { valid: true });
+
+  // A plain object carrying a header literally NAMED `entries` holds a string
+  // there, not a function, so it must not be mistaken for a Headers-like.
+  const trap = { entries: 'not-a-function', 'svix-id': id, 'svix-timestamp': timestamp, 'svix-signature': sig };
+  assert.deepEqual(verifyWebhookSignature(payload, trap, secret), { valid: true });
+
+  // A bare ARRAY of (name, value) pairs — the `Iterable<[string, string]>` arm the
+  // public type advertises. This is why headerPairs() must try Symbol.iterator
+  // BEFORE entries(): `Array.prototype.entries()` yields (INDEX, value), so an
+  // entries-first order reads these as headers named "0", "1", "2" and fails the
+  // delivery as missing_headers while blaming the caller.
+  const asPairs: Array<[string, string]> = [
+    ['svix-id', id], ['svix-timestamp', timestamp], ['svix-signature', sig],
+  ];
+  assert.deepEqual(verifyWebhookSignature(payload, asPairs, secret), { valid: true });
+
+  // An empty container is still an honest missing_headers.
+  assert.deepEqual(verifyWebhookSignature(payload, new Headers(), secret), { valid: false, reason: 'missing_headers' });
+});
+
 test('verifyWebhookSignature enforces timestamp tolerance (and 0 disables it)', () => {
   const secret = 'whsec_' + Buffer.from('key').toString('base64');
   const id = 'msg_1';
@@ -1027,6 +1098,27 @@ test('campaigns.engagement maps to GET /campaigns/:id/engagement', async () => {
   const res = await mb.campaigns.engagement('b1');
   assert.equal(calls[0].url, 'https://api.test/campaigns/b1/engagement');
   assert.deepEqual(res.data?.opened, []);
+});
+
+test('updateStep rejects the create-only graph `key`', async () => {
+  // REGRESSION: updateStep took the ADD-step body, which offers `key` with a
+  // create-only doc comment ("defaults to the new step's id") rendered at the
+  // update call site. PATCH forwards only type and config to storage, so the
+  // key is discarded — and the response echoes the STORED key back, so the
+  // intended re-key type-checks, returns 200, and silently never happens while
+  // the automation's `connections` stay pointed at the old key.
+  const { fn, calls } = mockFetch(200, { id: 'st1', key: 'welcome', type: 'send', position: 0, config: {} });
+  const mb = new Mailblastr('mb_test', { baseUrl: 'https://api.test', fetch: fn });
+
+  // @ts-expect-error `key` is create-only — set it on addStep(), not updateStep()
+  await mb.automations.updateStep('au1', 'st1', { type: 'send_email', key: 'welcome_v2', config: {} });
+  // addStep, the endpoint that DOES honour it, still accepts it.
+  await mb.automations.addStep('au1', { type: 'send_email', key: 'welcome_v2', config: {} });
+
+  assert.deepEqual(calls.map((c) => `${c.method} ${c.url}`), [
+    'PATCH https://api.test/automations/au1/steps/st1',
+    'POST https://api.test/automations/au1/steps',
+  ]);
 });
 
 test('automations.runs forwards a status filter as a comma-separated list', async () => {

@@ -42,7 +42,15 @@ module Mailblastr
         Client.request(:post, "/campaigns/#{Client.path_escape(campaign_id)}/send", body: params)
       end
 
-      # Cancel a scheduled campaign (returns it to draft). POST /campaigns/:id/cancel
+      # Stop a campaign's remaining work. Accepted on `scheduled`, `recurring`,
+      # `paused` and `queued`; anything else is a validation_error.
+      # `scheduled`/`recurring`/`paused` return to `draft` (editable, re-sendable);
+      # a `queued` campaign already fanning out becomes the TERMINAL `canceled`,
+      # which can never be edited, re-sent or deleted. Copies already handed to
+      # the mail service cannot be recalled; what stops is every remaining
+      # recipient (for a staggered campaign, every future batch-day).
+      # Read the returned `status` to see which happened.
+      # POST /campaigns/:id/cancel
       def cancel(campaign_id)
         Client.request(:post, "/campaigns/#{Client.path_escape(campaign_id)}/cancel")
       end

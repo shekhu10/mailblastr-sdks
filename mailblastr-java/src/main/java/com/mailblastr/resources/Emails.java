@@ -51,6 +51,9 @@ public final class Emails extends Resource {
     /**
      * Send up to 100 emails in one request. {@code POST /emails/batch} (alias of {@code batch().send}).
      *
+     * <p>A batch over 40 emails is QUEUED ({@code 202}) rather than sent
+     * inline — see {@link com.mailblastr.resources.Batch#sendEmails(java.util.List)}.
+     *
      * @deprecated use {@code batch().sendEmails(...)} — batch items reject
      *     {@code attachments} and {@code scheduled_at} (send those individually
      *     via {@link #send}), which {@code BatchEmailRequest} enforces at

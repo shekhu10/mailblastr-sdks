@@ -6,6 +6,8 @@ import io
 import json
 import time
 import unittest
+import uuid
+from decimal import Decimal
 import urllib.error
 from unittest import mock
 
@@ -328,8 +330,41 @@ class TestHttpClient(unittest.TestCase):
         self.assertEqual(self._capture_idempotency_header(key), key)
 
     def test_blank_idempotency_key_is_not_sent(self):
-        """A falsy key means "no idempotency", not an error."""
+        """An absent or empty key means "no idempotency", not an error. Note
+        that "falsy" is NOT the test — see the numeric-zero case below."""
         self.assertIsNone(self._capture_idempotency_header(""))
+        self.assertIsNone(self._capture_idempotency_header(None))
+
+    def test_numeric_zero_idempotency_key_is_sent(self):
+        """0 is a VALID 1-character key server-side, exactly like the string
+        "0" — the header gate stringifies before testing emptiness. A bare
+        truthiness gate dropped it, turning that one send non-idempotent so a
+        429/503 retry could deliver the same email twice."""
+        self.assertEqual(self._capture_idempotency_header(0), "0")
+        self.assertEqual(self._capture_idempotency_header("0"), "0")
+        self.assertEqual(self._capture_idempotency_header(12345), "12345")
+
+    def test_non_scalar_idempotency_key_sends_no_header(self):
+        """A bool or container is skipped rather than stringified into a bogus
+        "True"/"[]" key."""
+        self.assertIsNone(self._capture_idempotency_header(True))
+        self.assertIsNone(self._capture_idempotency_header([]))
+        self.assertIsNone(self._capture_idempotency_header({}))
+
+    def test_stringable_idempotency_key_objects_still_reach_the_wire(self):
+        """The gate drops bools and containers; it does NOT allow-list str/int/
+        float. A uuid.UUID is what a Django UUIDField or a SQLAlchemy Uuid
+        column hands you, and `options={"idempotency_key": order.id}` is the
+        idiomatic spelling — an allow-list silently dropped it and made that
+        send non-idempotent, which is the same defect as the numeric-zero case
+        on a much more common input."""
+        self.assertEqual(
+            self._capture_idempotency_header(
+                uuid.UUID("12345678-1234-5678-1234-567812345678")
+            ),
+            "12345678-1234-5678-1234-567812345678",
+        )
+        self.assertEqual(self._capture_idempotency_header(Decimal("42")), "42")
 
     def test_whitespace_only_idempotency_key_is_left_to_the_server(self):
         """Whitespace-only trims to length 0 server-side — a 400, not a local

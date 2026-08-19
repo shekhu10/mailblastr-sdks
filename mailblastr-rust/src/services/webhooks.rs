@@ -5,8 +5,9 @@
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use base64::engine::general_purpose::STANDARD as B64;
-use base64::Engine as _;
+use base64::engine::general_purpose::{GeneralPurpose, GeneralPurposeConfig, STANDARD as B64};
+use base64::engine::DecodePaddingMode;
+use base64::{alphabet, Engine as _};
 use hmac::{Hmac, Mac};
 use reqwest::Method;
 use serde::{Deserialize, Serialize};
@@ -206,14 +207,55 @@ impl Default for VerifyWebhookOptions {
     }
 }
 
+/// The engine [`b64_lenient`] decodes with: no `=` required, and a trailing
+/// partial group accepted rather than rejected for its leftover bits.
+const B64_LENIENT: GeneralPurpose = GeneralPurpose::new(
+    &alphabet::STANDARD,
+    GeneralPurposeConfig::new()
+        .with_decode_padding_mode(DecodePaddingMode::Indifferent)
+        .with_decode_allow_trailing_bits(true),
+);
+
+/// Decode base64 the way the SIGNER does, not the way Rust does.
+///
+/// The backend derives its key with Node's `Buffer.from(suffix, 'base64')`
+/// (mailblastr_webapp/lib/crypto.ts `secretToKey`), which is LENIENT: it
+/// ignores characters outside the alphabet, accepts the URL-safe `-`/`_`
+/// spellings, needs no `=` padding, and decodes a trailing partial group
+/// (dropping a lone 1-char remainder, which carries no whole byte). The
+/// `STANDARD` engine does none of that — it is `RequireCanonical` over the
+/// standard-only alphabet, so an unpadded suffix is `InvalidPadding` and a
+/// URL-safe one is `InvalidByte`. Either `Err` fell through to the raw-UTF-8
+/// fallback below, keying the HMAC with the whole secret STRING (`whsec_`
+/// prefix included) while the server keyed it with the decoded bytes — and
+/// every genuine delivery came back `{ valid: false, reason: "no_match" }`.
+/// Such secrets are not hypothetical: `POST /webhooks` accepts a caller-chosen
+/// `secret` verbatim, with no format validation, and
+/// [`CreateWebhookOptions::with_secret`] is how you set it. npm, python, php
+/// and ruby are all lenient; this reproduces them byte for byte.
+fn b64_lenient(s: &str) -> Vec<u8> {
+    let mut cleaned: String = s
+        .chars()
+        .filter_map(|c| match c {
+            '-' => Some('+'),
+            '_' => Some('/'),
+            'A'..='Z' | 'a'..='z' | '0'..='9' | '+' | '/' => Some(c),
+            _ => None,
+        })
+        .collect();
+    if cleaned.len() % 4 == 1 {
+        cleaned.pop(); // a lone leftover character encodes no whole byte
+    }
+    B64_LENIENT.decode(&cleaned).unwrap_or_default()
+}
+
 /// Derive the HMAC key from a `whsec_`-prefixed secret (base64-decode the
 /// suffix); a secret without the prefix is used as raw UTF-8 bytes.
 fn secret_to_key(secret: &str) -> Vec<u8> {
     if let Some(b64) = secret.strip_prefix("whsec_") {
-        if let Ok(bytes) = B64.decode(b64) {
-            if !bytes.is_empty() {
-                return bytes;
-            }
+        let bytes = b64_lenient(b64);
+        if !bytes.is_empty() {
+            return bytes;
         }
     }
     secret.as_bytes().to_vec()
@@ -465,6 +507,53 @@ mod tests {
         let sig = sign("rawsecret", "msg_5", "1700000000", payload);
         let headers = WebhookHeaders::new("msg_5", "1700000000", format!("v1,{sig}"));
         assert!(verify_webhook_signature(payload, &headers, "rawsecret", &NO_TOLERANCE).valid);
+    }
+
+    /// The 16 key bytes all three spellings below decode to. `Buffer.from` gives
+    /// the signer these bytes for every one of them, so the SDK must too.
+    const KEY_BYTES: [u8; 16] = [
+        0xfb, 0xff, 0xbe, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b, 0x0c,
+        0x0d,
+    ];
+    const SECRET_PADDED: &str = "whsec_+/++AQIDBAUGBwgJCgsMDQ==";
+    const SECRET_UNPADDED: &str = "whsec_+/++AQIDBAUGBwgJCgsMDQ";
+    const SECRET_URL_SAFE: &str = "whsec_-_--AQIDBAUGBwgJCgsMDQ";
+
+    /// Sign with the key BYTES, the way the server does — never through
+    /// `secret_to_key`. The `sign` helper above derives its key with the very
+    /// function under test, so it agrees with any deriver, a broken one
+    /// included; only a signature made from the server's own key can catch a
+    /// key the SDK derived differently.
+    fn sign_with_key(key: &[u8], id: &str, ts: &str, payload: &str) -> String {
+        let mut mac = HmacSha256::new_from_slice(key).unwrap();
+        mac.update(format!("{id}.{ts}.{payload}").as_bytes());
+        B64.encode(mac.finalize().into_bytes())
+    }
+
+    /// A `whsec_` suffix that is unpadded or URL-safe must derive the SAME key
+    /// as the canonical spelling. `POST /webhooks` takes a caller-supplied
+    /// secret verbatim, so these reach production; decoding them strictly
+    /// yielded the raw secret string as the key and rejected 100% of the
+    /// endpoint's genuine deliveries as `no_match`.
+    #[test]
+    fn accepts_an_unpadded_or_url_safe_secret_suffix() {
+        let payload = r#"{"type":"email.delivered","data":{"id":"em_9"}}"#;
+        let sig = sign_with_key(&KEY_BYTES, "msg_7", "1700000000", payload);
+        let headers = WebhookHeaders::new("msg_7", "1700000000", format!("v1,{sig}"));
+
+        for secret in [SECRET_PADDED, SECRET_UNPADDED, SECRET_URL_SAFE] {
+            assert_eq!(
+                secret_to_key(secret),
+                KEY_BYTES.to_vec(),
+                "{secret} must derive the signer's key"
+            );
+            let res = verify_webhook_signature(payload, &headers, secret, &NO_TOLERANCE);
+            assert!(
+                res.valid,
+                "{secret} rejected a genuine delivery: {:?}",
+                res.reason
+            );
+        }
     }
 
     #[test]

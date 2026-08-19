@@ -63,14 +63,18 @@ module Mailblastr
       # signing secret. Pure local computation (OpenSSL HMAC-SHA256) — no HTTP.
       #
       # `payload` MUST be the exact raw request body string (do not re-serialize
-      # parsed JSON). `headers` is a Hash carrying svix-id / svix-timestamp /
-      # svix-signature (read case-insensitively; array values use the first
-      # element). The signature header may carry multiple space-separated
-      # `v1,<base64>` entries — any one match makes the delivery valid.
+      # parsed JSON). `headers` may be a Hash OR any pair-yielding header
+      # container (e.g. Rails' `request.headers`), carrying svix-id /
+      # svix-timestamp / svix-signature (read case-insensitively, rack
+      # `HTTP_SVIX_ID` spellings included; array values use the first element).
+      # The signature header may carry multiple space-separated `v1,<base64>`
+      # entries — any one match makes the delivery valid.
       #
       # Returns { valid: true } or { valid: false, reason: "..." }.
       #
-      #   result = Mailblastr::Webhooks.verify(request.raw_post, request.headers.to_h, secret)
+      #   # Rails: pass request.headers straight through — NOT .to_h, which
+      #   # hands you the rack env spellings instead of the header names.
+      #   result = Mailblastr::Webhooks.verify(request.raw_post, request.headers, secret)
       #   head :unauthorized unless result[:valid]
       def verify(payload, headers, secret, tolerance: 300)
         id = read_header(headers, "svix-id")
@@ -107,12 +111,38 @@ module Mailblastr
       private
 
       # Case-insensitively read one header value (first element if an array).
+      #
+      # Accepts a Hash AND any pair-yielding container, because Rails'
+      # `request.headers` is an ActionDispatch::Http::Headers — Enumerable, not
+      # a Hash — and the old `is_a?(Hash)` guard rejected it before any lookup,
+      # so the most natural call answered `missing_headers` for every genuinely
+      # signed delivery. Rack/WSGI spellings (`HTTP_SVIX_ID`) are matched too,
+      # since ActionDispatch's #each delegates to the raw rack env: that is what
+      # `request.headers.to_h` and a bare rack `env` actually contain, and
+      # downcased `http_svix_id` never equals `svix-id`.
+      #
+      # Enumerating is guarded: an exotic container whose #each demands a block
+      # would otherwise raise LocalJumpError out of `verify`, turning a 401 into
+      # a 500 inside a webhook controller. Caller-supplied input must never
+      # raise here — an unreadable container is just `missing_headers`.
       def read_header(headers, name)
-        return nil unless headers.is_a?(Hash)
+        return nil if headers.nil?
 
         lower = name.downcase
-        headers.each do |k, v|
-          next unless k.to_s.downcase == lower
+        rack = "http_#{lower.tr('-', '_')}"
+        pairs =
+          begin
+            if headers.respond_to?(:each_pair) then headers.each_pair.to_a
+            elsif headers.respond_to?(:each) then headers.each.to_a
+            else return nil
+            end
+          rescue StandardError
+            return nil
+          end
+
+        pairs.each do |k, v|
+          key = k.to_s.downcase
+          next unless key == lower || key == rack
 
           return v.is_a?(Array) ? v.first : v
         end
@@ -121,10 +151,20 @@ module Mailblastr
 
       # Derive the HMAC key from a `whsec_`-prefixed secret (base64-decode the
       # suffix); a secret without the prefix is used as raw UTF-8 bytes.
+      #
+      # `tr` FIRST: the signer decodes with Node's Buffer.from(suffix, 'base64')
+      # (lib/crypto.ts secretToKey), which reads "-"/"_" as the URL-safe
+      # spellings of "+"/"/". `unpack1("m")` tolerates missing padding but
+      # DROPS those two characters instead of translating them, yielding a
+      # SHORTER, different key than the signer derived — so a caller-supplied
+      # URL-safe secret (POST /webhooks accepts `secret` verbatim, unvalidated)
+      # made every genuinely signed delivery come back `no_match`. Standard,
+      # padded and unpadded suffixes are unaffected by the `tr`, which is why
+      # the failure looked arbitrary and secret-specific.
       def secret_to_key(secret)
         s = secret.to_s
         if s.start_with?("whsec_")
-          decoded = s["whsec_".length..].unpack1("m") # lenient base64 decode
+          decoded = s["whsec_".length..].tr("-_", "+/").unpack1("m")
           return decoded if decoded && !decoded.empty?
         end
         s

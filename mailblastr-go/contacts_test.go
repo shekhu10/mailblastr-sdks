@@ -262,9 +262,10 @@ func TestContactsListSegmentsReturnsReducedRows(t *testing.T) {
 }
 
 // GetTopics is paginated exactly like its siblings (ListSegments,
-// Segments.Contacts, Receiving.ListAttachments): nil params returns every
-// topic, and supplying ListParams restores paging. Before 3.0.0 the method
-// took no params at all, so limit/after/before were unreachable from Go.
+// Segments.Contacts, Receiving.ListAttachments): nil params returns one page
+// capped at 1,000 rows with HasMore reporting the truncation, and supplying
+// ListParams restores 1-100 paging. Before 3.0.0 the method took no params at
+// all, so limit/after/before were unreachable from Go.
 func TestContactsGetTopicsPagination(t *testing.T) {
 	client := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet || r.URL.Path != "/contacts/con_1/topics" {

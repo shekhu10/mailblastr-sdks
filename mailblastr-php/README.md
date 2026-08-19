@@ -141,7 +141,11 @@ $bytes = $mailblastr->emails->receiving->getAttachment($id, $attachmentId); // r
 $mime = $mailblastr->emails->receiving->getRaw($id);                        // raw RFC822
 
 // Batch send (alias of $mailblastr->emails->batch())
-$mailblastr->batch->send([ /* up to 100 email payloads */ ]);
+$res = $mailblastr->batch->send([ /* up to 100 email payloads */ ]);
+// 1-40 are sent inline (HTTP 200, no 'queued' key). 41-100 are QUEUED (HTTP 202):
+// $res['queued'] === true and $res['queued_count'] === count($res['data']), and
+// the mail has NOT gone out yet — the worker sends it on its next tick.
+if ($res['queued'] ?? false) { /* not transmitted yet — poll $mailblastr->emails->get($id) */ }
 
 // Domains (incl. claiming a domain verified elsewhere + one-click DNS)
 $mailblastr->domains->create(['name' => 'example.com']);
@@ -254,7 +258,10 @@ $mailblastr->automations->addStep($automation['id'], [
     'type' => 'send_email',
     'config' => ['template_id' => 'tmpl_welcome'],
 ]);
-$mailblastr->automations->updateStep($automation['id'], $stepId, ['config' => ['duration' => '3 days']]);
+// A step update REPLACES the step rather than merging into it: send 'type' plus
+// the complete 'config' every time — omitting 'type' is a 422, not "leave the
+// type unchanged", and anything left out of 'config' is dropped, not preserved.
+$mailblastr->automations->updateStep($automation['id'], $stepId, ['type' => 'delay', 'config' => ['duration' => '3 days']]);
 
 // Or let AI draft the steps instead — also requires a stopped automation, and
 // without 'attach' the automation must have no steps yet

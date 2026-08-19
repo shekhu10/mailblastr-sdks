@@ -19,10 +19,10 @@ import type {
   Topic, CreateTopicOptions, UpdateTopicOptions, ListTopicsParams,
   Template, TemplateListItem, CreateTemplateOptions, UpdateTemplateOptions, DuplicateTemplateOptions,
   Automation, CreateAutomationOptions, UpdateAutomationOptions,
-  AddAutomationStepOptions, AutomationStep, AutomationRun, ListAutomationRunsParams,
+  AddAutomationStepOptions, UpdateAutomationStepOptions, AutomationStep, AutomationRun, ListAutomationRunsParams,
   AutomationAiOptions, AutomationAiResult,
   Webhook, CreateWebhookOptions, UpdateWebhookOptions, WebhookTestResult,
-  WebhookHeaders, VerifyWebhookResult, VerifyWebhookOptions,
+  WebhookHeaderInput, VerifyWebhookResult, VerifyWebhookOptions,
   LogEntry, SendEventOptions, SendEventResponse, CreateEventOptions, UpdateEventOptions, EventDefinition,
   ApiKey,
   ListResponse, RemovedResponse,
@@ -710,9 +710,11 @@ class Automations {
   addStep(id: string, payload: AddAutomationStepOptions): Promise<Result<AutomationStep>> {
     return this.http.request('POST', p`/automations/${id}/steps`, payload);
   }
-  /** Update a step in place (type/config; the graph key stays stable). The
-   * automation must be disabled. PATCH /automations/:id/steps/:stepId → the step. */
-  updateStep(id: string, stepId: string, payload: AddAutomationStepOptions): Promise<Result<AutomationStep>> {
+  /** Replace a step's type/config in place — the graph key stays stable, so the
+   * `connections` edges pointing at it keep resolving, and a `key` in the body is
+   * discarded. The automation must be disabled.
+   * PATCH /automations/:id/steps/:stepId → the step. */
+  updateStep(id: string, stepId: string, payload: UpdateAutomationStepOptions): Promise<Result<AutomationStep>> {
     return this.http.request('PATCH', p`/automations/${id}/steps/${stepId}`, payload);
   }
   /** Delete a step from an automation. DELETE /automations/:id/steps/:stepId → { id, deleted }. */
@@ -797,24 +799,48 @@ class Webhooks {
    * `payload` MUST be the exact raw request body string the server sent (do not
    * re-serialize the parsed JSON — whitespace differences break the signature).
    * `headers` accepts the svix-id/svix-timestamp/svix-signature headers (read
-   * case-insensitively). A header may carry multiple space-separated signatures;
+   * case-insensitively) out of a plain object, a Fetch `Headers` or any
+   * `(name, value)` iterable, so `request.headers` passes straight through on
+   * every framework. A header may carry multiple space-separated signatures;
    * any one matching makes the delivery valid.
    *
    * This is a pure local computation — it makes no HTTP request.
    */
-  verify(payload: string, headers: WebhookHeaders, secret: string, options: VerifyWebhookOptions = {}): VerifyWebhookResult {
+  verify(payload: string, headers: WebhookHeaderInput, secret: string, options: VerifyWebhookOptions = {}): VerifyWebhookResult {
     return verifyWebhookSignature(payload, headers, secret, options);
   }
 }
 
+/**
+ * Best-effort `(name, value)` pairs out of ANY header container. `entries()`
+ * first, because a WHATWG `Headers` — what `request.headers` IS in Next.js App
+ * Router, Remix, Hono, Cloudflare Workers, Deno and Bun — and a `Map` both hold
+ * their fields internally, so `Object.keys()` on one is `[]` and every genuinely
+ * signed delivery on those frameworks answered `missing_headers`.
+ *
+ * The `typeof === 'function'` guards are load-bearing: a plain object carrying a
+ * header literally named `entries` holds a string there, not a function, so it
+ * still falls through to the own-keys branch.
+ */
+function headerPairs(headers: WebhookHeaderInput): Array<[unknown, unknown]> {
+  if (!headers) return [];
+  const h = headers as any;
+  // Symbol.iterator FIRST, and the order is load-bearing. Headers, Map and an
+  // array of pairs all iterate as (name, value), but `Array.prototype.entries()`
+  // yields (INDEX, value) -- so entries-first turns a documented input shape,
+  // `[['svix-id', ...]]`, into pairs keyed 0, 1, 2 that match no header name and
+  // fail as `missing_headers`. That is the same silent-verification-failure this
+  // helper exists to remove, just for a different caller.
+  if (typeof h[Symbol.iterator] === 'function') return Array.from(h);
+  if (typeof h.entries === 'function') return Array.from(h.entries());
+  return Object.keys(h).map((k) => [k, h[k]]);
+}
+
 /** Case-insensitively read a single header value (first if it's an array). */
-function readHeader(headers: WebhookHeaders, name: string): string | undefined {
+function readHeader(headers: WebhookHeaderInput, name: string): string | undefined {
   const lower = name.toLowerCase();
-  for (const k of Object.keys(headers)) {
-    if (k.toLowerCase() === lower) {
-      const v = headers[k];
-      return Array.isArray(v) ? v[0] : v;
-    }
+  for (const [k, v] of headerPairs(headers)) {
+    if (String(k).toLowerCase() === lower) return Array.isArray(v) ? v[0] : (v as string | undefined);
   }
   return undefined;
 }
@@ -850,7 +876,7 @@ function safeEqual(a: string, b: string): boolean {
  */
 export function verifyWebhookSignature(
   payload: string,
-  headers: WebhookHeaders,
+  headers: WebhookHeaderInput,
   secret: string,
   options: VerifyWebhookOptions = {},
 ): VerifyWebhookResult {

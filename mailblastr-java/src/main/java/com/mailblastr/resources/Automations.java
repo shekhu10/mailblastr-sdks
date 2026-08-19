@@ -9,6 +9,7 @@ import com.mailblastr.requests.AutomationStep;
 import com.mailblastr.requests.CreateAutomationRequest;
 import com.mailblastr.requests.ListAutomationRunsParams;
 import com.mailblastr.requests.UpdateAutomationRequest;
+import com.mailblastr.requests.UpdateAutomationStepRequest;
 
 /**
  * Automations (DOMAIN-FIRST) — {@code domain} is REQUIRED on create; only
@@ -49,10 +50,13 @@ public final class Automations extends Resource {
     }
 
     /**
-     * Edit a step. The automation must be DISABLED first.
+     * Replace a step's type and config. The automation must be DISABLED first,
+     * and {@code type} is required even when only the config changes — the
+     * step's graph {@code key} and {@code position} are NOT editable here, see
+     * {@link UpdateAutomationStepRequest}.
      * {@code PATCH /automations/:id/steps/:stepId}
      */
-    public MailblastrResponse updateStep(String id, String stepId, AutomationStep step) {
+    public MailblastrResponse updateStep(String id, String stepId, UpdateAutomationStepRequest step) {
         return api.request("PATCH", "/automations/" + enc(id) + "/steps/" + enc(stepId), step);
     }
 

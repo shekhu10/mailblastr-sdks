@@ -227,26 +227,78 @@ public class AutomationUpdateOptions
 }
 
 /// <summary>
-/// Payload for appending a step (POST /automations/:id/steps) or editing one
-/// (PATCH /automations/:id/steps/:stepId). The automation must be DISABLED for
-/// both. <c>type: "trigger"</c> is rejected — the trigger lives on the
-/// automation, not in the step list.
+/// Payload for appending a step (POST /automations/:id/steps). The automation
+/// must be DISABLED. <c>type: "trigger"</c> is rejected — the trigger lives on
+/// the automation, not in the step list.
+/// <para>
+/// Editing a step is a DIFFERENT payload: see
+/// <see cref="AutomationUpdateStepOptions"/>. PATCH forwards only
+/// <c>type</c> and <c>config</c>, so <see cref="Key"/> is create-only.
+/// </para>
 /// </summary>
 public class AutomationAddStepOptions
 {
     /// <summary>
     /// <c>send_email</c> | <c>wait_for_event</c> | <c>delay</c> | <c>condition</c> |
     /// <c>split</c> | <c>add_to_segment</c> | <c>contact_update</c> |
-    /// <c>contact_delete</c>. Optional on PATCH (leaves the type unchanged).
+    /// <c>contact_delete</c>. REQUIRED — a body without one is coerced to the
+    /// empty string and rejected as <c>422 validation_error</c>
+    /// ("type must be one of: …") before <see cref="Config"/> is read.
     /// </summary>
     [JsonPropertyName("type")]
     public string Type { get; set; } = null!;
 
+    /// <summary>
+    /// The step's settings. Which members are required depends on
+    /// <see cref="Type"/> (a <c>delay</c> needs a duration, a
+    /// <c>wait_for_event</c> needs an event, …); the server rebuilds the stored
+    /// config from this per type rather than keeping unknown members.
+    /// </summary>
     [JsonPropertyName("config")]
     public Dictionary<string, object?>? Config { get; set; }
 
+    /// <summary>
+    /// Stable graph key used by <see cref="AutomationConnection"/> edges.
+    /// Defaults to the new step's id when omitted. Settable ONLY here: the
+    /// PATCH route never forwards a key, so a step's key is fixed at creation —
+    /// delete and re-add the step to change it.
+    /// </summary>
     [JsonPropertyName("key")]
     public string? Key { get; set; }
+}
+
+/// <summary>
+/// Payload for editing a step (PATCH /automations/:id/steps/:stepId). The
+/// automation must be DISABLED. <c>type: "trigger"</c> is rejected — the
+/// trigger lives on the automation, not in the step list.
+/// <para>
+/// There is deliberately no <c>Key</c> here: the route forwards only
+/// <c>type</c> and <c>config</c> to storage, so connection edges that reference
+/// the step keep working. A key sent on PATCH is silently dropped and the 200
+/// response echoes the STORED key back, which reads as a successful re-key that
+/// never happened.
+/// </para>
+/// </summary>
+public class AutomationUpdateStepOptions
+{
+    /// <summary>
+    /// <c>send_email</c> | <c>wait_for_event</c> | <c>delay</c> | <c>condition</c> |
+    /// <c>split</c> | <c>add_to_segment</c> | <c>contact_update</c> |
+    /// <c>contact_delete</c>. REQUIRED on PATCH exactly as on POST: the update
+    /// replaces type and config wholesale, never merges, and the same validator
+    /// rejects a body without a type as <c>422 validation_error</c>. Resend the
+    /// step's CURRENT type even when only <see cref="Config"/> is changing.
+    /// </summary>
+    [JsonPropertyName("type")]
+    public string Type { get; set; } = null!;
+
+    /// <summary>
+    /// The step's settings, REPLACING the stored config rather than merging
+    /// into it — resend every member you want to keep. Which members are
+    /// required depends on <see cref="Type"/>.
+    /// </summary>
+    [JsonPropertyName("config")]
+    public Dictionary<string, object?>? Config { get; set; }
 }
 
 /// <summary>

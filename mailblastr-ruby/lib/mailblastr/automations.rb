@@ -42,7 +42,12 @@ module Mailblastr
       end
 
       # Edit a step in place (automation must be disabled).
-      # PATCH /automations/:id/steps/:step_id
+      # PATCH /automations/:id/steps/:step_id — params: { type:, config: }
+      # `type` is REQUIRED: the server re-validates the whole step, so omitting
+      # it is a validation_error naming the valid types. `config` REPLACES the
+      # stored config wholesale (there is no merge) — resend every key you want
+      # to keep. `key` is not accepted here; a step's graph key is create-only
+      # (set on add_step), so delete and re-add a step to re-key it.
       def update_step(automation_id, step_id, params)
         Client.request(
           :patch,

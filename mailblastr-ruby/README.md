@@ -277,7 +277,11 @@ automation = Mailblastr::Automations.create({
 })
 
 Mailblastr::Automations.add_step(automation["id"], { type: "send_email", config: { template_id: tmpl_id } })
-Mailblastr::Automations.update_step(automation["id"], step_id, { config: { subject: "New subject" } })
+# `type` is REQUIRED on update_step: PATCH re-validates the whole step and
+# `config` REPLACES the stored config wholesale (there is no merge), so resend
+# every key you want to keep. A step's graph `key` is create-only — settable on
+# add_step, ignored here — so delete and re-add a step to re-key it.
+Mailblastr::Automations.update_step(automation["id"], step_id, { type: "send_email", config: { template_id: tmpl_id, subject: "New subject" } })
 Mailblastr::Automations.update(automation["id"], { status: "enabled" })
 
 # Or describe the flow and let the server build the steps (automation must be stopped)

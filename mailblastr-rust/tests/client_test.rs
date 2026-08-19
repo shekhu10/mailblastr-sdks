@@ -9,7 +9,8 @@ use std::thread::{self, JoinHandle};
 use mailblastr::{
     ApiKeyPermission, BatchEmailOptions, CampaignListItem, Error, SendEmailOptions,
     ListEmailsParams, ListSegmentsParams, Mailblastr, PaginationParams, SegmentFilterOptions,
-    UpdateAutomationStepOptions, UpdateSegmentOptions, UpdateTemplateOptions, UpdateTopicOptions,
+    TemplateRef, UpdateAutomationStepOptions, UpdateSegmentOptions, UpdateTemplateOptions,
+    UpdateTopicOptions,
 };
 
 /// Find the first occurrence of `needle` in `haystack`.
@@ -17,6 +18,16 @@ fn find_subsequence(haystack: &[u8], needle: &[u8]) -> Option<usize> {
     haystack
         .windows(needle.len())
         .position(|window| window == needle)
+}
+
+/// Parse the JSON body out of a captured raw request. Assertions about a key
+/// being ABSENT need the body alone — `request.contains` would also see the
+/// headers.
+fn json_body(request: &str) -> serde_json::Value {
+    let (_, body) = request
+        .split_once("\r\n\r\n")
+        .expect("request has a header/body separator");
+    serde_json::from_str(body).expect("request body is JSON")
 }
 
 /// Spawn a one-shot HTTP stub. Returns the base URL and a handle that yields
@@ -192,6 +203,184 @@ async fn sends_an_email_with_auth_and_json_body() {
     assert!(request.contains(r#""html":"<p>Hi</p>""#));
     // Unset optional fields must be omitted, not sent as null.
     assert!(!request.contains(r#""text""#));
+}
+
+/// A send that references a template must OMIT an empty `from`/`subject` so the
+/// template's own values fill in. The API keys off key PRESENCE
+/// (lib/send/resolve_template.ts: `body.from != null ? body.from : published.from`),
+/// so `"from":""` counted as "supplied": the send was rejected with 422
+/// missing_required_field, and a supplied-from/blank-subject payload went out
+/// with an EMPTY subject line instead of the template's rendered one.
+#[tokio::test]
+async fn template_send_omits_an_empty_from_and_subject() {
+    let (base_url, handle) = spawn_stub(200, r#"{"id":"em_t1"}"#);
+    let mb = Mailblastr::with_base_url("mb_test_key", base_url);
+
+    let email = SendEmailOptions {
+        to: vec!["delivered@mailblastr.dev".into()],
+        template: Some(TemplateRef::by_id("tpl_1").with_variable("name", "Ada")),
+        ..Default::default()
+    };
+    assert_eq!(mb.emails.send(email).await.expect("send").id, "em_t1");
+
+    let body = json_body(&handle.join().unwrap());
+    let map = body.as_object().expect("an object body");
+    assert!(
+        !map.contains_key("from"),
+        "empty from must be omitted: {body}"
+    );
+    assert!(
+        !map.contains_key("subject"),
+        "empty subject must be omitted: {body}"
+    );
+    assert_eq!(body["template"]["id"], "tpl_1");
+}
+
+/// The flat `template_id` form gets the same treatment.
+#[tokio::test]
+async fn template_id_send_omits_an_empty_from_and_subject() {
+    let (base_url, handle) = spawn_stub(200, r#"{"id":"em_t2"}"#);
+    let mb = Mailblastr::with_base_url("mb_test_key", base_url);
+
+    let email = SendEmailOptions {
+        to: vec!["delivered@mailblastr.dev".into()],
+        template_id: Some("tpl_1".into()),
+        ..Default::default()
+    };
+    assert_eq!(mb.emails.send(email).await.expect("send").id, "em_t2");
+
+    let body = json_body(&handle.join().unwrap());
+    let map = body.as_object().expect("an object body");
+    assert!(!map.contains_key("from"), "got: {body}");
+    assert!(!map.contains_key("subject"), "got: {body}");
+    assert_eq!(body["template_id"], "tpl_1");
+}
+
+/// An explicit from/subject still overrides the template's, so both keys are
+/// present when the caller supplies them — the rule is key presence, not
+/// emptiness.
+#[tokio::test]
+async fn template_send_keeps_an_explicit_from_and_subject() {
+    let (base_url, handle) = spawn_stub(200, r#"{"id":"em_t3"}"#);
+    let mb = Mailblastr::with_base_url("mb_test_key", base_url);
+
+    let email = SendEmailOptions::new(
+        "Acme <hello@yourdomain.com>",
+        ["delivered@mailblastr.dev"],
+        "Override",
+    )
+    .with_template_id("tpl_1");
+    assert_eq!(mb.emails.send(email).await.expect("send").id, "em_t3");
+
+    let body = json_body(&handle.join().unwrap());
+    assert_eq!(body["from"], "Acme <hello@yourdomain.com>");
+    assert_eq!(body["subject"], "Override");
+}
+
+/// A `template` carrying neither `id` nor `alias` references NOTHING, and it
+/// shadows `template_id` while doing so — the server's own extraction rule
+/// (lib/send/resolve_template.ts `templateRefOf`). Such a payload is an
+/// ordinary send, so both keys must ride along and let the server answer.
+#[tokio::test]
+async fn an_empty_template_ref_shadows_template_id_and_references_nothing() {
+    let (base_url, handle) = spawn_stub(
+        422,
+        r#"{"statusCode":422,"name":"missing_required_field","message":"`from`, `to`, and `subject` are required."}"#,
+    );
+    let mb = Mailblastr::with_base_url("mb_test_key", base_url);
+
+    let email = SendEmailOptions {
+        to: vec!["delivered@mailblastr.dev".into()],
+        template: Some(TemplateRef::default()),
+        template_id: Some("tpl_1".into()),
+        ..Default::default()
+    };
+    mb.emails.send(email).await.expect_err("server rejects it");
+
+    let body = json_body(&handle.join().unwrap());
+    assert_eq!(body["from"], "");
+    assert_eq!(body["subject"], "");
+}
+
+/// Without a template the two keys are ALWAYS sent, empty included: the API
+/// documents `subject: ""` as a legal empty subject (mailblastr_validate.ts
+/// treats only null as missing), and a missing `from` must still surface as the
+/// server's `missing_required_field` rather than being reshaped by the SDK.
+#[tokio::test]
+async fn non_template_send_always_sends_from_and_subject() {
+    let (base_url, handle) = spawn_stub(200, r#"{"id":"em_t4"}"#);
+    let mb = Mailblastr::with_base_url("mb_test_key", base_url);
+
+    let email = SendEmailOptions::new("Acme <hi@x.com>", ["delivered@mailblastr.dev"], "")
+        .with_html("<p>x</p>");
+    assert_eq!(mb.emails.send(email).await.expect("send").id, "em_t4");
+
+    let body = json_body(&handle.join().unwrap());
+    assert_eq!(body["from"], "Acme <hi@x.com>");
+    assert_eq!(body["subject"], "");
+}
+
+/// The batch route resolves a template PER ITEM, so one item's empty
+/// `from`/`subject` must be omitted exactly as a single send's is — and a
+/// non-template item in the same array must keep both keys.
+#[tokio::test]
+async fn batch_items_follow_the_same_template_rule() {
+    let (base_url, handle) = spawn_stub(200, r#"{"data":[{"id":"em_b1"},{"id":"em_b2"}]}"#);
+    let mb = Mailblastr::with_base_url("mb_test_key", base_url);
+
+    let templated = BatchEmailOptions {
+        to: vec!["delivered@mailblastr.dev".into()],
+        template: Some(TemplateRef::by_alias("welcome")),
+        ..Default::default()
+    };
+    let plain = BatchEmailOptions::new("Acme <hi@x.com>", ["delivered@mailblastr.dev"], "")
+        .with_html("<p>x</p>");
+    mb.batch
+        .send_emails(vec![templated, plain])
+        .await
+        .expect("batch should succeed");
+
+    let body = json_body(&handle.join().unwrap());
+    let items = body.as_array().expect("a JSON array body");
+    let first = items[0].as_object().expect("an object item");
+    assert!(!first.contains_key("from"), "got: {}", items[0]);
+    assert!(!first.contains_key("subject"), "got: {}", items[0]);
+    assert_eq!(items[0]["template"]["alias"], "welcome");
+    assert_eq!(items[1]["from"], "Acme <hi@x.com>");
+    assert_eq!(items[1]["subject"], "");
+}
+
+/// A batch item with `template_id` and an explicit from/subject keeps both —
+/// the same presence rule, on the flat form.
+#[tokio::test]
+async fn batch_template_id_item_omits_empty_but_keeps_explicit_values() {
+    let (base_url, handle) = spawn_stub(200, r#"{"data":[{"id":"em_b3"},{"id":"em_b4"}]}"#);
+    let mb = Mailblastr::with_base_url("mb_test_key", base_url);
+
+    let bare = BatchEmailOptions {
+        to: vec!["delivered@mailblastr.dev".into()],
+        template_id: Some("tpl_1".into()),
+        ..Default::default()
+    };
+    let explicit = BatchEmailOptions::new(
+        "Acme <hello@yourdomain.com>",
+        ["delivered@mailblastr.dev"],
+        "Override",
+    )
+    .with_template_id("tpl_1");
+    mb.batch
+        .send_emails(vec![bare, explicit])
+        .await
+        .expect("batch should succeed");
+
+    let body = json_body(&handle.join().unwrap());
+    let items = body.as_array().expect("a JSON array body");
+    let first = items[0].as_object().expect("an object item");
+    assert!(!first.contains_key("from"), "got: {}", items[0]);
+    assert!(!first.contains_key("subject"), "got: {}", items[0]);
+    assert_eq!(items[0]["template_id"], "tpl_1");
+    assert_eq!(items[1]["from"], "Acme <hello@yourdomain.com>");
+    assert_eq!(items[1]["subject"], "Override");
 }
 
 #[tokio::test]

@@ -481,9 +481,9 @@ func (s *ContactsService) RemoveFromSegmentWithContext(ctx context.Context, id, 
 
 // ListSegments lists the segments a contact belongs to. Rows are the reduced
 // ContactSegmentRef shape (Id, Name, CreatedAt), not the full Segment — use
-// Segments.Get for that. Passing nil params returns every segment: this
-// endpoint only pages when you supply pagination params.
-// GET /contacts/:id/segments
+// Segments.Get for that. Passing nil params returns up to 1,000 segments in
+// one response, with HasMore true when that cap truncated it — page with
+// After. GET /contacts/:id/segments
 func (s *ContactsService) ListSegments(id string, params *ListParams) (*ListResponse[ContactSegmentRef], error) {
 	return s.ListSegmentsWithContext(context.Background(), id, params)
 }
@@ -494,8 +494,8 @@ func (s *ContactsService) ListSegmentsWithContext(ctx context.Context, id string
 }
 
 // GetTopics gets a contact's topic subscriptions. Passing nil params returns
-// every topic: this endpoint only pages when you supply pagination params.
-// GET /contacts/:id/topics
+// up to 1,000 topics in one response, with HasMore true when that cap bites.
+// Set ListParams.Limit for normal 1-100 paging. GET /contacts/:id/topics
 func (s *ContactsService) GetTopics(id string, params *ListParams) (*ContactTopics, error) {
 	return s.GetTopicsWithContext(context.Background(), id, params)
 }

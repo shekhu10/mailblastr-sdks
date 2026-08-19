@@ -68,7 +68,28 @@ public final class Campaigns extends Resource {
         return api.request("POST", "/campaigns/" + enc(id) + "/send", body);
     }
 
-    /** Cancel a scheduled campaign (returns it to draft). {@code POST /campaigns/:id/cancel} */
+    /**
+     * Stop a campaign's remaining work. Accepted only on {@code scheduled},
+     * {@code recurring}, {@code paused} and {@code queued}; any other status is
+     * a {@code 422 validation_error}.
+     *
+     * <p>Which of two outcomes you get depends on how far the send had got:
+     * <ul>
+     *   <li>{@code scheduled} / {@code recurring} / {@code paused} &rarr; back
+     *       to {@code draft}: nothing was mailed, so it stays editable and
+     *       re-sendable.</li>
+     *   <li>{@code queued} (already fanning out) &rarr; {@code canceled}, which
+     *       is TERMINAL. Copies already handed to the mail service cannot be
+     *       recalled; what this stops is every REMAINING recipient — for a
+     *       staggered campaign, every future batch-day. A canceled campaign can
+     *       never be edited ({@code PATCH} answers "Only a draft campaign can
+     *       be edited.") or re-sent.</li>
+     * </ul>
+     *
+     * <p>Read {@code res.getString("status")} to see which happened rather than
+     * assuming.
+     * {@code POST /campaigns/:id/cancel}
+     */
     public MailblastrResponse cancel(String id) {
         return api.request("POST", "/campaigns/" + enc(id) + "/cancel");
     }

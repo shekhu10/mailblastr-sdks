@@ -13,14 +13,14 @@ Official Java SDK for the [MailBlastr](https://www.mailblastr.com) email API —
 <dependency>
   <groupId>com.mailblastr</groupId>
   <artifactId>mailblastr</artifactId>
-  <version>4.0.0</version>
+  <version>5.0.0</version>
 </dependency>
 ```
 
 ### Gradle
 
 ```groovy
-implementation 'com.mailblastr:mailblastr:4.0.0'
+implementation 'com.mailblastr:mailblastr:5.0.0'
 ```
 
 The jar is plain JVM bytecode compiled for **Java 11**, so it is consumable
@@ -90,8 +90,9 @@ try {
         System.out.println("used " + e.get("limit.used") + " of " + e.get("limit.limit"));
         System.out.println("upgrade to " + e.get("limit.next_plan.name"));
     }
-    // A partial batch failure made with an Idempotency-Key also carries
-    // `sent` and `sent_count`; reputation errors carry `reputation`.
+    // Any partial batch failure carries `sent` and `sent_count`, key or not —
+    // the key only changes the status (a keyless partial is downgraded to 422
+    // so nothing auto-retries it); reputation errors carry `reputation`.
 }
 ```
 
@@ -169,6 +170,13 @@ mailblastr.emails().receiving().reply(id,
 
 // Batch send — up to 100 emails. Items reject `attachments` and
 // `scheduled_at`; send those individually via emails().send(...).
+// Up to 40 go out inline (200). 41-100 are ACCEPTED AND QUEUED (202):
+// `queued`/`queued_count` are set and the ids are real, but nothing has been
+// transmitted yet — check res.statusCode() == 202 before treating a batch as
+// sent, and poll emails().get(id) for the outcome. Note the 30s default
+// timeout (DefaultHttpTransport.DEFAULT_TIMEOUT): an inline batch near the 40
+// boundary can take ~100s server-side, so raise it — and pass an
+// Idempotency-Key — for batches that large.
 mailblastr.batch().sendEmails(List.of(batchRequest1, batchRequest2));
 
 // Domains (incl. claiming a domain verified elsewhere + one-click DNS applies)
@@ -315,8 +323,10 @@ mailblastr.automations().runs(automationId, ListAutomationRunsParams.builder()
 mailblastr.automations().getRun(automationId, runId);
 mailblastr.automations().stop(automationId);
 
-// Editing steps requires a stopped automation
-mailblastr.automations().updateStep(automationId, stepId, AutomationStep.builder()
+// Editing steps requires a stopped automation. `type` is required even when
+// only the config changes, and the step's graph `key` is not editable here —
+// PATCH forwards only type/config, so a key sent there is silently dropped.
+mailblastr.automations().updateStep(automationId, stepId, UpdateAutomationStepRequest.builder()
         .type("delay").config("duration", "3 days").build());
 ```
 

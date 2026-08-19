@@ -100,10 +100,15 @@ check_same('automations.create: body', ['name' => 'Welcome series', 'domain' => 
 $mb->automations->addStep('auto_1', ['type' => 'send_email', 'config' => ['template_id' => 'tmpl_welcome']]);
 check_same('automations.addStep: path', '/automations/auto_1/steps', $t->lastPath());
 
-$mb->automations->updateStep('auto_1', 'step_2', ['config' => ['duration' => '3 days']]);
+// A step update REPLACES the step, it does not merge into it: the API re-reads
+// the whole body and rejects a missing 'type' with a 422 validation_error
+// BEFORE it ever inspects 'config'. So a type-less PATCH is not "leave the type
+// alone", it is an error every time — the key must be on the wire.
+$mb->automations->updateStep('auto_1', 'step_2', ['type' => 'delay', 'config' => ['duration' => '3 days']]);
 check_same('automations.updateStep: method', 'PATCH', $t->last()['method']);
 check_same('automations.updateStep: path', '/automations/auto_1/steps/step_2', $t->lastPath());
-check_same('automations.updateStep: body', ['config' => ['duration' => '3 days']], $t->lastJson());
+check('automations.updateStep: type on the wire (a type-less body is a 422)', array_key_exists('type', $t->lastJson()));
+check_same('automations.updateStep: body', ['type' => 'delay', 'config' => ['duration' => '3 days']], $t->lastJson());
 
 $mb->automations->deleteStep('auto_1', 'step_2');
 check_same('automations.deleteStep: method', 'DELETE', $t->last()['method']);

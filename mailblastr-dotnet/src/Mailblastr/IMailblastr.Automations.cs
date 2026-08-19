@@ -23,10 +23,13 @@ public partial interface IMailblastr
     Task<AutomationStep> AutomationAddStepAsync(string automationId, AutomationAddStepOptions options, CancellationToken cancellationToken = default);
 
     /// <summary>
-    /// Edit an existing step's type/config/key. The automation must be DISABLED.
+    /// Replace an existing step's type and config. The automation must be
+    /// DISABLED. <c>options.Type</c> is REQUIRED even when only the config is
+    /// changing — the update is a wholesale replace, not a merge. The step's
+    /// graph key is fixed at creation and cannot be changed here.
     /// PATCH /automations/:id/steps/:stepId
     /// </summary>
-    Task<AutomationStep> AutomationUpdateStepAsync(string automationId, string stepId, AutomationAddStepOptions options, CancellationToken cancellationToken = default);
+    Task<AutomationStep> AutomationUpdateStepAsync(string automationId, string stepId, AutomationUpdateStepOptions options, CancellationToken cancellationToken = default);
 
     /// <summary>Delete a step from an automation. DELETE /automations/:id/steps/:stepId</summary>
     Task<AutomationStepDeleted> AutomationDeleteStepAsync(string automationId, string stepId, CancellationToken cancellationToken = default);

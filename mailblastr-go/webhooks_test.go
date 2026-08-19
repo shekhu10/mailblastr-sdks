@@ -1,6 +1,7 @@
 package mailblastr
 
 import (
+	"bytes"
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/base64"
@@ -39,6 +40,45 @@ func TestVerifyWebhookSignatureValid(t *testing.T) {
 	res := VerifyWebhookSignature(payload, headers, secret, nil)
 	if !res.Valid {
 		t.Fatalf("expected valid signature, got reason %q", res.Reason)
+	}
+}
+
+// A caller-supplied signing secret (the optional `secret` on POST /webhooks —
+// the path you take when mirroring a secret across providers) is not guaranteed
+// to be canonically padded standard base64. The backend derives its key with
+// Node's Buffer.from(suffix, "base64"), which accepts an unpadded or URL-safe
+// suffix, so those spellings must yield the SAME key here; a strict decoder
+// derives a different key (in fact it fell through to the raw string, "whsec_"
+// prefix included) and answers no_match for every genuinely signed delivery.
+//
+// The signature below is built from the server's key DIRECTLY rather than via
+// sign()/secretToKey: signing with the function under test is self-consistent
+// by construction and would pass with the strict decoder too, proving nothing.
+func TestVerifyWebhookSignatureNonCanonicalSecret(t *testing.T) {
+	// The 16 bytes "+/++AQIDBAUGBwgJCgsMDQ" encodes, spelled three ways.
+	want := []byte{0xfb, 0xff, 0xbe, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13}
+	for _, suffix := range []string{
+		"+/++AQIDBAUGBwgJCgsMDQ==", // padded standard
+		"+/++AQIDBAUGBwgJCgsMDQ",   // unpadded — no "=" needed
+		"-_--AQIDBAUGBwgJCgsMDQ",   // URL-safe "-"/"_" spelling
+	} {
+		secret := "whsec_" + suffix
+		if got := secretToKey(secret); !bytes.Equal(got, want) {
+			t.Fatalf("suffix %q: key = %x, want %x", suffix, got, want)
+		}
+
+		payload := []byte(`{"type":"email.delivered","data":{"id":"em_9"}}`)
+		id := "msg_nc"
+		ts := strconv.FormatInt(time.Now().Unix(), 10)
+		mac := hmac.New(sha256.New, want) // the SERVER's key, not secretToKey's
+		fmt.Fprintf(mac, "%s.%s.", id, ts)
+		mac.Write(payload)
+		sig := "v1," + base64.StdEncoding.EncodeToString(mac.Sum(nil))
+
+		headers := deliveryHeaders(id, ts, sig)
+		if res := VerifyWebhookSignature(payload, headers, secret, nil); !res.Valid {
+			t.Fatalf("suffix %q: expected valid signature, got reason %q", suffix, res.Reason)
+		}
 	}
 }
 

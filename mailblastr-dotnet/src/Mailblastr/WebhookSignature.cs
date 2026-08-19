@@ -91,9 +91,37 @@ public static class WebhookSignature
         const string prefix = "whsec_";
         if (secret.StartsWith(prefix, StringComparison.Ordinal))
         {
+            // Mirror Node's Buffer.from(suffix, 'base64') — the decoder the
+            // server signs with (lib/crypto.ts secretToKey): it accepts the
+            // URL-safe '-'/'_' spellings, needs no '=' padding, ignores
+            // characters outside the alphabet, and drops a lone trailing
+            // character that encodes no byte. Convert.FromBase64String does
+            // none of that, so an unpadded or URL-safe secret — POST /webhooks
+            // takes a caller-supplied `secret` verbatim, which is how you mirror
+            // one across providers — threw FormatException, fell through to the
+            // raw UTF-8 branch below, and keyed the HMAC with the literal
+            // "whsec_…" string. That derives a DIFFERENT key than the signer,
+            // so every genuine delivery came back `no_match`.
+            var sb = new StringBuilder();
+            foreach (var ch in secret.AsSpan(prefix.Length))
+            {
+                if (ch == '-') sb.Append('+');
+                else if (ch == '_') sb.Append('/');
+                else if (char.IsAsciiLetterOrDigit(ch) || ch == '+' || ch == '/') sb.Append(ch);
+            }
+            var cleaned = sb.ToString();
+            var remainder = cleaned.Length % 4;
+            if (remainder == 1)
+            {
+                cleaned = cleaned[..^1]; // a single leftover character encodes no byte
+            }
+            else if (remainder != 0)
+            {
+                cleaned = cleaned.PadRight(cleaned.Length + (4 - remainder), '=');
+            }
             try
             {
-                var decoded = Convert.FromBase64String(secret[prefix.Length..]);
+                var decoded = Convert.FromBase64String(cleaned);
                 if (decoded.Length > 0)
                 {
                     return decoded;
@@ -101,7 +129,7 @@ public static class WebhookSignature
             }
             catch (FormatException)
             {
-                // Fall through to raw bytes.
+                // Fall through to raw bytes, matching the signer's own fallback.
             }
         }
         return Encoding.UTF8.GetBytes(secret);

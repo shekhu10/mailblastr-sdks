@@ -3,6 +3,330 @@
 All nine MailBlastr SDKs release in lockstep — one version, one tag, every registry.
 Dates are release dates; entries cover every package unless a language is called out.
 
+## 5.0.0 — 2026-08-19
+
+**Every package's SOURCE was audited against the live route handlers — not its README — and 60 defects came back.** Four of them were making correctly written integrations do the wrong thing on the wire: a Python webhook receiver rejecting genuine deliveries as forged, a PHP send that could deliver the same email twice on a retry, a Go template send that either 422'd or went out with a blank subject, and a CLI subcommand whose documented invocation could never succeed. Those are below, first.
+
+This is the opposite of 4.0.0, which changed nothing and said so. If you are on Python or PHP and you verify webhook signatures, upgrade for that alone.
+
+Because this is a major, your dependency ranges will **not** pick it up automatically: `^4.0.0` (npm), `~> 4.0` (RubyGems), `"4"` (Cargo), `^4.0` (Composer) and the pinned Maven / NuGet coordinates all stay on 4.0.0 until you bump the constraint yourself. Go is the exception, and not in your favour — an unchanged `/v4` import keeps resolving forever and keeps serving 4.0.0, template-send bug included. See breaking change 1.
+
+The CLI ships pinned to `mailblastr: ^5.0.0`.
+
+---
+
+### Breaking changes
+
+Seven changes break something. The Go module path is the only one nothing will tell you about.
+
+#### 1. Go: the module path is now `.../mailblastr-go/v5`
+
+Required by Go's module rules for any major above v1.
+
+```bash
+go get github.com/shekhu10/mailblastr-sdks/mailblastr-go/v5
+```
+
+```go
+import "github.com/shekhu10/mailblastr-sdks/mailblastr-go/v5"
+```
+
+The package name is still `mailblastr`, so only the import line changes — nothing else in the Go API moved on account of the major. Same migration shape as the v3 and v4 bumps. The release workflow's proxy warm-up derives the module path from `go.mod` (`awk '/^module /{print $2}'`) rather than hard-coding it, so the v5 path is warmed without a workflow edit.
+
+#### 2. CLI: `automations update-step --type` is required, and `--key` is gone
+
+`PATCH /automations/:id/steps/:stepId` re-validates the **whole** step through the same validator the add path uses, so a body without `type` is a `422 validation_error` ("type must be one of: …") before the config is ever looked at. `--type` was optional, which made the form the CLI README itself documented a request that could not succeed.
+
+```bash
+# 4.0.0 — 422, every time
+mailblastr automations update-step auto_123 step_456 --config '{"timeout":"12 hours"}'
+
+# 5.0.0 — resend the step's current type even when only the config changes
+mailblastr automations update-step auto_123 step_456 \
+  --type wait_for_event --config '{"event":"email.opened","timeout":"12 hours"}'
+```
+
+`--key` is removed rather than fixed: the route forwards only `type` and `config` to storage, deliberately, so the connections referencing a step keep working. A `--key` was accepted and silently discarded, leaving the caller believing the step had been re-keyed. Delete and re-add the step with `add-step --key` to change it. A script still passing `--key` now fails with an unknown-option error instead of quietly doing nothing.
+
+#### 3. Rust: `UpdateAutomationStepOptions` takes the step type in `new()`
+
+Same defect, same fix, one language over: `step_type` was `Option<String>` and skipped when `None`.
+
+```rust
+// 4.0.0 — serialized without `type`, so the API rejected it
+let opts = UpdateAutomationStepOptions::new().with_config(config);
+
+// 5.0.0
+let opts = UpdateAutomationStepOptions::new("wait_for_event").with_config(config);
+```
+
+`step_type` is now a plain `String`, `new()` requires it, and `with_key()` is **deleted** — a builder method whose only effect was to add a field the server ignores. `with_type()` still exists for readability.
+
+#### 4. npm: `Campaign.statistics` no longer promises `links`
+
+`GET /campaigns/:id` embeds `getCampaignStats()` verbatim, which computes counts and rates and nothing else. Only `GET /campaigns/:id/stats` adds the per-link breakdown. `Campaign.statistics` was typed `Omit<CampaignStats, 'object' | 'campaign_id'>`, so `statistics.links` typechecked clean and was `undefined` at runtime.
+
+```ts
+// 4.0.0 — compiles, throws
+const top = campaign.statistics?.links[0];
+
+// 5.0.0 — does not compile; ask the endpoint that computes it
+const { data: stats } = await mb.campaigns.stats(campaign.id);
+const top = stats?.links[0];
+```
+
+The counts-and-rates core is now the exported `CampaignStatistics`, and `CampaignStats extends CampaignStatistics` with `object`, `campaign_id` and `links`. Anyone who wrote that `Omit<…>` by hand gets the same narrowing, which is the intent.
+
+#### 5. .NET: `ReceivedAttachment.Size` is `long?`, and `IMailblastr` gained a method
+
+`GET /emails/receiving/:id/attachments` serializes `size` as `size ?? null`, so a stored attachment whose metadata predates the field arrives as an explicit null against a non-nullable `long`. Read it as `att.Size ?? 0`. The copy embedded on `ReceivedEmail.Attachments` substitutes `0` server-side and is unaffected.
+
+`EmailBatchSendAsync` was added to `IMailblastr`. Anyone **implementing** the interface — a hand-rolled test double — must add it; callers and anything holding a `MailblastrClient` are unaffected. The internal `DataEnvelope<T>` is deleted.
+
+#### 6. Go: `UpdateAutomationStepRequest.Type` is always serialized
+
+`json:"type,omitempty"` → `json:"type"`. Not a compile error: a request that left `Type` empty was already a guaranteed 422, and now fails as `"type":""` instead of as a missing key. `Config` replaces the step's configuration wholesale — anything you leave out is dropped, not preserved.
+
+#### 7. CLI: three more invocations that exited `0` now exit `1`
+
+None of these was a documented change, and each one succeeds today, so a script that runs
+unattended will start failing rather than start behaving differently. All three are
+argument-parse failures — nothing reaches the API.
+
+- **`webhooks verify --api-key` / `--base-url` are gone.** The command was re-registered as
+  local-only: it computes an HMAC and makes no HTTP request, so it resolves no client and no
+  longer accepts either flag. This is the one most likely to bite, because every other
+  subcommand takes them and the 4.0.0 README said this one needed a key. Drop the flags; the
+  command needs nothing.
+- **`webhooks verify --tolerance` rejects a non-integer.** It was coerced with `Number()`, so
+  `--tolerance 5m` became `NaN` — and a `NaN` comparison is always false, which silently
+  **disabled the freshness check** and reported an arbitrarily old signature as valid. That is
+  a replay window, not a formatting nit, which is why it now hard-fails instead of warning.
+  Pass seconds: `--tolerance 300`.
+- **`contacts update --unsubscribed --subscribed` is refused.** The pair used to resolve
+  silently in favour of `--unsubscribed`. Anything assembling flags from a template could emit
+  both and get a consent state it never chose; guessing is the wrong behaviour for consent.
+  Pass exactly one.
+
+**A footnote for Rust, and 3.0.0 predicted it.** `SendEmailBatchResponse` gained `queued` and `queued_count`, which breaks a struct literal that constructs it (a test fixture, typically) because the public structs still carry no `#[non_exhaustive]`. That is exactly the mechanism 3.0.0's *Deliberately not changed* section described — an additive API field forcing a major — arriving on schedule. It stays open for the same reason: adding the attribute is itself a break, and it deserves its own decision.
+
+---
+
+### Fixed — the two that were corrupting live traffic
+
+#### `verify_webhook_signature` rejected genuine deliveries (Python)
+
+Two independent defects, either of which alone made a correctly configured endpoint treat every real event as forged. A webhook SDK silently dropping real deliveries is the worst failure mode this library has.
+
+**1 — the secret was decoded strictly.** The backend derives its signing key with Node's `Buffer.from(suffix, 'base64')`, which is lenient: it ignores characters outside the alphabet, accepts the URL-safe `-` / `_` spellings, needs no `=` padding, and drops a lone trailing character that encodes no byte. `base64.b64decode` does none of that — it raises `binascii.Error` on any length that is not a multiple of four, and silently discards `-` / `_`. So a `whsec_` secret you chose yourself (`POST /webhooks` accepts a caller-supplied one) whose suffix was unpadded or URL-safe produced a **different key here than at the signer**, and every valid delivery came back `{"valid": false, "reason": "no_match"}`. The new `_b64_lenient` reproduces Node byte for byte; Ruby's `unpack1("m")` and the npm SDK were already lenient.
+
+**2 — it never read Flask's headers at all.** `_read_header` did `for key in headers`, which assumes a mapping. Werkzeug's `EnvironHeaders.__iter__` yields `(key, value)` **tuples**, so every lookup missed and every delivery read as `missing_headers` — including the exact `Webhooks.verify(body, request.headers, secret)` call this package's README shows. `_header_pairs` now prefers `.items()`, the one accessor `dict`, `http.client.HTTPMessage`, Django's `request.headers`, Starlette/FastAPI's `Headers` and Werkzeug's all agree on, and falls back to pair detection.
+
+Nothing in your code changes. If you worked around this by trusting unverified deliveries or re-implementing the HMAC yourself, you can drop it.
+
+**PHP had the same base64 half.** `WebhookSignature::secretToKey()` called `base64_decode($suffix, true)` — strict mode, returns `false` on anything non-standard — then fell back to the raw string as the key and rejected every genuine delivery as `no_match`. Now `strtr($suffix, '-_', '+/')` followed by a non-strict decode.
+
+#### PHP dropped an Idempotency-Key of `'0'`, and a retry could send a second email
+
+The header was gated on `!empty($options['idempotencyKey'])`. **PHP's `empty()` is true for the string `'0'` and the integer `0`** — both valid 1-character keys, since the API accepts 1–255. The header was silently omitted, turning an idempotent send into a plain one, and this client retries 429 and 503 automatically. A retried send keyed `'0'` therefore delivered the email **twice**. Anyone numbering keys from a zero-based counter, or passing an integer, was exposed; nothing in the response said so.
+
+The gate is now "present, scalar, non-boolean, and non-empty once stringified": `'0'`, `0` and `12345` go out verbatim; `null`, `''`, `[]` and booleans send no header, since the API rejects an empty one with `400 invalid_idempotency_key` anyway. No caller change.
+
+---
+
+### Fixed — requests that could never succeed
+
+- **go** — a template-based send could never use the **template's own** `from` / `reply_to` / `subject`. `SendEmailRequest` and `BatchEmailRequest` always serialized `"from":""` and `"subject":""`, and the API reads a key that is present-but-empty as "the caller supplied this". A template send with no explicit `From` was rejected `422 missing_required_field`; one with no explicit `Subject` **went out with a blank subject** rather than the template's. `MarshalJSON` now omits an empty `From` / `Subject` only when `TemplateId` or `Template` references a template. Non-template payloads still always send both, so a deliberately empty subject keeps working. The new `templateRef` helper mirrors the server's extraction exactly: a non-nil nested `Template` shadows `TemplateId`, so a `Template` carrying neither `Id` nor `Alias` references nothing even when `TemplateId` is set.
+- **cli**, **rust** — `automations update-step` / `update_step` omitted the required `type`, so the call 422'd unconditionally. See breaking changes 2 and 3.
+- **cli** — `webhooks verify` demanded an API key for a command that makes **no HTTP request**. It recomputes the signature locally, and requiring `MAILBLASTR_API_KEY` pushed people into putting a send-capable key on the very receiver whose job is to distrust its input. The command is now registered `local`: it resolves no client, advertises no `--api-key` / `--base-url`, and calls the SDK's standalone `verifyWebhookSignature` export directly.
+
+### Fixed — input accepted, then silently discarded or misread
+
+- **cli** — `webhooks verify --tolerance` was coerced with `Number()`, so `'5m'` became `NaN`. The SDK's freshness gate is `if (toleranceSec > 0)`, which `NaN` fails, so a typo **skipped the replay-window check entirely and reported a stale delivery as valid**. It is parsed now, and a negative or non-integer value is a usage error.
+- **cli** — `contacts update --unsubscribed --subscribed` resolved silently in favour of `--unsubscribed`, writing the opposite of what the operator meant onto a consent state. Contradictory flags are refused, like every other mutually exclusive pair in this CLI.
+- **cli** — `--key` on `update-step` (breaking change 2) was forwarded and dropped by the server.
+- **ruby** — `apply_namecheap_dns` documented `api_user` / `api_key` / **`user_name`**. The API reads `apiUser` / `apiKey` / `userName`, accepts `api_user` / `api_key` / `username` as aliases, and has **no `user_name` alias at all** — a username sent under that key was ignored, and the DNS call ran without it. The docstring now names the camelCase spelling every other SDK uses, and a test asserts the gem transmits these keys byte for byte instead of rewriting them.
+- **cli** — `--json` asked for compact output but `fail()` always pretty-printed, so the flag was a half-truth on the error stream. Both streams honour it now.
+
+### Fixed — responses that decoded wrong, or could not be read at all
+
+- **rust** — a single `null` `size` on one received attachment made the **entire attachment page undecodable**. `#[serde(default)]` covers an absent key only; an explicit null fails the whole response. A `null_as_zero` deserializer reads it as `0`. (**dotnet** took the nullable route instead — breaking change 5.)
+- **npm** — `Campaign.statistics.links` typechecked and was undefined at runtime. Breaking change 4.
+- **npm**, **go**, **rust**, **dotnet** — a batch above **40** emails is not sent inline. `POST /emails/batch` writes the emails as due-now sends, answers **202** with `{ queued: true, queued_count }`, and lets the worker deliver them — and every one of these packages typed the response as `{ data }` alone, so **a caller could not tell a sent batch from a queued one**. The ids are real from that moment (`emails.get(id)` works) but start at `scheduled` with nothing transmitted. npm and .NET now return `BatchSendResponse`, Go's `BatchSendResponse` gained `Queued` / `QueuedCount` alongside a `BatchSyncMax = 40` constant, Rust's `SendEmailBatchResponse` gained `queued` / `queued_count`. Both paths are success — branch on `queued`, not on the absence of an error. A batch carrying a `@mailblastr.dev` simulator recipient stays inline at any size. npm's `emails.batch` / `batch.send` return type widened structurally, so existing call sites still compile; .NET kept `EmailBatchAsync` returning the ids and added `EmailBatchSendAsync` for the full answer.
+- **python** — an unparseable `Retry-After` raised a bare `ValueError` **from inside the code building the `MailblastrError`**, replacing the API's `{statusCode, name, message}` with an unrelated exception and destroying the error name callers branch on. `parsedate_to_datetime` raises rather than returning `None`, and a non-finite float would have reached `time.sleep()` as `nan`/`inf`. Nothing in that path can raise now; an unrecognised value simply means "no advice".
+- **npm** — `ReceivedEmail.domain_id` was missing entirely, so inbound mail could not be attributed when an account receives on more than one domain. `ReceivedAttachment` now models both shapes the API serves: embedded on `ReceivedEmail.attachments` (relative `url` alias, no `object`) versus a `listAttachments()` row (`object: 'attachment'` and an id, no `url`).
+
+### Added — request fields and predicates that were unreachable
+
+- **java** — `SegmentFilter.Builder` had no way to express the campaign-engagement predicate at all. `engagement(event, campaignId)` and `clearEngagement()` are new (clearing needs an explicit null; an omitted key keeps the stored predicate), and `status` documents `members_only` — the value the CSV and Google-Sheet importers create.
+- **java**, **python** — `PATCH /automations/:id` accepts a new `trigger` and the `trigger_key` connections reference, on a disabled automation. Neither package modelled either, so re-pointing a trigger was not expressible.
+- **go** — `UpdateDomainRequest` had no `custom_return_path`, so the MAIL FROM subdomain could not be changed from Go. It must be a single DNS label; changing it re-issues the domain's DNS records.
+- **cli** — `templates create` / `update --variables` sets the declared-variable registry (max 50 `{key, type?, fallback_value?}` entries; `[]` clears it). The send path prefers a declared fallback when a caller omits that variable, so a template with no registry has no fallbacks — which is why leaving this to the dashboard was wrong.
+
+### Fixed — documentation that promised guarantees the API does not make
+
+Nothing here changes a byte on the wire. Each one was a sentence a reader could act on and be wrong.
+
+- **all nine** — the unpaginated list methods claimed "every row is returned with `has_more: false`". The server caps an unpaginated list at `UNPAGINATED_MAX = 1000` and sets `has_more` truthfully. `segments.contacts` is the dangerous one — a segment easily resolves to more than 1,000 contacts, and code treating one call as the whole membership was quietly operating on a prefix. Corrected on `domains`, `api-keys`, `topics`, `campaigns`, `contacts`, `contact-properties`, `segments.contacts`, `contacts.listSegments`, `contacts.getTopics`, `polls` and `receiving.listAttachments` in every package that documents them, plus `ListResponse` / `PaginationParams` in Rust and the pagination help text in the CLI. The CLI README also moves `emails receiving list` out of the cap-20 group, and Go's `Receiving.List` now documents the same divergent default.
+- **npm**, **dotnet** — `campaigns.cancel` was described as "returns it to draft", flatly. It depends on how far the send got: `scheduled` / `recurring` / `paused` → back to `draft`, editable and re-sendable; `queued`, already fanning out → **`canceled`, which is terminal**. Part of the audience has been mailed and those copies cannot be recalled; what stops is every remaining recipient, and for a staggered campaign every future batch-day. Read `status` rather than assuming.
+- **npm**, **dotnet** — the campaign status vocabulary was missing `canceled` outright, on both `Campaign` and `CampaignListItem`.
+- **npm** — `CampaignAbResult.rate` and `.lift` are **fractions** (`0.25` = 25%), while `CampaignStats.rates` are already **percentages** (`25` = 25%). Multiply one, not the other. `zScore` is signed toward the winner and `0` when undefined; `pValue` is one-sided and `1` when undefined.
+- **npm** — the error parser claimed a `{"error":"rate_limited"}` non-envelope body exists. It does not; the CSRF gate's `{"error":"csrf_failed"|"csrf_origin"}` is the only one, and a Bearer request never trips it.
+- **go** — `CampaignAbResult.Status` is always empty (this endpoint returns the evaluation only) and is now `Deprecated:` in favour of `Campaign.AbTest.Status`.
+- **go** — `Client.Timeout = 0` was documented as disabling the timeout. `NewClient` also sets `HTTPClient.Timeout`, so requests stayed bounded at 30s; clear both, or supply your own `HTTPClient`.
+- **dotnet** — `EmailUpdateAsync` accepts a relative phrase (`in 1 min`) as well as an ISO 8601 timestamp, must be in the future, and is capped at 30 days; it works only while the email is still `scheduled`.
+- **npm**, **dotnet** — an inline batch near the 40-email boundary can take ~100s server-side, past the 30s default client timeout. Raise it, and always pass an idempotency key, because a client that gives up mid-request cannot tell what was already sent.
+- **python** — `contact_properties.create` had `key` and `type` backwards: `key` is required, `type` defaults to `string` and is immutable once created.
+- **python** — `emails.batch` documented the partial-failure contract only for keyed calls. A failure part way through **always** names the emails that already went out on `sent` / `sent_count`. The key changes the status, not the data: with one, the partial answer is recorded and replayed as its canonical 429/503 so this SDK's retry sends nothing; without one, the same body comes back as a 422 precisely so the retry cannot re-run the batch.
+- **java** — `AutomationConnection.of(from, to, type)` said "e.g. `next`, `yes`, `no`". `yes` and `no` are not real: the API accepts exactly `next` (alias `default`), `condition_met`, `condition_not_met`, `event_received` and `timeout`. Also documented: `CreateTopicRequest.defaultSubscription` is required and immutable (which is why `UpdateTopicRequest` has no setter for it), and which `PATCH /automations/:id` fields require a disabled automation.
+- **cli** — `emails batch` now says in its own description that batch items reject `attachments` and `scheduled_at`.
+- **go**, **ruby** — the top-of-package quickstarts sent to `user@example.com`, which the API refuses with `422 reserved_recipient`. They use `delivered@mailblastr.dev`, the mailbox simulator, and say to swap in a real recipient. The CLI's help examples were corrected the same way.
+
+---
+
+### Breaking — `update-step` now has its own type in four SDKs
+
+`PATCH /automations/:id/steps/:stepId` re-validates the whole step and forwards only
+`type` and `config`. Four SDKs handed it the CREATE type, which advertised a `key` the
+server silently discards and made `type` look optional when it is required. Each now has
+a dedicated update type, so the compiler enforces the real contract:
+
+| SDK | was | now |
+|---|---|---|
+| npm | `updateStep(id, stepId, AddAutomationStepOptions)` | `UpdateAutomationStepOptions` (`type` required, `key?: never`) |
+| .NET | `AutomationUpdateStepAsync(…, AutomationAddStepOptions, …)` | `AutomationUpdateStepOptions` |
+| java | `updateStep(id, stepId, AutomationStep)` | `UpdateAutomationStepRequest` |
+| rust | (see breaking change 3) | `UpdateAutomationStepOptions::new(type)` |
+
+Passing the create type no longer compiles. Move `type` and `config` across and drop
+`key` — it never did anything on this route.
+
+---
+
+### Fixed — the same defects, in the SDKs that had been missed
+
+The 4.0.0-era audit ran one agent per package, so a defect found in one language was
+fixed there and left standing everywhere else. This release re-checked every corrected
+contract across all nine. **The two worst were each present in five more SDKs than the
+release that "fixed" them said.**
+
+#### The webhook secret was decoded strictly in five more SDKs
+
+The `whsec_` suffix must be base64-decoded the way Node's `Buffer.from(suffix,'base64')`
+does — ignoring characters outside the alphabet, accepting the URL-safe `-`/`_`
+spellings, needing no `=` padding, and dropping a lone trailing character that encodes no
+byte. A strict decoder derives a **different key than the signer**, so every genuine
+delivery comes back `no_match`. 4.0.0 fixed this in python and php. It was still wrong in:
+
+- **go** — `base64.StdEncoding.DecodeString` (strict padding *and* alphabet).
+- **rust** — `general_purpose::STANDARD`, whose `RequireCanonical` padding mode rejects
+  an unpadded suffix outright.
+- **dotnet** — `Convert.FromBase64String`, then a `catch (FormatException)` that fell
+  through to using the raw string — including the `whsec_` prefix — as the key.
+- **java** — `Base64.getDecoder()`, which tolerates missing padding but throws on `-`/`_`
+  and then fell back to raw UTF-8 bytes the same way.
+- **ruby** — `unpack1("m")` tolerates padding but **discards** `-` and `_` instead of
+  translating them, so a URL-safe suffix produced a silently truncated key.
+
+All five now derive the same bytes as the server. Each carries a test that signs with the
+key the server would derive from an unpadded and from a URL-safe secret and requires a
+match, so this cannot regress in one language again.
+
+#### Webhook headers were unreadable from the frameworks people actually use
+
+`readHeader` in **npm** enumerated with `Object.keys()`. A WHATWG `Headers` instance has
+no own enumerable properties, so that returns `[]` — and a WHATWG `Headers` is exactly
+what `request.headers` **is** in Next.js App Router route handlers, Remix, Hono and
+Cloudflare Workers. Verification reported `missing_headers` for every delivery on the
+most common way to receive one. It now reads `entries()` first, and falls back through
+the other shapes.
+
+**ruby** had the same class of bug from the other direction: `read_header` opened with
+`return nil unless headers.is_a?(Hash)`, and Rails' `request.headers` is an
+`ActionDispatch::Http::Headers`, not a Hash — so every Rails receiver failed the type
+guard before a single lookup.
+
+#### Other cross-SDK gaps closed
+
+- **npm** — `ReceivedAttachment.size` was `number` while the list route serializes
+  `size ?? null`. TypeScript said it was always a number, so `a.size.toFixed()`
+  type-checked and threw at runtime. Now `number | null`, matching rust and dotnet, and
+  matching npm's own sibling `AttachmentMeta.size`, which was already correct.
+- **python** — the `Idempotency-Key` gate was a bare truthiness test while the line below
+  it stringified the value, so `0` was dropped exactly as php's `!empty()` did. A retried
+  send keyed `0` could deliver twice.
+- **rust** — `SendEmailOptions.from`/`.subject` (and the batch equivalents) are plain
+  `String` with no `skip_serializing_if`, so a template send serialized empty strings over
+  the template's own from and subject — the defect go fixed in 4.0.0.
+- **cli** — `emails send` declared `--from` and `--subject` as `requiredOption`s, so
+  commander aborted before the request even when `--template-id`/`--template-alias` was
+  supplied. Sending from a template was impossible from the CLI.
+
+#### Documentation corrected against the route handlers
+
+- **go** — five list methods promised "returns every row"; the server caps an unpaginated
+  list at `UNPAGINATED_MAX = 1000` and reports it on `has_more`. `Segments.Contacts` is
+  the dangerous one: a segment easily exceeds 1,000 and callers were treating a prefix as
+  the whole membership.
+- **ruby, php, go, rust, java, cli** — `cancel` was documented as "returns it to draft"
+  everywhere. A campaign already fanning out becomes the terminal `canceled` instead;
+  `canceled` was also missing from go's and rust's status vocabularies.
+- **go** — the only A/B fixture in the package was written in percentages, which the
+  server never emits: `rate` and `lift` are fractions while campaign stats `rates` are
+  percentages. A reader copying it shipped a 10,000% rate.
+- **python, php, java** — the 202 `{ queued, queued_count }` answer for a batch over the
+  sync threshold appeared nowhere; callers could not tell a sent batch from a queued one.
+
+---
+
+### Deliberately not changed
+
+- **Go keeps `UpdateAutomationStepRequest.Key` and `CampaignAbResult.Status`, marked `Deprecated:`.** Both are ignored by the API, so deleting them buys nothing at runtime and breaks code that compiles today. Rust's `with_key()` was deleted instead — the asymmetry is deliberate: a struct field a caller may be setting from a map is not the same liability as a builder method whose entire purpose was to produce a no-op.
+- **No compatibility shim for the npm `Campaign.statistics` narrowing.** A `links` that keeps typechecking and keeps being `undefined` is the defect, not the migration.
+
+### Known gaps — carried forward
+
+Unchanged from 4.0.0 and listed so they are not mistaken for closed.
+
+- **`PATCH /campaigns/:id` still cannot clear every clearable field everywhere.** Go can clear all six; Rust and npm cannot clear `reply_to` or `preview_text`; .NET's `CampaignUpdateOptions` can clear none.
+- **`retry_after` is exposed on the error object in Python only.**
+- **`RateLimit-Limit` / `RateLimit-Remaining` / `RateLimit-Reset` are not surfaced** by any package.
+- **`GET /domains/dns/callback` is intentionally not modelled** — a browser redirect target with no auth and no JSON body.
+- **Rust still has no `#[non_exhaustive]`** on its public structs — and this release is the first one where that cost a caller something (see the footnote under *Breaking changes*).
+
+### Verification
+
+Every package was built and its suite run from this tree with the commands CI uses, by the lead rather than self-reported by the agent that wrote the fix. Counts were read off those runs.
+
+| Package | Command | Result |
+|---|---|---|
+| mailblastr-npm | `npm run build` + `npm run typecheck:test` + `npm test` | 77 pass / 0 fail |
+| mailblastr-cli | `npm test` (against the local SDK, not the registry) | 79 pass / 0 fail |
+| mailblastr-python | `python3 -m unittest discover -s tests -t .` | 149 pass / 0 fail |
+| mailblastr-ruby | every `test/*_test.rb` loaded under `ruby -Ilib -Itest` | 82 runs, 728 assertions, 0 failures |
+| mailblastr-php | `php -l` over all 34 files in `src` + `tests`, then `php tests/run.php` | 276 pass / 0 fail |
+| mailblastr-go | `go build ./...`, `go vet ./...`, `gofmt -l .`, `go test -count=1 ./...` | 87 pass / 0 fail; vet and gofmt clean |
+| mailblastr-rust | `cargo test` + `cargo package --list` | 77 pass / 0 fail (26 unit, 42 integration, 9 doc) |
+| mailblastr-dotnet | `dotnet test tests/Mailblastr.Tests/Mailblastr.Tests.csproj` | 67 pass / 0 fail |
+| mailblastr-java | `mvn -B compile test-compile` + `com.mailblastr.tests.AllTests` | 283 pass / 0 fail |
+
+1,177 checks across the nine, every one run from this tree by the lead rather than
+self-reported by the agent that wrote the fix. `go test` was forced with `-count=1`: a
+bare run reports `(cached)` and would happily pass against pre-change artifacts.
+
+The defects that fail silently are pinned by tests that assert the **request body, query string or header list on the wire**, not merely that the call returned:
+
+- **python** — `test_flask_style_headers_that_iterate_pairs`, `test_unpadded_whsec_secret_verifies`, `test_url_safe_whsec_secret_verifies`, `test_lenient_base64_matches_node_byte_for_byte`, `test_unrecognized_secret_still_falls_back_to_raw_bytes`, `test_unparseable_retry_after_keeps_the_error_envelope`, `test_non_finite_retry_after_is_ignored`, `test_http_date_retry_after_is_honoured`.
+- **php** — the idempotency cases assert the exact `Idempotency-Key:` header list for `'0'`, `0` and `12345`, and its absence for `null`, `''` and an array; `webhook.verify: non-strict whsec_ suffix matches the server key` signs with the key the server would derive and requires a match.
+- **go** — `TestTemplateSendOmitsEmptyFromAndSubject`, `TestTemplateIdSendOmitsEmptyFromAndSubject`, `TestTemplateSendKeepsExplicitFromAndSubject`, `TestNonTemplateSendAlwaysSendsFromAndSubject`, `TestEmptyTemplateRefShadowsTemplateId`, `TestBatchTemplateItemOmitsEmptyFromAndSubject`, `TestBatchQueuedResponse`, `TestBatchInlineResponseIsNotQueued`, `TestDomainsUpdateCustomReturnPath`.
+- **cli** — `webhooks verify needs no API key — it makes no request`, `webhooks verify rejects a non-numeric --tolerance instead of skipping the freshness check`, `automations update-step maps to updateStep and requires --type`, `contacts update refuses contradictory consent flags`, `templates create / update carry the declared-variable registry`, `--json applies to the error stream too`.
+- **npm** — `a queued batch (202) surfaces queued + queued_count as success`, `an inline batch (200) reports no queued flag` (absent, not `false`), `campaign.statistics carries counts only — links is stats-only`, `a received email exposes domain_id and list rows expose object/id`.
+- **ruby** — `test_namecheap_credentials_are_transmitted_verbatim`.
+
+No test in any package makes a live API call — all drive an injected mock transport. Response-shape claims are verified against the route handlers and replayed fixtures, not observed traffic. Java's `pom.xml` still sets `<skipTests>true</skipTests>` (the tests are plain `main()` runners; `com.mailblastr.tests.AllTests` is the real entrypoint), and `dotnet test` must still be given the test csproj explicitly or it fails with MSB1003. Running the Java suite on macOS needs `JAVA_HOME` exported explicitly — no JDK is registered with the OS, so `mvn` fails with "Unable to locate a Java Runtime" until you point it at one.
+
+---
+
 ## 4.0.0 — 2026-08-19
 
 **No API surface, request shape or behaviour changes in any SDK.** Every client method,
