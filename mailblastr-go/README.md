@@ -382,8 +382,10 @@ De-duplicate on your side instead.
 
 ### Rate limits and retries
 
-`/emails/**` (sends **and** reads, including the inbound subtree) is capped at
-30 requests per 60 s per client IP; no other resource route is mount-limited.
+The `/emails` **send** routes are capped at 30 requests per 60 s per client IP.
+Reads (`GET /emails`, `GET /emails/:id`, the inbound subtree and attachment
+listings) are NOT subject to that cap, so paging a large list no longer risks a
+429; no other resource route is mount-limited.
 The client retries `429` and `503` up to `MaxRetries` times (default 2),
 honouring `Retry-After`, and never retries other 5xx, network errors, or
 timeouts — so a non-idempotent write is never silently duplicated.

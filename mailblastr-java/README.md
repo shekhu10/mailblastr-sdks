@@ -400,8 +400,10 @@ explicit `limit` whenever you care which you get.
 
 ### Rate limits
 
-Every `/emails/**` route — including the reads and the whole `receiving`
-subtree — shares one limit of **30 requests per 60 seconds per client IP**.
+The `/emails` **send** routes share one limit of **30 requests per 60 seconds
+per client IP**. Reads (`GET /emails`, `GET /emails/:id`, the whole `receiving`
+subtree and attachment listings) are NOT subject to that cap, so paging a large
+list no longer risks a 429.
 Over the cap you get a 429 `rate_limit_exceeded`. Those responses carry
 `RateLimit-Limit` / `RateLimit-Remaining` / `RateLimit-Reset` and a
 `Retry-After`, which the default transport already honours: it retries 429 and
