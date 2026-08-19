@@ -17,7 +17,7 @@ const mb = new Mailblastr('mb_xxxxxxxxx');
 
 const { data, error } = await mb.emails.send({
   from: 'Acme <hello@yourdomain.com>',
-  to: ['user@example.com'],
+  to: ['delivered@mailblastr.dev'],
   subject: 'Hello from MailBlastr',
   html: '<p>Your first email 🎉</p>',
 });
@@ -66,7 +66,7 @@ Attach files by hosted URL (`path`, fetched at send time) or inline base64 (`con
 ```ts
 await mb.emails.send({
   from: 'Acme <hello@yourdomain.com>',
-  to: ['user@example.com'],
+  to: ['delivered@mailblastr.dev'],
   subject: 'Your invoice',
   html: '<p>Invoice attached.</p>',
   attachments: [
@@ -92,17 +92,24 @@ Requests time out after 30 seconds by default. A `429` (rate limited) or `503`
 retried — never other errors, network failures, or timeouts — so a non-idempotent
 request (like sending an email) is never duplicated by a retry.
 
+The send routes (`POST /emails` and `POST /emails/batch`) are rate limited to 30
+requests per 60 seconds per IP — read endpoints are not capped. Tripping it
+answers `429`, which the retry above already handles.
+
 ## Resources
 
-The client exposes one property per resource, each following a consistent
-(`create` / `get` / `list` / `update` / `remove`, plus resource-specific verbs) shape:
+The client exposes one property per resource. Most follow the same
+(`create` / `get` / `list` / `update` / `remove`, plus resource-specific verbs)
+shape:
 
 `emails` (with nested `emails.receiving`), `batch`, `domains`, `audiences`,
 `contacts`, `contactProperties`, `campaigns`, `segments`, `topics`,
 `templates`, `automations`, `webhooks`, `logs`, `events`, `apiKeys`, `polls`.
 
-`apiKeys` is the one exception: it is list-only by design — see
-[API keys](#api-keys).
+Several deliberately do not: `emails` sends rather than creates (`send`, plus
+`list` / `get` / `update` / `cancel`) and `batch` is `send`-only; `logs` and
+`polls` are read-only (`list` + `get`); `events` has no `get`; and `apiKeys` is
+list-only by design — see [API keys](#api-keys).
 
 ```ts
 // Emails
@@ -120,7 +127,7 @@ await mb.emails.cancel(id);
 await mb.emails.receiving.list();
 await mb.emails.receiving.get(id);
 await mb.emails.receiving.listAddresses();               // per-address inbound stats
-await mb.emails.receiving.forward(id, { from: 'hello@yourdomain.com', to: 'team@you.com' });
+await mb.emails.receiving.forward(id, { from: 'hello@yourdomain.com', to: 'delivered@mailblastr.dev' });
 await mb.emails.receiving.reply(id, { from: 'hello@yourdomain.com', text: 'Thanks!' });
 
 // Batch send (alias of mb.emails.batch)
@@ -234,8 +241,11 @@ await mb.webhooks.remove(hook!.id);
 const { data: probe } = await mb.webhooks.test(hook!.id);
 if (!probe!.ok) console.error('endpoint unreachable:', probe!.error);
 
-// Verify an incoming delivery against the RAW request body.
-const { valid } = mb.webhooks.verify(rawBody, req.headers, signingSecret);
+// Verify an incoming delivery against the RAW request body. Deliveries older
+// than 5 minutes are rejected — pass { toleranceSec: 0 } as a 4th arg to skip
+// the freshness check. `verifyWebhookSignature` is also exported standalone,
+// for a handler that has the raw body but no client.
+const { valid, reason } = mb.webhooks.verify(rawBody, req.headers, signingSecret);
 ```
 
 ### Automations
@@ -264,7 +274,7 @@ await mb.automations.update(automation!.id, { status: 'enabled' });
 await mb.automations.createWithAi(automation!.id, { prompt: 'Wait 2 days, then send the welcome email' });
 
 // Fire a custom event — only yourdomain.com's automations are triggered
-await mb.events.send({ name: 'signup.completed', domain: 'yourdomain.com', email: 'user@example.com', data: { plan: 'pro' } });
+await mb.events.send({ name: 'signup.completed', domain: 'yourdomain.com', email: 'delivered@mailblastr.dev', data: { plan: 'pro' } });
 
 // Inspect execution
 const { data: runs } = await mb.automations.runs(automation!.id, { limit: 25, status: 'failed' });
@@ -301,6 +311,11 @@ all: `domains`, `apiKeys`, `topics`, `campaigns`, `contacts`, `segments`,
 `contactProperties` and `polls`. Pass `limit` if you want a bounded page.
 `templates`, `webhooks`, `audiences`, `automations`, `automations.runs` and
 `events` always default to 20.
+
+`emails.receiving.list()` is its own case: with no `limit` and no cursor it
+returns up to **1000** rows in a single response (and
+`emails.receiving.listAttachments()` returns every attachment). Pass `limit` for
+normal 1–100 paging.
 
 An unknown cursor is not an error — it returns an empty page with
 `has_more: false`.

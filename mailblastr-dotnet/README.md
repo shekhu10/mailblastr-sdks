@@ -20,7 +20,7 @@ IMailblastr mailblastr = MailblastrClient.Create("mb_xxxxxxxxx");
 var sent = await mailblastr.EmailSendAsync(new EmailMessage
 {
     From = "Acme <hello@yourdomain.com>",
-    To = "user@example.com",
+    To = "delivered@mailblastr.dev",
     Subject = "Hello from MailBlastr",
     HtmlBody = "<p>Your first email 🎉</p>",
 });
@@ -90,7 +90,7 @@ Attach files by hosted URL (`Path`, fetched at send time) or inline base64 (`Con
 await mailblastr.EmailSendAsync(new EmailMessage
 {
     From = "Acme <hello@yourdomain.com>",
-    To = "user@example.com",
+    To = "delivered@mailblastr.dev",
     Subject = "Your invoice",
     HtmlBody = "<p>Invoice attached.</p>",
     Attachments = new List<EmailAttachment>
@@ -107,9 +107,38 @@ await mailblastr.EmailSendAsync(new EmailMessage
 IMailblastr mailblastr = MailblastrClient.Create("mb_xxxxxxxxx", new MailblastrClientOptions
 {
     BaseUrl = "https://www.mailblastr.com/api",   // override your API host
-    HttpClient = myPooledHttpClient,          // e.g. from IHttpClientFactory
+    HttpClient = myPooledHttpClient,              // e.g. from IHttpClientFactory
+    Timeout = TimeSpan.FromSeconds(30),           // per attempt; Zero disables
+    MaxRetries = 2,                               // 429/503 only; 0 disables
 });
 ```
+
+`MailblastrClient` is thread-safe and meant to be created once and reused for the
+process lifetime. It implements `IDisposable`, but disposes the `HttpClient` only
+when it created it — a client you supply via `HttpClient` stays yours.
+
+### Timeouts, retries & rate limits
+
+`Timeout` (default 30s) applies to **each attempt**, so a retry gets a fresh
+budget. Exceeding it throws a `MailblastrException` with `Name == "timeout"` and
+`StatusCode == 0`; a connection failure throws `Name == "network_error"`, also
+with `StatusCode == 0`. Neither is retried — the request may already have been
+applied.
+
+The client retries **only HTTP 429 and 503**, up to `MaxRetries` times (default
+2, so 3 attempts total). It honours the response's `Retry-After` header when
+present — delta-seconds or an HTTP-date — and otherwise backs off exponentially
+(`0.5s * 2^attempt`); either way a single wait is capped at 30s. Every other
+status, including 5xx other than 503, is surfaced immediately.
+
+The `/emails` **send** routes are capped at 30 requests per 60 seconds per client
+IP, returning 429 `rate_limit_exceeded`. Reads are not subject to that
+per-request cap, so paging a large list will not trip it. Responses on the capped
+mount carry `RateLimit-Limit` / `RateLimit-Remaining` / `RateLimit-Reset`, plus
+`Retry-After` on the 429 itself — read them to throttle ahead of time instead of
+discovering the cap through rejections. Sustained volume is governed separately
+by your plan's send quota, which arrives as a limit error (see `ex.Limit`) rather
+than a 429 rate-limit rejection.
 
 ## Resources
 
@@ -126,7 +155,7 @@ events, api keys, logs, polls.
 ```csharp
 // Emails
 await mailblastr.EmailSendAsync(message);
-await mailblastr.EmailBatchAsync(messages);                    // up to 100 per request
+await mailblastr.EmailBatchAsync(messages);                    // List<BatchEmailMessage>, max 100
 await mailblastr.EmailListAsync(new PaginationOptions { Limit = 20 });
 await mailblastr.EmailListAsync(new EmailListOptions            // server-side filters
 {
@@ -145,7 +174,7 @@ await mailblastr.ReceivedEmailRetrieveAsync(id);
 byte[] file = await mailblastr.ReceivedEmailGetAttachmentAsync(id, attachmentId);
 await mailblastr.ReceivedEmailForwardAsync(id, new ReceivedEmailForwardOptions
 {
-    From = "you@yourdomain.com", To = "team@you.com",
+    From = "you@yourdomain.com", To = "delivered@mailblastr.dev",
 });
 
 // Domains (incl. claiming a domain verified elsewhere)
@@ -158,6 +187,12 @@ await mailblastr.DomainApplyCloudflareDnsAsync(domain.Id, cloudflareToken);
 await mailblastr.DomainMxCheckAsync("example.com");            // MX preflight for inbound
 string csv = await mailblastr.DomainRetrieveRecordsCsvAsync(domain.Id);
 ```
+
+Pass `BatchEmailMessage` items to `EmailBatchAsync` — the batch endpoint rejects
+`Attachments` and `ScheduledAt` per item, and that type simply omits them so the
+rule holds at compile time. The older `IEnumerable<EmailMessage>` overload is
+`[Obsolete]` for exactly that reason; send attachments or scheduled messages one
+at a time through `EmailSendAsync`.
 
 ### Contacts are DOMAIN-FIRST
 
@@ -234,11 +269,17 @@ var tmpl = await mailblastr.TemplateCreateAsync(new TemplateCreateOptions
 await mailblastr.TemplatePublishAsync(tmpl.Id);
 await mailblastr.EmailSendAsync(new EmailMessage
 {
-    From = from, To = to, Subject = "ignored-when-template-sets-it",
+    From = from, To = to,                // omit Subject -> the template's is used
     TemplateId = tmpl.Id,
     Variables = new() { ["first_name"] = "Ada" },
 });
 ```
+
+The template only fills fields you leave out: omit `From` / `ReplyTo` / `Subject`
+and its own values apply, but a `Subject` you *do* pass wins over the template's.
+Templates must be published before they can be sent (an unpublished one is a
+422 `validation_error`), and pairing `TemplateId`/`Template` with `HtmlBody` or
+`TextBody` is rejected — pick one.
 
 ### Automations & events
 
@@ -354,9 +395,12 @@ await mailblastr.CampaignListAsync(new PaginationOptions { Limit = 25, After = "
 are mutually exclusive. Responses are `{ object: "list", has_more, data }` —
 there is no total and no next-cursor: page forward with the last row's `Id`.
 Note that several list endpoints (domains, api keys, topics, campaigns,
-contacts, segments, contact properties, polls) return **everything** when you
-pass no pagination options at all, while templates, webhooks, audiences,
-automations, automation runs and events cap at 20.
+contacts, segments, contact properties, polls) ignore the default of 20 when you
+pass no pagination options at all and return up to **1,000** rows in one
+response, while templates, webhooks, audiences, automations, automation runs and
+events cap at 20. That 1,000 is a ceiling, not a promise: `HasMore` stays
+truthful when it bites, so always page with `After` rather than assuming one
+call drained the collection.
 
 ### Idempotency
 

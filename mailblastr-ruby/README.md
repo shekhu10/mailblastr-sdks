@@ -35,12 +35,14 @@ end
 ```ruby
 sent = Mailblastr::Emails.send({
   from: "Acme <hello@yourdomain.com>",
-  to: ["user@example.com"],
+  to: ["delivered@mailblastr.dev"], # the mailbox simulator (see below)
   subject: "Hello from MailBlastr",
   html: "<p>Your first email 🎉</p>"
 })
 puts sent["id"]
 ```
+
+`delivered@mailblastr.dev` is MailBlastr's mailbox simulator: the send is accepted, produces a real email object and a delivery event, and never reaches a provider. `bounced@`, `complained@` and `suppressed@mailblastr.dev` exercise the other outcomes, and `delivered@` / `bounced@` / `complained@` accept a `+label` suffix (`delivered+signup@mailblastr.dev`). Do **not** point a send at `example.com`, `example.net`, `example.org`, or an address under `.test`, `.invalid`, `.localhost` or `.example`: those are reserved for documentation, so every recipient is suppressed and the call comes back 422 `validation_error` ("All `to` recipients are suppressed") having sent nothing. They are fine as *contact* records — only the send path rejects them.
 
 Params are plain hashes with snake_case keys, passed through as JSON. Successful calls return the parsed response (a Hash, or a raw String for binary downloads). Any non-2xx response raises `Mailblastr::Error`:
 
@@ -109,10 +111,11 @@ Mailblastr::Emails.get_attachment(email_id, attachment_id)
 Mailblastr::Emails.update(email_id, { scheduled_at: "2026-08-01T09:00:00Z" }) # reschedule
 Mailblastr::Emails.cancel(email_id)
 
-# Batch send — up to 100 emails in one request
+# Batch send — up to 100 emails in one request.
+# Batch items reject `attachments` and `scheduled_at` (422) — send those individually.
 Mailblastr::Batch.send([
-  { from: from, to: ["a@example.com"], subject: "Hi A", html: "<p>A</p>" },
-  { from: from, to: ["b@example.com"], subject: "Hi B", html: "<p>B</p>" }
+  { from: from, to: ["delivered+a@mailblastr.dev"], subject: "Hi A", html: "<p>A</p>" },
+  { from: from, to: ["delivered+b@mailblastr.dev"], subject: "Hi B", html: "<p>B</p>" }
 ])
 
 # Attachments: hosted URL (path) or inline base64 (content)
@@ -383,7 +386,7 @@ page["data"]     # => [...]
 
 `limit` is an integer between 1 and 100 (default 20); `after` and `before` are item ids and cannot be combined. An unknown cursor returns an empty page, not an error. There is no `total` and no `next_cursor` — page forward with the last `data` entry's `id` as `after`.
 
-Defaults differ per endpoint. `GET /templates`, `/webhooks`, `/audiences`, `/automations`, `/events` and `/automations/:id/runs` cap an unpaginated call at 20 rows, while `/domains`, `/api-keys`, `/topics`, `/campaigns`, `/contacts`, `/contact-properties`, `/segments` and `/polls` return the whole collection when you pass neither `limit` nor a cursor. Always pass `limit` if you depend on page size.
+Defaults differ per endpoint. `GET /templates`, `/webhooks`, `/audiences`, `/automations`, `/events` and `/automations/:id/runs` cap an unpaginated call at 20 rows. `/domains`, `/api-keys`, `/topics`, `/campaigns`, `/contacts`, `/contact-properties`, `/segments` and `/polls` instead return the collection in one response when you pass neither `limit` nor a cursor — but still bounded, at 1,000 rows. That ceiling is not silent: `has_more` is `true` when it bites, so keep paging with `after` rather than treating the first response as the whole table. Always pass `limit` if you depend on page size.
 
 ## Idempotency
 

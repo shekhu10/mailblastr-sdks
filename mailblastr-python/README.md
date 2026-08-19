@@ -29,7 +29,7 @@ mailblastr.api_key = "mb_xxxxxxxxx"
 
 params: mailblastr.Emails.SendParams = {
     "from": "Acme <hello@yourdomain.com>",
-    "to": ["user@example.com"],
+    "to": ["delivered@mailblastr.dev"],
     "subject": "Hello from MailBlastr",
     "html": "<p>Your first email 🎉</p>",
 }
@@ -38,7 +38,10 @@ email = mailblastr.Emails.send(params)
 print(email["id"])
 ```
 
-Every method returns the parsed JSON response. On any non-2xx status the SDK raises `mailblastr.MailblastrError` carrying the API error body:
+Every method returns the parsed JSON response — except the three binary
+download helpers (`Emails.Receiving.get_attachment`, `Emails.Receiving.get_raw`
+and `Domains.records_csv`), which return `bytes`. On any non-2xx status the SDK
+raises `mailblastr.MailblastrError` carrying the API error body:
 
 ```python
 try:
@@ -54,7 +57,7 @@ Attach files by hosted URL (`path`, fetched at send time) or inline base64 (`con
 ```python
 mailblastr.Emails.send({
     "from": "Acme <hello@yourdomain.com>",
-    "to": ["user@example.com"],
+    "to": ["delivered@mailblastr.dev"],
     "subject": "Your invoice",
     "html": "<p>Invoice attached.</p>",
     "attachments": [
@@ -68,8 +71,8 @@ mailblastr.Emails.send({
 
 ```python
 mailblastr.Batch.send([
-    {"from": "hello@yourdomain.com", "to": ["a@example.com"], "subject": "Hi A", "html": "<p>A</p>"},
-    {"from": "hello@yourdomain.com", "to": ["b@example.com"], "subject": "Hi B", "html": "<p>B</p>"},
+    {"from": "hello@yourdomain.com", "to": ["delivered@mailblastr.dev"], "subject": "Hi A", "html": "<p>A</p>"},
+    {"from": "hello@yourdomain.com", "to": ["delivered@mailblastr.dev"], "subject": "Hi B", "html": "<p>B</p>"},
 ])  # up to 100 emails per request
 ```
 
@@ -156,7 +159,7 @@ mailblastr.Emails.Receiving.get(email_id)
 mailblastr.Emails.Receiving.list_attachments(email_id)
 mailblastr.Emails.Receiving.get_attachment(email_id, attachment_id)  # -> bytes
 mailblastr.Emails.Receiving.get_raw(email_id)                            # -> bytes (RFC822)
-mailblastr.Emails.Receiving.forward(email_id, {"from": "me@yourdomain.com", "to": "team@you.com"})
+mailblastr.Emails.Receiving.forward(email_id, {"from": "me@yourdomain.com", "to": "delivered@mailblastr.dev"})
 mailblastr.Emails.Receiving.reply(email_id, {"from": "me@yourdomain.com", "html": "<p>Thanks!</p>"})
 mailblastr.Emails.Receiving.remove(email_id)
 
@@ -254,7 +257,7 @@ mailblastr.Automations.update(automation["id"], {"status": "enabled"})
 mailblastr.Events.send({
     "event": "signup.completed",
     "domain": "yourdomain.com",
-    "email": "user@example.com",
+    "email": "delivered@mailblastr.dev",
     "payload": {"plan": "pro"},
 })
 mailblastr.Events.create({"name": "signup.completed", "schema": {"plan": "string"}})
@@ -268,8 +271,8 @@ mailblastr.Automations.stop(automation["id"])
 
 The step graph is edited while the automation is **disabled** —
 `add_step` / `update_step` / `delete_step` (and changing `domain`, `trigger` or
-`connections`) all 422 on an enabled automation. `Automations.ai` builds or
-extends the graph from a prompt:
+`connections`) all 422 on an enabled automation.
+`Automations.create_with_ai` builds or extends the graph from a prompt:
 
 ```python
 mailblastr.Automations.create_with_ai(automation["id"], {"prompt": "Wait 2 days, then send the welcome email"})
@@ -314,10 +317,13 @@ while page["has_more"]:
 ```
 
 Called with **no** pagination params, most list endpoints return the whole
-collection (`Campaigns`, `Contacts`, `Segments`, `ContactProperties`,
-`Domains`, `ApiKeys`, `Topics`, `Polls`, and the nested contact/segment/topic
-lists). `Audiences`, `Automations`, `Automations.runs`, `Templates`, `Webhooks`
-and `Events` cap at 20 instead — pass `limit` explicitly when it matters.
+collection up to a 1,000-item ceiling (`Campaigns`, `Contacts`, `Segments`,
+`ContactProperties`, `Domains`, `ApiKeys`, `Topics`, `Polls`, and the nested
+contact/segment/topic lists) — past that the response is truncated and
+`has_more` is `True`, so keep paging rather than trusting one call to be
+complete. `Audiences`, `Automations`, `Automations.runs`, `Templates`,
+`Webhooks` and `Events` cap at 20 instead — pass `limit` explicitly when it
+matters.
 An unknown cursor is not an error: it returns an empty page with
 `has_more: False`.
 

@@ -23,6 +23,10 @@ Official Java SDK for the [MailBlastr](https://www.mailblastr.com) email API —
 implementation 'com.mailblastr:mailblastr:4.0.0'
 ```
 
+The jar is plain JVM bytecode compiled for **Java 11**, so it is consumable
+unchanged from **Kotlin** (and any other JVM language) — there is no separate
+Kotlin artifact, and the same Gradle line works in a `build.gradle.kts`.
+
 ## Usage
 
 First, get an API key from your MailBlastr dashboard.
@@ -39,7 +43,7 @@ public class Main {
 
         SendEmailRequest request = SendEmailRequest.builder()
                 .from("Acme <hi@yourdomain.com>")
-                .to("user@example.com")
+                .to("delivered@mailblastr.dev")
                 .subject("Hello from MailBlastr")
                 .html("<p>Your first email 🎉</p>")
                 .build();
@@ -53,6 +57,11 @@ public class Main {
     }
 }
 ```
+
+`delivered@mailblastr.dev` is MailBlastr's delivery simulator — safe to send to
+while you wire things up. Do not point examples at `example.com`: it is a
+blocked recipient domain, and a send to it fails with
+`422 validation_error` / "All to recipients are suppressed".
 
 ### Responses and errors
 
@@ -97,7 +106,7 @@ Attach files by hosted URL (`path`, fetched at send time) or inline base64 (`con
 ```java
 SendEmailRequest request = SendEmailRequest.builder()
         .from("Acme <hi@yourdomain.com>")
-        .to("user@example.com")
+        .to("delivered@mailblastr.dev")
         .subject("Your invoice")
         .html("<p>Invoice attached.</p>")
         .attachment(Attachment.builder()
@@ -154,7 +163,7 @@ mailblastr.emails().receiving().get(id);
 byte[] file = mailblastr.emails().receiving().getAttachment(id, attachmentId);
 byte[] mime = mailblastr.emails().receiving().getRaw(id);
 mailblastr.emails().receiving().forward(id,
-        ForwardEmailRequest.builder().from("you@yourdomain.com").to("team@you.com").build());
+        ForwardEmailRequest.builder().from("you@yourdomain.com").to("delivered@mailblastr.dev").build());
 mailblastr.emails().receiving().reply(id,
         ReplyEmailRequest.builder().from("you@yourdomain.com").html("<p>Thanks!</p>").build());
 
@@ -295,7 +304,7 @@ mailblastr.automations().update(automation.getString("id"),
 mailblastr.events().send(SendEventRequest.builder()
         .event("signup.completed")
         .domain("yourdomain.com")        // REQUIRED
-        .email("user@example.com")
+        .email("delivered@mailblastr.dev")
         .payload("plan", "pro")
         .build());
 

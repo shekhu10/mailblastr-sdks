@@ -22,7 +22,17 @@ Or pass `--api-key mb_xxxxxxxxx` to any command. Use `MAILBLASTR_BASE_URL` (or `
 
 ## Output
 
-Every command prints the API response as pretty-printed JSON. Pass `--json` for raw compact JSON (handy for piping to `jq`). On failure the API error `{ statusCode, name, message }` is printed to stderr and the command exits `1`.
+Every command prints the API response as pretty-printed JSON. Pass `--json` for raw compact JSON (handy for piping to `jq`). On failure a JSON error object is printed to **stderr** and the command exits `1`; stdout stays JSON-only either way, so `mailblastr … | jq` never has to strip a diagnostic.
+
+The error object is always `{ statusCode, name, message }` — branch on `name`, never on `message`:
+
+| Where it came from | `statusCode` | `name` |
+|---|---|---|
+| The API rejected the request | the HTTP status | the API's reason, e.g. `validation_error`, `daily_quota_exceeded` |
+| The request never reached the API | `0` | `network_error` |
+| The CLI rejected your flags before sending | `null` | `cli_error` |
+
+Some API errors are a superset of that envelope and the extra fields are printed too: `limit` on plan/quota rejections, `reputation` on a reputation gate, and `sent`/`sent_count` on a partially applied `emails batch`.
 
 One endpoint reports failure inside a `200` body rather than as an error: `webhooks test` returns `{ ok: false, error }` when the delivery did not land. The CLI prints that body to stdout and still exits `1`, so `mailblastr webhooks test wh_123 && deploy` behaves as you would expect.
 
@@ -30,17 +40,19 @@ One endpoint reports failure inside a `200` body rather than as an error: `webho
 
 ### Pagination
 
-List commands take `--limit` (integer `1`–`100`, default `20`) plus one of `--after` / `--before` — cursors are item ids, and passing both is rejected. Responses are `{ "object": "list", "has_more": bool, "data": [...] }`; page forward by feeding the last `data[].id` back as `--after`. Note `domains list`, `api-keys list`, `topics list`, `contacts list`, `segments list`, `campaigns list` and `contact-properties list` return the whole collection when no pagination flag is given, while `templates list`, `webhooks list`, `audiences list`, `automations list`, `automations runs` and `events list` cap at 20.
+List commands take `--limit` (integer `1`–`100`, default `20`) plus one of `--after` / `--before` — cursors are item ids, and passing both is rejected. Responses are `{ "object": "list", "has_more": bool, "data": [...] }`; page forward by feeding the last `data[].id` back as `--after`.
 
-The nested list commands page the same way: `contacts segments`, `contacts topics`, `segments contacts`, `emails receiving attachments` and `automations runs`. A few endpoints are deliberately unpaginated and take no cursor flags — `emails sources`, `emails receiving addresses` and `campaigns engagement` (whose three lists are each capped at 500 rows server-side).
+Two default page sizes exist. `domains list`, `api-keys list`, `topics list`, `contacts list`, `contacts segments`, `contacts topics`, `segments list`, `segments contacts`, `campaigns list`, `contact-properties list`, `polls list` and `emails receiving attachments` skip the default `20` when you pass no pagination flag — but they do **not** return the whole collection: the response is capped at **1,000** rows, and `has_more` is `true` when that cap truncated it, so keep paging with `--after`. Everything else caps at 20 unless you raise `--limit`: `emails list`, `emails receiving list`, `templates list`, `webhooks list`, `audiences list`, `automations list`, `automations runs`, `events list` and `logs list`.
+
+A few endpoints are deliberately unpaginated and take no cursor flags — `emails sources`, `emails attachments`, `emails receiving addresses` and `campaigns engagement` (whose three lists are each capped at 500 rows server-side).
 
 ## Usage
 
 ### Emails
 
 ```bash
-mailblastr emails send --from 'Acme <hi@yourdomain.com>' --to 'a@b.com' --subject 'hello' --html '<p>hi</p>'
-mailblastr emails send --from 'Acme <hi@yourdomain.com>' --to 'a@b.com,c@d.com' --subject 'hi' \
+mailblastr emails send --from 'Acme <hi@yourdomain.com>' --to 'delivered@mailblastr.dev' --subject 'hello' --html '<p>hi</p>'
+mailblastr emails send --from 'Acme <hi@yourdomain.com>' --to 'ada@yourdomain.com,rae@yourdomain.com' --subject 'hi' \
   --template-id tmpl_welcome --variables '{"first_name":"Ada"}' --scheduled-at 2026-08-01T09:00:00Z
 mailblastr emails list --limit 20
 mailblastr emails list --status delivered --search 'invoice'
@@ -54,12 +66,14 @@ mailblastr emails attachment em_123 att_456
 
 `--to`, `--cc`, `--bcc` and `--reply-to` are repeatable and accept comma-separated values.
 
+`delivered@mailblastr.dev` above is the mailbox simulator: it is intercepted before the provider is contacted and synthesizes the documented outcome (`bounced@`, `complained@` and `suppressed@` produce the other three; `delivered@`, `bounced@` and `complained@` also accept a `+label` suffix, `suppressed@` does not). Two things to know when you script against it — it only fires on an **immediate** send, so pairing it with a future `--scheduled-at` skips the simulator and the address is treated as suppressed (`422`); and quota is debited per recipient exactly like a real send. Documentation domains (`example.com`, `example.net`, `example.org`, anything under `.test` / `.invalid` / `.localhost` / `.example`) are blocked outright and never reach a mailbox, so do not use them as stand-in recipients.
+
 Attach files with `--attachment <path>` (read and base64-encoded locally) or `--attachment-url <url>` (fetched server-side). Both are repeatable; the API caps an attachment at 25 MB and a message at 40 MB decoded, and the CLI checks local files against those limits before sending.
 
 ```bash
-mailblastr emails send --from hi@yourdomain.com --to a@b.com --subject 'Your invoice' \
+mailblastr emails send --from hi@yourdomain.com --to delivered@mailblastr.dev --subject 'Your invoice' \
   --text 'Attached.' --attachment ./invoice.pdf
-mailblastr emails send --from hi@yourdomain.com --to a@b.com --subject 'Welcome' \
+mailblastr emails send --from hi@yourdomain.com --to delivered@mailblastr.dev --subject 'Welcome' \
   --template-alias welcome --variables '{"first_name":"Ada"}'
 ```
 
@@ -69,7 +83,7 @@ Batch-send up to 100 emails in one request from a JSON file (an array of send pa
 
 ```bash
 mailblastr emails batch --file ./batch.json
-mailblastr emails batch --data '[{"from":"hi@yourdomain.com","to":["a@b.com"],"subject":"hi","text":"hello"}]'
+mailblastr emails batch --data '[{"from":"hi@yourdomain.com","to":["delivered@mailblastr.dev"],"subject":"hi","text":"hello"}]'
 ```
 
 ### Received (inbound) email
@@ -81,7 +95,7 @@ mailblastr emails receiving get rem_123
 mailblastr emails receiving attachments rem_123
 mailblastr emails receiving attachment rem_123 att_456 --output invoice.pdf   # default filename: the attachment id
 mailblastr emails receiving raw rem_123 --output message.eml                  # default filename: <id>.eml
-mailblastr emails receiving forward rem_123 --from you@yourdomain.com --to a@b.com,c@d.com
+mailblastr emails receiving forward rem_123 --from you@yourdomain.com --to delivered@mailblastr.dev
 mailblastr emails receiving reply rem_123 --from you@yourdomain.com --html '<p>thanks!</p>'
 mailblastr emails receiving delete rem_123
 ```
@@ -123,14 +137,14 @@ mailblastr domains claim verify dom_123
 
 ### Contacts (domain-first)
 
-Each sending domain has its own contact pool, so `--domain` is required on create/list:
+Each sending domain has its own contact pool, so `contacts create` and `contacts list` need to be told which container to use — exactly one of `--domain <domain>` or `--audience-id <id>`; passing neither, or both, is a usage error:
 
 ```bash
-mailblastr contacts create --domain yourdomain.com --email a@b.com --first-name Ada
+mailblastr contacts create --domain yourdomain.com --email ada@yourdomain.com --first-name Ada
 mailblastr contacts list --domain yourdomain.com
 mailblastr contacts list --domain yourdomain.com --segment-id seg_123
 mailblastr contacts list --audience-id aud_123          # plain audiences instead of a domain pool
-mailblastr contacts get a@b.com --domain yourdomain.com   # or by contact id, no --domain needed
+mailblastr contacts get ada@yourdomain.com --domain yourdomain.com   # or by contact id, no --domain needed
 mailblastr contacts update con_123 --unsubscribed
 mailblastr contacts add-to-segment con_123 seg_123
 mailblastr contacts remove-from-segment con_123 seg_123
@@ -149,6 +163,13 @@ mailblastr contacts import aud_123 --storage-key "$STORAGE_KEY"
 ```
 
 `import` takes exactly one of `--csv` / `--storage-key`. The `upload_url` is a short-lived bearer credential — don't log it or paste it into a shared shell history.
+
+When the source is already structured, `contacts batch` imports a JSON array instead of a CSV (upsert by email, max 10,000 per call, exactly one of `--file` / `--data`):
+
+```bash
+mailblastr contacts batch aud_123 --file ./contacts.json
+mailblastr contacts batch aud_123 --data '[{"email":"ada@yourdomain.com","first_name":"Ada"}]' --on-conflict skip
+```
 
 ### Contact properties & audiences
 
@@ -222,7 +243,7 @@ mailblastr automations ai auto_123 --prompt 'Welcome new signups, then nudge any
 mailblastr automations ai auto_123 --prompt 'Send the upgrade nudge' --attach-from step_3 --attach-type condition_met
 
 # Fire a custom event — only yourdomain.com's automations are triggered
-mailblastr events send --domain yourdomain.com --name signup.completed --email a@b.com --data '{"plan":"pro"}'
+mailblastr events send --domain yourdomain.com --name signup.completed --email ada@yourdomain.com --data '{"plan":"pro"}'
 mailblastr events list
 mailblastr events create --name signup.completed --schema '{"plan":"string"}'
 mailblastr events update evt_123 --schema '{"plan":"string","seats":"number"}'   # the name is immutable
@@ -234,6 +255,8 @@ mailblastr events update evt_123 --schema '{"plan":"string","seats":"number"}'  
 mailblastr webhooks create --endpoint https://yourapp.com/hooks --events email.delivered,email.bounced
 mailblastr webhooks rotate wh_123
 mailblastr webhooks test wh_123
+mailblastr webhooks verify --secret whsec_xxx --payload-file ./delivery.json \
+  --svix-id msg_123 --svix-timestamp 1754000000 --svix-signature 'v1,base64sig'
 
 mailblastr api-keys list
 
@@ -243,6 +266,8 @@ mailblastr logs get log_123
 mailblastr polls list
 mailblastr polls get em_123
 ```
+
+`webhooks verify` is the only command that makes no HTTP request: it recomputes the delivery signature locally and prints `{ valid, reason }`. It still resolves an API key first, like every other command, so `MAILBLASTR_API_KEY` (or `--api-key`) must be set even though nothing is sent. Pass the **exact raw body bytes** your endpoint received via `--payload` or `--payload-file` — re-serialized JSON will not match. `--tolerance <seconds>` caps timestamp skew (default `300`; `0` skips the freshness check). Note the exit code is `0` whenever the check ran, whatever the verdict — branch on `.valid`, not on `$?` (unlike `webhooks test`, which exits `1` on a failed delivery).
 
 #### API keys are read-only from the CLI
 
@@ -258,7 +283,7 @@ The CLI's verbs are deliberately shorter than the corresponding SDK methods. A
 subcommand is already scoped by its resource path, so the CLI names every list
 after its plural noun and every download after the thing downloaded:
 
-| CLI command | SDK method (all 8 libraries) |
+| CLI command | SDK method (`mailblastr` npm naming) |
 |---|---|
 | `emails attachments <id>` | `emails.listAttachments` |
 | `emails receiving addresses` | `emails.receiving.listAddresses` |
@@ -267,9 +292,19 @@ after its plural noun and every download after the thing downloaded:
 | `automations ai <id>` | `automations.createWithAi` |
 | `contacts import-upload <audienceId>` | `contacts.createImportUpload` |
 
-This is a shell-surface convention, not drift: the libraries agree with each
-other on one name per endpoint, and the CLI applies the same shortening rule to
-all of them rather than to some.
+This is a shell-surface convention, not drift: the CLI applies the same
+shortening rule to every endpoint rather than to some.
+
+The right-hand column is the Node.js SDK's spelling, because that is the library
+this CLI calls. Seven of the eight client libraries put the same method on the
+same nested resource and differ only in each language's casing and accessor
+syntax — `listAttachments` in npm, PHP (`$mailblastr->emails->receiving`) and
+Java (`emails().receiving()`), `list_attachments` in Python, Ruby and Rust,
+`ListAttachments` in Go (`client.Emails.Receiving`). The .NET SDK is the
+exception: it is a flat client, so read `EmailListAttachmentsAsync`,
+`ReceivedEmailListAddressesAsync`, `ReceivedEmailListAttachmentsAsync`,
+`ReceivedEmailGetRawAsync`, `AutomationCreateWithAiAsync` and
+`ContactImportCreateUploadAsync` instead of the dotted names above.
 
 ## Documentation
 

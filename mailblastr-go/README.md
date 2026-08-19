@@ -12,7 +12,10 @@ Requires Go 1.22+. The SDK depends only on the Go standard library.
 
 ## Usage
 
-First, get an API key from the MailBlastr dashboard.
+First, get an API key from the MailBlastr dashboard. `delivered@mailblastr.dev`
+below is the delivery simulator — safe to send to while you are wiring things up.
+(Do not use `example.com`: it is a blocked recipient domain and the send comes
+back `422` "All to recipients are suppressed".)
 
 ```go
 package main
@@ -28,7 +31,7 @@ func main() {
 
 	sent, err := client.Emails.Send(&mailblastr.SendEmailRequest{
 		From:    "Acme <hello@yourdomain.com>",
-		To:      []string{"user@example.com"},
+		To:      []string{"delivered@mailblastr.dev"},
 		Subject: "Hello from MailBlastr",
 		Html:    "<p>Your first email 🎉</p>",
 	})
@@ -78,6 +81,7 @@ keeps the whole parsed body in `Body` for anything not modelled yet:
 | `Sent` / `SentCount` | a `POST /emails/batch` that failed part way through, sent with an `Idempotency-Key` | the emails that DID go out, so a retry does not send them twice. `SentCount` falls back to `len(Sent)` when the server omits it |
 
 ```go
+emails := []*mailblastr.BatchEmailRequest{ /* ... */ }
 _, err := client.Batch.SendEmailsWithOptions(ctx, emails,
 	&mailblastr.RequestOptions{IdempotencyKey: key})
 
@@ -101,14 +105,15 @@ if errors.As(err, &apiErr) {
 
 The SDK always sends a non-empty `User-Agent` (`mailblastr-go/<version>`),
 which the API requires on every `/api/*` resource route — a request without one
-is rejected with `403 validation_error` before it is even authenticated. If you
-override `client.UserAgent`, keep it non-empty.
+is rejected with `403 validation_error` before it is even authenticated. You may
+override `client.UserAgent`; setting it to `""` falls back to the default rather
+than producing a client that 403s on every call.
 
 ### Options
 
 ```go
 client := mailblastr.NewClient("mb_xxxxxxxxx")
-client.BaseURL = "https://www.mailblastr.com/api" // override your API host
+client.BaseURL = "https://www.mailblastr.com/api" // the default (mailblastr.DefaultBaseURL)
 client.HTTPClient = &http.Client{Timeout: 30 * time.Second}
 ```
 
@@ -152,11 +157,15 @@ client.Emails.Receiving.ListAddresses() // inbound volume per receiving address
 client.Emails.Receiving.Get(id)
 client.Emails.Receiving.GetAttachment(id, attachmentId) // raw []byte
 client.Emails.Receiving.GetRaw(id)                      // original RFC822 message
-client.Emails.Receiving.Forward(id, &mailblastr.ForwardReceivedEmailRequest{From: from, To: []string{"team@you.com"}})
+client.Emails.Receiving.Forward(id, &mailblastr.ForwardReceivedEmailRequest{From: from, To: []string{"delivered@mailblastr.dev"}})
 client.Emails.Receiving.Reply(id, &mailblastr.ReplyReceivedEmailRequest{From: from, Html: "<p>Thanks!</p>"})
 
-// Batch send (up to 100 emails; alias: client.Emails.Batch)
-client.Batch.Send([]*mailblastr.SendEmailRequest{ /* ... */ })
+// Batch send (up to 100 emails — mailblastr.MaxBatchEmails)
+client.Batch.SendEmails([]*mailblastr.BatchEmailRequest{ /* ... */ })
+// client.Batch.Send / client.Batch.SendWithOptions / client.Emails.Batch take
+// []*SendEmailRequest and are DEPRECATED: batch items reject Attachments and
+// ScheduledAt, which BatchEmailRequest enforces at compile time. Send those
+// individually with client.Emails.Send.
 
 // Domains (incl. claiming a domain verified elsewhere + one-click DNS)
 client.Domains.Create(&mailblastr.CreateDomainRequest{Name: "example.com"})
@@ -280,7 +289,7 @@ client.Automations.Update(automation.Id, &mailblastr.UpdateAutomationRequest{Sta
 client.Events.Send(&mailblastr.SendEventRequest{
 	Event:  "signup.completed",
 	Domain: "yourdomain.com",
-	Email:  "user@example.com",
+	Email:  "delivered@mailblastr.dev",
 	Data:   map[string]any{"plan": "pro"},
 })
 
@@ -362,8 +371,10 @@ events, and automation runs.
 Pass an idempotency key to safely retry a send:
 
 ```go
-client.Emails.SendWithOptions(ctx, payload, &mailblastr.RequestOptions{IdempotencyKey: "order-123"})
-client.Batch.SendEmailsWithOptions(ctx, payloads, &mailblastr.RequestOptions{IdempotencyKey: "batch-2026-08-08"})
+client.Emails.SendWithOptions(ctx, payload, // *mailblastr.SendEmailRequest
+	&mailblastr.RequestOptions{IdempotencyKey: "order-123"})
+client.Batch.SendEmailsWithOptions(ctx, payloads, // []*mailblastr.BatchEmailRequest
+	&mailblastr.RequestOptions{IdempotencyKey: "batch-2026-08-08"})
 ```
 
 The key must be **1–255 characters**, measured after the server trims it — 255,
@@ -375,7 +386,7 @@ in flight is a `409` `concurrent_idempotent_requests`; once the original
 completes, its response is replayed.
 
 Only `POST /emails` and `POST /emails/batch` honour the header — i.e.
-`Emails.SendWithOptions`, `Batch.SendEmailsWithOptions` and
+`Emails.SendWithOptions`, `Batch.SendEmailsWithOptions` and the deprecated
 `Batch.SendWithOptions`. Everywhere else it is ignored, so a retry creates a
 second resource; `Events.SendWithOptions` is deprecated for exactly that reason.
 De-duplicate on your side instead.

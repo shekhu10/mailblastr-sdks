@@ -19,7 +19,7 @@ async fn main() -> Result<()> {
     let mailblastr = Mailblastr::new("mb_xxxxxxxxx");
 
     let from = "Acme <hello@yourdomain.com>";
-    let to = ["user@example.com"];
+    let to = ["delivered@mailblastr.dev"]; // the simulator address — always delivers
     let subject = "Hello from MailBlastr";
 
     let email = SendEmailOptions::new(from, to, subject)
@@ -31,7 +31,7 @@ async fn main() -> Result<()> {
 }
 ```
 
-Every method is `async` and returns `Result<T, mailblastr::Error>`. API failures surface as `Error::Api(ApiError)`, parsed from the standard MailBlastr `{ statusCode, name, message }` error body; transport and decode problems are `Error::Http` / `Error::Json`.
+Every method is `async` and returns `Result<T, mailblastr::Error>`. API failures surface as `Error::Api(Box<ApiError>)`, parsed from the standard MailBlastr `{ statusCode, name, message }` error body; transport and decode problems are `Error::Http` / `Error::Json`.
 
 Branch on `name`, never on `message` — messages are scrubbed of provider identifiers and are not a stable contract. A handler may also override the status a `name` normally maps to — a missing `User-Agent` is the one `validation_error` that is 403 rather than 422 — so read `status_code` off the error rather than a hard-coded table. The SDK sends the required `User-Agent` on every request for you.
 
@@ -158,8 +158,11 @@ let pdf: Vec<u8> = mailblastr.emails.receiving.get_attachment(id, att_id).await?
 mailblastr.emails.receiving.forward(id, ForwardReceivedEmailOptions::new(from, ["team@you.com"])).await?;
 mailblastr.emails.receiving.reply(id, ReplyReceivedEmailOptions::new(from).with_html("<p>Thanks!</p>")).await?;
 
-// Batch send — up to 100 per call; batch items reject attachments + scheduled_at
-mailblastr.batch.send_emails(vec![email_a, email_b]).await?;
+// Batch send — up to 100 per call. Items are `BatchEmailOptions`, which simply
+// has no `attachments` / `scheduled_at` because the batch route rejects both.
+mailblastr.batch.send_emails(vec![
+    BatchEmailOptions::new(from, to, subject).with_html(html),
+]).await?;
 
 // Domains (incl. claiming a domain verified elsewhere + one-click DNS)
 mailblastr.domains.create(CreateDomainOptions::new("example.com")).await?;

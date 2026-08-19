@@ -21,7 +21,7 @@ $mailblastr = Mailblastr::client('mb_xxxxxxxxx');
 
 $sent = $mailblastr->emails->send([
     'from' => 'Acme <hello@yourdomain.com>',
-    'to' => ['user@example.com'],
+    'to' => ['delivered@mailblastr.dev'],
     'subject' => 'Hello from MailBlastr',
     'html' => '<p>Your first email 🎉</p>',
 ]);
@@ -85,7 +85,7 @@ Attach files by hosted URL (`path`, fetched at send time) or inline base64 (`con
 ```php
 $mailblastr->emails->send([
     'from' => 'Acme <hello@yourdomain.com>',
-    'to' => ['user@example.com'],
+    'to' => ['delivered@mailblastr.dev'],
     'subject' => 'Your invoice',
     'html' => '<p>Invoice attached.</p>',
     'attachments' => [
@@ -100,8 +100,14 @@ $mailblastr->emails->send([
 ```php
 $mailblastr = Mailblastr::client('mb_xxxxxxxxx', [
     'baseUrl' => 'https://www.mailblastr.com/api', // override your API host
+    'timeout' => 30,     // per-request timeout in seconds (0 = no timeout)
+    'maxRetries' => 2,   // automatic retries on 429/503 (0 disables)
+    // 'transport' => $fake, // any TransportInterface — see Testing
 ]);
 ```
+
+`timeout` and `maxRetries` configure the default curl transport only; a
+`transport` you supply is used as-is.
 
 ## Resources
 
@@ -157,7 +163,8 @@ $mailblastr->contacts->update(['id' => $contactId, 'unsubscribed' => true]);
 $mailblastr->contacts->remove(['id' => $contactId]);
 $mailblastr->contacts->batch(['audienceId' => $audienceId, 'contacts' => [ … ]]);
 $mailblastr->contacts->import(['audienceId' => $audienceId, 'csv' => $csvText]);
-// Large files: upload straight to storage, then import by key.
+// Large files: mint a presigned slot, PUT the file to $slot['upload_url']
+// yourself (it is a bearer credential — do not log it), then import by key.
 $slot = $mailblastr->contacts->createImportUpload(['audienceId' => $audienceId, 'filename' => 'leads.csv', 'size' => $bytes]);
 $mailblastr->contacts->import(['audienceId' => $audienceId, 'storage_key' => $slot['storage_key']]);
 $mailblastr->contacts->addToSegment($contactId, $segmentId);
@@ -241,22 +248,26 @@ $automation = $mailblastr->automations->create([
     'trigger' => 'contact.created',
 ]);
 
+// Steps are only editable while the automation is disabled — new ones start
+// that way, so build first and enable last (call stop() to edit a live one).
 $mailblastr->automations->addStep($automation['id'], [
     'type' => 'send_email',
     'config' => ['template_id' => 'tmpl_welcome'],
 ]);
 $mailblastr->automations->updateStep($automation['id'], $stepId, ['config' => ['duration' => '3 days']]);
-$mailblastr->automations->update($automation['id'], ['status' => 'enabled']);
 
-// Or let AI draft the steps (the automation must be stopped and, without
-// 'attach', have no steps yet)
+// Or let AI draft the steps instead — also requires a stopped automation, and
+// without 'attach' the automation must have no steps yet
 $mailblastr->automations->createWithAi($automation['id'], ['prompt' => 'Welcome new signups over 3 days']);
+
+// Enable it once the steps are in place
+$mailblastr->automations->update($automation['id'], ['status' => 'enabled']);
 
 // Fire a custom event — only yourdomain.com's automations are triggered
 $mailblastr->events->send([
     'event' => 'signup.completed',
     'domain' => 'yourdomain.com',
-    'email' => 'user@example.com',
+    'email' => 'delivered@mailblastr.dev',
     'payload' => ['plan' => 'pro'],
 ]);
 
@@ -336,14 +347,17 @@ response is `['object' => 'list', 'has_more' => bool, 'data' => [...]]`; there i
 no total and no next cursor, so page forward with the last `data` item's `id` as
 `after`. An unknown cursor returns an empty page, not an error.
 
-Note that some list endpoints return the **whole** collection (with
-`has_more => false`) when you pass no pagination params at all — `domains`,
-`apiKeys`, `topics`, `campaigns`, `contacts`, `contactProperties`, `segments`,
-`segments->contacts()`, `contacts->listSegments()`, `contacts->getTopics()` and
-`emails->receiving->listAttachments()`. Pass a `limit` to page them. The other
-direction is just as uneven: `templates`, `webhooks`, `audiences`,
-`automations`, `automations->runs()` and `events` always cap an unpaginated
-call at 20.
+Note that some list endpoints skip the 20-row default when you pass no
+pagination params at all, returning everything up to a hard ceiling of **1,000
+rows** instead — `domains`, `apiKeys`, `topics`, `campaigns`, `contacts`,
+`contactProperties`, `segments`, `polls`, `segments->contacts()`,
+`contacts->listSegments()`, `contacts->getTopics()` and
+`emails->receiving->listAttachments()`. Do not read that as "the whole
+collection": past 1,000 rows the response is truncated and `has_more` is
+`true`, so page with `limit` + `after` rather than relying on one unpaginated
+call. The other direction is just as uneven: `templates`, `webhooks`,
+`audiences`, `automations`, `automations->runs()` and `events` always cap an
+unpaginated call at 20.
 
 ### Idempotency
 
