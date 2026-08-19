@@ -238,8 +238,9 @@ impl ReceivingSvc {
     }
 
     /// List a received email's attachments. Pass `params` to page; with no
-    /// `limit` and no `after` cursor the route returns ALL attachments with
-    /// `has_more: false`. `GET /emails/receiving/:id/attachments`
+    /// `limit` and no `after` cursor the route answers in one page capped at
+    /// **1,000** rows, with `has_more` reporting any truncation.
+    /// `GET /emails/receiving/:id/attachments`
     pub async fn list_attachments(
         &self,
         email_id: &str,

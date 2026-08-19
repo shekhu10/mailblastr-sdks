@@ -1,7 +1,7 @@
 'use strict';
 
 const fs = require('node:fs');
-const { CliError, collect, clean, withPagination, pagination } = require('../helpers');
+const { CliError, collect, clean, toInt, withPagination, pagination } = require('../helpers');
 
 function register({ group, leaf, act }) {
   const webhooks = group('webhooks', 'Manage webhooks');
@@ -61,8 +61,13 @@ function register({ group, leaf, act }) {
   );
 
   // Verify a delivery's signature LOCALLY — pure computation, no HTTP request (SDK-4).
+  //
+  // Registered with `local: true`, so no SDK client (and therefore no API key)
+  // is resolved: this command never reaches the network, and demanding
+  // MAILBLASTR_API_KEY for it pushed people into putting a send-capable key on
+  // the very webhook receiver whose job is to distrust its input.
   act(
-    leaf(webhooks, 'verify', 'Verify a webhook delivery signature locally (no HTTP request)')
+    leaf(webhooks, 'verify', 'Verify a webhook delivery signature locally (no HTTP request, no API key)', { local: true })
       .requiredOption('--secret <secret>', 'the endpoint signing secret')
       .option('--payload <raw>', 'the raw request body string (exact bytes the server sent)')
       .option('--payload-file <path>', 'path to a file containing the raw request body')
@@ -70,7 +75,7 @@ function register({ group, leaf, act }) {
       .requiredOption('--svix-timestamp <ts>', 'the svix-timestamp header')
       .requiredOption('--svix-signature <sig>', 'the svix-signature header')
       .option('--tolerance <seconds>', 'max timestamp skew in seconds (default 300; 0 = skip the freshness check)'),
-    ({ client, opts }) => {
+    ({ ctx, opts }) => {
       if (opts.payload && opts.payloadFile) throw new CliError('Provide only one of --payload or --payload-file.');
       let payload;
       if (opts.payloadFile) {
@@ -87,10 +92,18 @@ function register({ group, leaf, act }) {
         'svix-signature': opts.svixSignature,
       };
       const options = {};
-      if (opts.tolerance != null) options.toleranceSec = Number(opts.tolerance);
-      // verify() is a pure, synchronous local computation returning { valid, reason }.
-      // Wrap it in the {data,error} shape the CLI runner prints.
-      return { data: client.webhooks.verify(payload, headers, opts.secret, options), error: null };
+      if (opts.tolerance != null) {
+        // Parsed, not coerced. `Number('5m')` is NaN, and the SDK's freshness
+        // gate is `if (toleranceSec > 0)` — which NaN fails — so a typo'd
+        // tolerance used to SKIP the replay-window check silently and report a
+        // stale delivery as valid. A bad value is a usage error instead.
+        const tolerance = toInt(opts.tolerance, '--tolerance');
+        if (tolerance < 0) throw new CliError('--tolerance must be 0 or greater.');
+        options.toleranceSec = tolerance;
+      }
+      // A pure, synchronous local computation returning { valid, reason }.
+      // Wrapped in the {data,error} shape the CLI runner prints.
+      return { data: ctx.verifyWebhook(payload, headers, opts.secret, options), error: null };
     },
   );
 }

@@ -17,16 +17,18 @@ public partial class MailblastrClient
     {
         ArgumentNullException.ThrowIfNull(messages);
         var payload = messages as IList<EmailMessage> ?? messages.ToList();
-        var envelope = await RequestAsync<DataEnvelope<EmailCreated>>(HttpMethod.Post, "/emails/batch", payload, idempotencyKey, cancellationToken).ConfigureAwait(false);
-        return envelope.Data;
+        var response = await RequestAsync<BatchSendResponse>(HttpMethod.Post, "/emails/batch", payload, idempotencyKey, cancellationToken).ConfigureAwait(false);
+        return response.Data;
     }
 
     public async Task<List<EmailCreated>> EmailBatchAsync(IEnumerable<BatchEmailMessage> messages, string? idempotencyKey = null, CancellationToken cancellationToken = default)
+        => (await EmailBatchSendAsync(messages, idempotencyKey, cancellationToken).ConfigureAwait(false)).Data;
+
+    public Task<BatchSendResponse> EmailBatchSendAsync(IEnumerable<BatchEmailMessage> messages, string? idempotencyKey = null, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(messages);
         var payload = messages as IList<BatchEmailMessage> ?? messages.ToList();
-        var envelope = await RequestAsync<DataEnvelope<EmailCreated>>(HttpMethod.Post, "/emails/batch", payload, idempotencyKey, cancellationToken).ConfigureAwait(false);
-        return envelope.Data;
+        return RequestAsync<BatchSendResponse>(HttpMethod.Post, "/emails/batch", payload, idempotencyKey, cancellationToken);
     }
 
     public Task<ListResponse<SentEmailListItem>> EmailListAsync(PaginationOptions? pagination = null, CancellationToken cancellationToken = default)

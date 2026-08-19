@@ -4,8 +4,34 @@ import hmac
 import time
 
 import mailblastr
+from mailblastr.webhooks import _b64_lenient
 
 from .helpers import RecordingTestCase
+
+
+class PairIteratingHeaders:
+    """Stand-in for Flask/werkzeug's ``request.headers``.
+
+    Werkzeug's ``Headers.__iter__`` yields ``(name, value)`` TUPLES, not names —
+    unlike a dict, Django's ``HttpHeaders`` or Starlette's ``Headers``. The
+    package README passes ``request.headers`` straight into ``Webhooks.verify``,
+    so this shape has to work.
+    """
+
+    def __init__(self, pairs):
+        self._list = list(pairs)
+
+    def __iter__(self):
+        return iter(self._list)
+
+    def items(self):
+        return iter(self._list)
+
+    def __getitem__(self, key):
+        for name, value in self._list:
+            if name.lower() == str(key).lower():
+                return value
+        raise KeyError(key)
 
 
 def _sign(secret_key: bytes, msg_id: str, timestamp: str, payload: str) -> str:
@@ -143,3 +169,54 @@ class TestVerifySignature(RecordingTestCase):
         headers = self.headers_for(secret.encode("utf-8"))
         result = mailblastr.Webhooks.verify(self.payload.encode("utf-8"), headers, secret)
         self.assertEqual(result, {"valid": True})
+
+    def test_flask_style_headers_that_iterate_pairs(self):
+        """A container whose iteration yields (name, value) pairs — Flask's
+        ``request.headers`` — must still be read. Iterating it as if each element
+        were a NAME matched nothing, so every genuinely signed delivery came back
+        `missing_headers` on the exact call the README documents."""
+        secret = "topsecret"
+        headers = PairIteratingHeaders(self.headers_for(secret.encode("utf-8")).items())
+        result = mailblastr.Webhooks.verify(self.payload, headers, secret)
+        self.assertEqual(result, {"valid": True})
+
+    def test_unpadded_whsec_secret_verifies(self):
+        """The signer derives its key with Node's lenient base64 decoder, which
+        needs no `=` padding. Python's strict ``b64decode`` raised on the same
+        suffix, the SDK fell back to the raw string, and a valid delivery was
+        rejected as `no_match`."""
+        key = b"abcd"
+        unpadded = base64.b64encode(key).decode("ascii").rstrip("=")
+        self.assertEqual(unpadded, "YWJjZA")  # length 6 — not a multiple of 4
+        headers = self.headers_for(key)
+        result = mailblastr.Webhooks.verify(self.payload, headers, "whsec_" + unpadded)
+        self.assertEqual(result, {"valid": True})
+
+    def test_url_safe_whsec_secret_verifies(self):
+        """Node's base64 decoder also accepts the URL-safe `-`/`_` spellings;
+        ``b64decode`` silently DISCARDS them, yielding a different key."""
+        key = bytes(range(250, 256)) + b"\xfb\xff\xbe"
+        urlsafe = base64.urlsafe_b64encode(key).decode("ascii").rstrip("=")
+        self.assertTrue("-" in urlsafe or "_" in urlsafe)
+        headers = self.headers_for(key)
+        result = mailblastr.Webhooks.verify(self.payload, headers, "whsec_" + urlsafe)
+        self.assertEqual(result, {"valid": True})
+
+    def test_lenient_base64_matches_node_byte_for_byte(self):
+        """Pinned against `node -e "Buffer.from(s, 'base64')"`, which is what the
+        backend's secretToKey uses (lib/crypto.ts). A trailing single character
+        carries no whole byte and is dropped; 2 or 3 decode as a partial group."""
+        self.assertEqual(_b64_lenient("abcd"), b"\x69\xb7\x1d")
+        self.assertEqual(_b64_lenient("hello"), b"\x85\xe9\x65")  # 5 chars -> drop 1
+        self.assertEqual(_b64_lenient("abc"), b"\x69\xb7")
+        self.assertEqual(_b64_lenient("ab"), b"\x69")
+        self.assertEqual(_b64_lenient("YWJjZA"), b"abcd")
+        self.assertEqual(_b64_lenient("ab-cd_ef"), b"\x69\xbf\x9c\x77\xf7\x9f")
+
+    def test_unrecognized_secret_still_falls_back_to_raw_bytes(self):
+        """A `whsec_` secret whose suffix decodes to nothing keeps the documented
+        fallback: the WHOLE string as UTF-8, exactly like the server."""
+        secret = "whsec_"
+        headers = self.headers_for(secret.encode("utf-8"))
+        self.assertEqual(mailblastr.Webhooks.verify(self.payload, headers, secret),
+                         {"valid": True})

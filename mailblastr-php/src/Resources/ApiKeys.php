@@ -20,7 +20,10 @@ class ApiKeys extends Resource
      * excluded). GET /api-keys
      *
      * @param array $params Optional cursor pagination (limit, after, before).
-     *                      With no params every key is returned.
+     *                      With no params the endpoint answers in ONE page
+     *                      instead of a 20-row one, but it is still capped at
+     *                      1000 rows and reports the truncation as
+     *                      'has_more' => true.
      */
     public function list(array $params = []): array
     {

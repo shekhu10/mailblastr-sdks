@@ -12,7 +12,11 @@ public partial interface IMailblastr
 
     /// <summary>
     /// List API keys (non-secret display prefixes only; revoked keys excluded).
-    /// With no pagination options the API returns every key. GET /api-keys
+    /// Omitting <paramref name="pagination"/> asks for the whole inventory in one
+    /// response, but the route still caps it at 1,000 rows and reports the
+    /// truncation through <c>HasMore</c> — keep walking with <c>After</c> while
+    /// that is true rather than assuming a single page is complete.
+    /// GET /api-keys
     /// </summary>
     Task<ListResponse<ApiKey>> ApiKeyListAsync(PaginationOptions? pagination = null, CancellationToken cancellationToken = default);
 

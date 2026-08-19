@@ -82,8 +82,8 @@ impl ApiKeysSvc {
     }
 
     /// List API keys (non-secret prefixes only; revoked keys excluded). With
-    /// no pagination params the route returns EVERY key with
-    /// `has_more: false`. `GET /api-keys`
+    /// no pagination params the route answers in one page capped at **1,000**
+    /// keys, with `has_more` reporting any truncation. `GET /api-keys`
     pub async fn list(&self, params: Option<PaginationParams>) -> Result<ListResponse<ApiKey>> {
         let req = self
             .config

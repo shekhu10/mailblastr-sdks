@@ -160,9 +160,13 @@ mailblastr.emails.receiving.reply(id, ReplyReceivedEmailOptions::new(from).with_
 
 // Batch send — up to 100 per call. Items are `BatchEmailOptions`, which simply
 // has no `attachments` / `scheduled_at` because the batch route rejects both.
-mailblastr.batch.send_emails(vec![
+// Above 40 emails the batch is QUEUED for the worker instead of sent inline:
+// the response's `queued` flag is then true and the ids are emails that have
+// not gone out yet.
+let batch = mailblastr.batch.send_emails(vec![
     BatchEmailOptions::new(from, to, subject).with_html(html),
 ]).await?;
+if batch.queued { /* not transmitted yet — poll emails.get(id) */ }
 
 // Domains (incl. claiming a domain verified elsewhere + one-click DNS)
 mailblastr.domains.create(CreateDomainOptions::new("example.com")).await?;
@@ -357,7 +361,7 @@ mailblastr.campaigns.list(Some(PaginationParams::new().with_limit(25).with_after
 
 `limit` must be an integer 1–100 (default 20); `after` and `before` are item ids and are mutually exclusive — violating either is a `422 validation_error`. An unknown cursor is not an error: you get an empty page with `has_more: false`. Responses are `{ object: "list", has_more, data }` — there is no total and no next-cursor field, so page forward with the last `data[].id`.
 
-Watch the unpaged default: `domains`, `api_keys`, `topics`, `campaigns`, `contacts`, `contact_properties`, `segments`, `segments.contacts`, `contacts.list_segments` and `emails.receiving.list_attachments` return the **whole** collection when you pass no pagination params, while `templates`, `webhooks`, `audiences`, `automations`, `automations.runs` and `events` always cap at 20.
+Watch the unpaged default: `domains`, `api_keys`, `topics`, `campaigns`, `contacts`, `contact_properties`, `segments`, `segments.contacts`, `contacts.list_segments`, `contacts.get_topics` and `emails.receiving.list_attachments` skip the 20-row default when you pass no pagination params — but they are still capped, at **1,000** rows per page, and `has_more` reports the truncation. They do **not** return the whole collection: keep paging with `with_after(last_id)` while `has_more` is true. `templates`, `webhooks`, `audiences`, `automations`, `automations.runs` and `events` always cap at 20.
 
 ### Idempotency
 

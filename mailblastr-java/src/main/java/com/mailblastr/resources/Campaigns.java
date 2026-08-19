@@ -28,8 +28,9 @@ public final class Campaigns extends Resource {
     }
 
     /**
-     * List campaigns. With no pagination params the route returns ALL of them
-     * and {@code has_more:false}. {@code GET /campaigns}
+     * List campaigns. With no pagination params the route skips paging and
+     * answers with all of them — capped at <strong>1,000</strong> rows, with
+     * {@code has_more} true if that ceiling bites. {@code GET /campaigns}
      */
     public MailblastrResponse list() { return list(null); }
 

@@ -34,7 +34,25 @@ public partial interface IMailblastr
     /// </summary>
     Task<IdResponse> CampaignSendAsync(string campaignId, CampaignSendOptions options, CancellationToken cancellationToken = default);
 
-    /// <summary>Cancel a scheduled campaign (returns it to draft). POST /campaigns/:id/cancel</summary>
+    /// <summary>
+    /// Stop a campaign before it finishes fanning out. Accepted only on
+    /// <c>scheduled</c>, <c>recurring</c>, <c>paused</c> and <c>queued</c>; any
+    /// other status is a 422. POST /campaigns/:id/cancel
+    /// <para>
+    /// The resulting status depends on how far the send got, so read
+    /// <see cref="Campaign.Status"/> rather than assuming:
+    /// </para>
+    /// <list type="bullet">
+    ///   <item><description><c>scheduled</c> / <c>recurring</c> / <c>paused</c> →
+    ///   back to <c>draft</c>: nothing was mailed, so it can be edited and
+    ///   re-sent.</description></item>
+    ///   <item><description><c>queued</c> (already fanning out) →
+    ///   <c>canceled</c>, which is TERMINAL. Part of the audience has been
+    ///   mailed and those copies cannot be recalled; what this stops is every
+    ///   remaining recipient (for a staggered campaign, every future batch-day).
+    ///   A canceled campaign can NOT be re-sent.</description></item>
+    /// </list>
+    /// </summary>
     Task<Campaign> CampaignCancelAsync(string campaignId, CancellationToken cancellationToken = default);
 
     /// <summary>Per-campaign analytics (counts, engagement rates, top links). GET /campaigns/:id/stats</summary>
@@ -72,8 +90,9 @@ public partial interface IMailblastr
     /// <summary>
     /// Preview the contacts a segment currently resolves to (filter matches plus
     /// explicit members). Rows are the REDUCED <see cref="SegmentContact"/> shape.
-    /// With no pagination options the API returns the whole set.
-    /// GET /segments/:id/contacts
+    /// With no pagination options the API answers in one response, capped at
+    /// 1,000 rows with <c>HasMore</c> reporting the truncation — page with
+    /// <c>After</c> for a larger segment. GET /segments/:id/contacts
     /// </summary>
     Task<ListResponse<SegmentContact>> SegmentListContactsAsync(string segmentId, PaginationOptions? pagination = null, CancellationToken cancellationToken = default);
 

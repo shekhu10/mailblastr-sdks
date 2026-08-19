@@ -37,7 +37,11 @@ class Domains extends Resource
      * those with {@see getClaim()}.
      *
      * @param array $params Optional cursor pagination (limit, after, before).
-     *                      With no params every domain is returned.
+     *                      With no params the endpoint answers in ONE page
+     *                      instead of a 20-row one, but it is still capped at
+     *                      1000 rows — 'has_more' reports the truncation, so
+     *                      keep paging with 'after' rather than assuming the
+     *                      first response is complete.
      */
     public function list(array $params = []): array
     {

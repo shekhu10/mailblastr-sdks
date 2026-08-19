@@ -142,8 +142,9 @@ class Client
             'Accept: application/json',
             'User-Agent: ' . self::USER_AGENT,
         ];
-        if (!empty($options['idempotencyKey'])) {
-            $headers[] = 'Idempotency-Key: ' . $options['idempotencyKey'];
+        $idempotencyKey = self::idempotencyHeaderValue($options);
+        if ($idempotencyKey !== null) {
+            $headers[] = 'Idempotency-Key: ' . $idempotencyKey;
         }
 
         $res = $this->transport->request($method, $this->baseUrl . $path, $headers, $json);
@@ -170,8 +171,9 @@ class Client
             'Authorization: Bearer ' . $this->apiKey,
             'User-Agent: ' . self::USER_AGENT,
         ];
-        if (!empty($options['idempotencyKey'])) {
-            $headers[] = 'Idempotency-Key: ' . $options['idempotencyKey'];
+        $idempotencyKey = self::idempotencyHeaderValue($options);
+        if ($idempotencyKey !== null) {
+            $headers[] = 'Idempotency-Key: ' . $idempotencyKey;
         }
 
         $res = $this->transport->request($method, $this->baseUrl . $path, $headers, null);
@@ -213,5 +215,26 @@ class Client
     public static function e(string $segment): string
     {
         return rawurlencode($segment);
+    }
+
+    /**
+     * The `Idempotency-Key` value to send, or null when the caller supplied none.
+     *
+     * The gate is "present, scalar, and non-empty once stringified" rather than
+     * `!empty()`: PHP's empty() is also true for the string '0' and the integer
+     * 0, and both are VALID keys — the API accepts 1-255 characters. Dropping
+     * one turned an idempotent send into a plain one silently, so a transport
+     * retry on 429/503 could deliver the same email twice. Only a genuinely
+     * absent, empty, non-scalar or boolean value is skipped.
+     */
+    private static function idempotencyHeaderValue(array $options): ?string
+    {
+        $raw = $options['idempotencyKey'] ?? null;
+        if ($raw === null || is_bool($raw) || !is_scalar($raw)) {
+            return null;
+        }
+        $key = (string) $raw;
+
+        return $key === '' ? null : $key;
     }
 }

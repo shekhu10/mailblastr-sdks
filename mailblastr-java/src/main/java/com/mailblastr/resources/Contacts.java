@@ -178,7 +178,10 @@ public final class Contacts extends Resource {
     /**
      * List the segments a contact belongs to. Items carry only
      * {@code id} / {@code name} / {@code created_at}, not the full segment
-     * object. With no pagination params ALL of them are returned.
+     * object. With no pagination params the route skips paging and answers with
+     * the whole set — but still no more than <strong>1,000</strong> rows, and
+     * {@code has_more} goes true when that ceiling bites, so keep paging with
+     * {@code after} rather than assuming one call saw everything.
      * {@code GET /contacts/:id/segments}
      */
     public MailblastrResponse listSegments(String id) { return listSegments(id, null); }

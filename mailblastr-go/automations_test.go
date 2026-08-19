@@ -39,20 +39,32 @@ func TestAutomationsCreateScheduleTrigger(t *testing.T) {
 	}
 }
 
+// PATCH /automations/:id/steps/:stepId re-validates the body exactly like an
+// add, so `type` is REQUIRED — a config-only patch is a 422 validation_error,
+// not a "leave the type alone". `key` is deliberately absent from the payload:
+// the endpoint ignores it (a step's graph key is fixed at creation so the
+// connections referencing it keep working).
 func TestAutomationsUpdateStep(t *testing.T) {
 	client := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPatch || r.URL.Path != "/automations/aut_1/steps/stp_1" {
 			t.Errorf("%s %s, want PATCH /automations/aut_1/steps/stp_1", r.Method, r.URL.Path)
 		}
 		body := decodeBody(t, r)
+		if body["type"] != "delay" {
+			t.Errorf("type = %#v, want delay (the API requires it on a step patch)", body["type"])
+		}
 		cfg, ok := body["config"].(map[string]any)
 		if !ok || cfg["duration"] != "2 days" {
 			t.Errorf("config = %v", body["config"])
+		}
+		if _, present := body["key"]; present {
+			t.Error("key must not be sent: the step-patch endpoint ignores it")
 		}
 		w.Write([]byte(`{"id":"stp_1","key":"wait_2d","type":"delay","position":1,"config":{"duration":"2 days"}}`))
 	})
 
 	step, err := client.Automations.UpdateStep("aut_1", "stp_1", &UpdateAutomationStepRequest{
+		Type:   "delay",
 		Config: map[string]any{"duration": "2 days"},
 	})
 	if err != nil {

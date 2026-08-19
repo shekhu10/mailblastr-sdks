@@ -5,11 +5,13 @@ import com.mailblastr.Mailblastr;
 import com.mailblastr.MailblastrException;
 import com.mailblastr.MailblastrResponse;
 import com.mailblastr.http.ApiClient;
+import com.mailblastr.requests.AutomationConnection;
 import com.mailblastr.requests.AutomationStep;
 import com.mailblastr.requests.CreateContactRequest;
 import com.mailblastr.requests.ImportContactsRequest;
 import com.mailblastr.requests.ListAutomationRunsParams;
 import com.mailblastr.requests.ListEmailsParams;
+import com.mailblastr.requests.UpdateAutomationRequest;
 import com.mailblastr.requests.UpdateEventRequest;
 
 import java.nio.charset.StandardCharsets;
@@ -101,6 +103,20 @@ public final class ContractParityTest {
         mb.automations().runs("auto_1", ListAutomationRunsParams.builder().status("completed").build());
         Check.eq("runs single status url",
                 "https://api.test/automations/auto_1/runs?status=completed", t.lastUrl);
+
+        // Branch edges out of a condition step. `next`/`default`,
+        // `condition_met`, `condition_not_met`, `event_received` and `timeout`
+        // are the ONLY types the API accepts (lib/automations/validation.ts).
+        mb.automations().update("auto_1", UpdateAutomationRequest.builder()
+                .connection(AutomationConnection.of("c1", "s2", "condition_met"))
+                .connection(AutomationConnection.of("c1", "s3", "condition_not_met"))
+                .connection(AutomationConnection.of("s3", "s4"))
+                .build());
+        Check.eq("automation connection types body",
+                "{\"connections\":[{\"from\":\"c1\",\"to\":\"s2\",\"type\":\"condition_met\"},"
+                        + "{\"from\":\"c1\",\"to\":\"s3\",\"type\":\"condition_not_met\"},"
+                        + "{\"from\":\"s3\",\"to\":\"s4\"}]}",
+                t.lastBody);
 
         mb.automations().createWithAi("auto_1", "welcome new signups over three days");
         Check.eq("ai url", "https://api.test/automations/auto_1/ai", t.lastUrl);

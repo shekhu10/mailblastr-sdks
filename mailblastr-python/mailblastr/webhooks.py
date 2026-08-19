@@ -30,16 +30,85 @@ class UpdateParams(TypedDict, total=False):
     status: str  # 'enabled' | 'disabled'
 
 
+def _header_pairs(headers):
+    """Best-effort ``(name, value)`` pairs out of ANY header container.
+
+    ``items()`` first, because that is the one accessor every header type in the
+    Python web stack agrees on: dict, ``http.client.HTTPMessage``, Django's
+    ``request.headers``, Starlette/FastAPI's ``Headers`` — and Flask's, which is
+    the one that made this necessary. Werkzeug's ``Headers.__iter__`` yields
+    ``(key, value)`` TUPLES rather than keys, so iterating it and treating each
+    element as a name matched nothing and ``Webhooks.verify(body,
+    request.headers, secret)`` — the call this package's own README shows —
+    answered ``missing_headers`` for every genuinely signed delivery.
+    """
+    if headers is None:
+        return []
+    items = getattr(headers, "items", None)
+    if callable(items):
+        try:
+            return list(items())
+        except Exception:  # pragma: no cover - exotic container
+            pass
+    try:
+        entries = list(headers)
+    except TypeError:
+        return []
+    pairs = []
+    for entry in entries:
+        # A pair-yielding container (werkzeug) vs. a mapping that yields keys.
+        if isinstance(entry, (tuple, list)) and len(entry) == 2:
+            pairs.append((entry[0], entry[1]))
+            continue
+        try:
+            pairs.append((entry, headers[entry]))
+        except (KeyError, IndexError, TypeError, AttributeError):
+            continue
+    return pairs
+
+
 def _read_header(headers, name):
     """Case-insensitively read a single header value (first if it's a list)."""
     lower = name.lower()
-    for key in headers:
+    for key, value in _header_pairs(headers):
         if str(key).lower() == lower:
-            value = headers[key]
             if isinstance(value, (list, tuple)):
                 return value[0] if value else None
             return value
     return None
+
+
+# Base64 alphabet, plus the URL-safe spellings of the last two characters.
+_B64_ALPHABET = frozenset(
+    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/-_"
+)
+
+
+def _b64_lenient(text):
+    """Decode base64 the way the signer does, not the way Python does.
+
+    The backend derives its key with Node's ``Buffer.from(suffix, 'base64')``
+    (lib/crypto.ts ``secretToKey``), which is LENIENT: it ignores characters
+    outside the alphabet, accepts the URL-safe ``-``/``_`` spellings, needs no
+    ``=`` padding, and decodes a trailing partial group (dropping a lone 1-char
+    remainder, which carries no whole byte). ``base64.b64decode`` does none of
+    that — it raises ``binascii.Error`` on any length that is not a multiple of
+    four and silently DISCARDS ``-``/``_``. A caller-supplied secret (the
+    ``secret`` field on POST /webhooks) that is unpadded or URL-safe therefore
+    produced a DIFFERENT key here than at the signer, and every valid delivery
+    came back ``{"valid": False, "reason": "no_match"}``. Ruby (``unpack1("m")``)
+    and the Node SDK are both lenient; this reproduces them byte for byte.
+    """
+    cleaned = "".join(c for c in text if c in _B64_ALPHABET).replace("-", "+").replace("_", "/")
+    remainder = len(cleaned) % 4
+    if remainder == 1:
+        cleaned = cleaned[:-1]  # a single leftover character encodes no byte
+    elif remainder:
+        cleaned += "=" * (4 - remainder)
+    try:
+        return base64.b64decode(cleaned)
+    except (ValueError, binascii.Error):  # pragma: no cover - defensive
+        return b""
 
 
 def _secret_to_key(secret):
@@ -47,12 +116,9 @@ def _secret_to_key(secret):
     suffix); a secret without the prefix is used as raw UTF-8 bytes."""
     s = str(secret or "")
     if s.startswith("whsec_"):
-        try:
-            decoded = base64.b64decode(s[len("whsec_"):], validate=False)
-            if decoded:
-                return decoded
-        except (ValueError, binascii.Error):
-            pass  # fall through to raw
+        decoded = _b64_lenient(s[len("whsec_"):])
+        if decoded:
+            return decoded
     return s.encode("utf-8")
 
 

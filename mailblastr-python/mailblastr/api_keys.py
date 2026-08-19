@@ -16,6 +16,6 @@ class ApiKeys:
     @classmethod
     def list(cls, params=None):
         """List API keys (non-secret prefixes only; revoked keys excluded).
-        Called with no pagination params every key is returned.
-        GET /api-keys"""
+        Called with no pagination params this returns up to 1,000 keys in one
+        response, with ``has_more`` set when that cap bites. GET /api-keys"""
         return http_client.request("GET", f"/api-keys{paginate(params)}")

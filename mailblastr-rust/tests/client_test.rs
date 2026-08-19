@@ -9,7 +9,7 @@ use std::thread::{self, JoinHandle};
 use mailblastr::{
     ApiKeyPermission, BatchEmailOptions, CampaignListItem, Error, SendEmailOptions,
     ListEmailsParams, ListSegmentsParams, Mailblastr, PaginationParams, SegmentFilterOptions,
-    UpdateSegmentOptions, UpdateTemplateOptions, UpdateTopicOptions,
+    UpdateAutomationStepOptions, UpdateSegmentOptions, UpdateTemplateOptions, UpdateTopicOptions,
 };
 
 /// Find the first occurrence of `needle` in `haystack`.
@@ -833,5 +833,147 @@ async fn topic_update_can_clear_the_description() {
     assert!(
         request.contains("\"description\":null"),
         "description must be sent as an explicit null: {request}"
+    );
+}
+
+/// A batch above the inline ceiling (40 emails) is QUEUED, not sent: the route
+/// answers 202 with `queued: true` and the ids belong to `scheduled` rows the
+/// worker has not transmitted yet. Modelling only `data` made a queued batch
+/// indistinguishable from a delivered one.
+#[tokio::test]
+async fn batch_send_reports_a_queued_batch() {
+    let (base_url, handle) = spawn_stub(
+        202,
+        r#"{"data":[{"id":"em_1"},{"id":"em_2"}],"queued":true,"queued_count":2}"#,
+    );
+    let mb = Mailblastr::with_base_url("mb_test_key", base_url);
+    let email =
+        BatchEmailOptions::new("Acme <hi@x.com>", ["delivered@mailblastr.dev"], "Hi").with_html("<p>x</p>");
+
+    let sent = mb
+        .batch
+        .send_emails(vec![email])
+        .await
+        .expect("a 202 is a success status");
+    assert!(sent.queued, "a 202 batch was queued, not transmitted");
+    assert_eq!(sent.queued_count, Some(2));
+    assert_eq!(sent.data.len(), 2);
+
+    let request = handle.join().unwrap();
+    assert!(
+        request.starts_with("POST /emails/batch HTTP/1.1"),
+        "got: {request}"
+    );
+}
+
+/// The inline path answers 200 with no `queued` key at all — that must read as
+/// "sent", not fail to decode.
+#[tokio::test]
+async fn batch_send_inline_reads_as_not_queued() {
+    let (base_url, _handle) = spawn_stub(200, r#"{"data":[{"id":"em_1"}]}"#);
+    let mb = Mailblastr::with_base_url("mb_test_key", base_url);
+    let email =
+        BatchEmailOptions::new("Acme <hi@x.com>", ["delivered@mailblastr.dev"], "Hi").with_html("<p>x</p>");
+
+    let sent = mb
+        .batch
+        .send_emails(vec![email])
+        .await
+        .expect("inline batch should decode");
+    assert!(!sent.queued);
+    assert_eq!(sent.queued_count, None);
+}
+
+/// `PATCH /automations/:id/steps/:step_id` runs the SAME step validator as the
+/// add route, which rejects a body without `type` as a 422 — so the type must
+/// always ride along, even when only the config changes.
+#[tokio::test]
+async fn automation_step_update_always_sends_the_type() {
+    let (base_url, handle) = spawn_stub(
+        200,
+        r#"{"id":"stp_1","key":"stp_1","type":"delay","position":1,"config":{"duration":"2 days"}}"#,
+    );
+    let mb = Mailblastr::with_base_url("mb_test_key", base_url);
+
+    let step = mb
+        .automations
+        .update_step(
+            "aut_1",
+            "stp_1",
+            UpdateAutomationStepOptions::new("delay")
+                .with_config(serde_json::json!({ "duration": "2 days" })),
+        )
+        .await
+        .expect("step update should decode");
+    assert_eq!(step.step_type, "delay");
+
+    let request = handle.join().unwrap();
+    assert!(
+        request.starts_with("PATCH /automations/aut_1/steps/stp_1 HTTP/1.1"),
+        "got: {request}"
+    );
+    assert!(
+        request.contains(r#""type":"delay""#),
+        "`type` is required by the route: {request}"
+    );
+    // The route forwards only type+config to storage; a `key` here would be a
+    // silent no-op, so the body must not pretend the graph key is settable.
+    assert!(
+        !request.contains("\"key\""),
+        "update must not send a graph key the route ignores: {request}"
+    );
+}
+
+/// The received-attachment LIST route serializes `size` as `size ?? null`, so a
+/// legacy row without one must not make the whole page undecodable.
+#[tokio::test]
+async fn received_attachment_size_tolerates_an_explicit_null() {
+    let (base_url, _handle) = spawn_stub(
+        200,
+        r#"{"object":"list","has_more":false,"data":[
+            {"object":"attachment","id":"0","filename":"legacy.pdf","size":null,
+             "content_type":null,"content_disposition":"attachment","content_id":null,
+             "downloadable":false}]}"#,
+    );
+    let mb = Mailblastr::with_base_url("mb_test_key", base_url);
+
+    let page = mb
+        .emails
+        .receiving
+        .list_attachments("rec_1", None)
+        .await
+        .expect("a null size must not fail the page");
+    assert_eq!(page.data.len(), 1);
+    assert_eq!(page.data[0].size, 0);
+    assert!(!page.data[0].downloadable);
+}
+
+/// An unpaginated list is capped at UNPAGINATED_MAX (1,000) server-side and
+/// says so through `has_more` — the SDK must surface that, not imply the page
+/// was the whole collection.
+#[tokio::test]
+async fn unpaginated_list_surfaces_a_truncating_has_more() {
+    let (base_url, handle) = spawn_stub(
+        200,
+        r#"{"object":"list","has_more":true,"data":[
+            {"id":"con_1","email":"a@x.com","first_name":null,"last_name":null,
+             "unsubscribed":false,"created_at":null}]}"#,
+    );
+    let mb = Mailblastr::with_base_url("mb_test_key", base_url);
+
+    let page = mb
+        .segments
+        .contacts("seg_1", None)
+        .await
+        .expect("segment membership should decode");
+    assert!(
+        page.has_more,
+        "an unpaginated page can still be truncated at 1,000 rows"
+    );
+
+    let request = handle.join().unwrap();
+    assert!(
+        request.starts_with("GET /segments/seg_1/contacts HTTP/1.1"),
+        "got: {request}"
     );
 }

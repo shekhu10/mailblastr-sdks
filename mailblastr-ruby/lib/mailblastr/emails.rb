@@ -96,7 +96,8 @@ module Mailblastr
         end
 
         # List a received email's attachments. With no `limit` and no `after`
-        # every attachment is returned; supplying either paginates normally.
+        # one page carries up to 1,000 of them and `has_more` reports any
+        # truncation; supplying either paginates normally.
         # GET /emails/receiving/:id/attachments
         def list_attachments(email_id, params = {})
           Client.request(

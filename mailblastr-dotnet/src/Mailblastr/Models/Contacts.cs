@@ -330,8 +330,9 @@ public class ContactTopics
     public string Object { get; set; } = "list";
 
     /// <summary>
-    /// Whether another page exists. The endpoint only pages when
-    /// ContactRetrieveTopicsAsync is called with a <see cref="PaginationOptions"/>.
+    /// Whether another page exists. True when a supplied
+    /// <see cref="PaginationOptions"/> sliced the result, and also when an
+    /// unpaginated call hit the route's 1,000-row ceiling.
     /// </summary>
     [JsonPropertyName("has_more")]
     public bool HasMore { get; set; }

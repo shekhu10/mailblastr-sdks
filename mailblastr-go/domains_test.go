@@ -107,3 +107,33 @@ func TestDomainsApplyCloudflareDns(t *testing.T) {
 		t.Errorf("unexpected result: %v", res)
 	}
 }
+
+// PATCH /domains/:id accepts `custom_return_path` (the MAIL FROM subdomain) —
+// the request type used to have no field for it, so the Return-Path could be
+// set at create time and never changed afterwards.
+func TestDomainsUpdateCustomReturnPath(t *testing.T) {
+	client := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPatch || r.URL.Path != "/domains/dom_1" {
+			t.Errorf("%s %s, want PATCH /domains/dom_1", r.Method, r.URL.Path)
+		}
+		body := decodeBody(t, r)
+		if body["custom_return_path"] != "mail" {
+			t.Errorf("custom_return_path = %#v, want mail", body["custom_return_path"])
+		}
+		// Untouched fields must stay absent so the PATCH does not reset them.
+		for _, k := range []string{"open_tracking", "click_tracking", "tls", "capabilities"} {
+			if _, present := body[k]; present {
+				t.Errorf("%s must be omitted when unset, got %#v", k, body[k])
+			}
+		}
+		w.Write([]byte(`{"object":"domain","id":"dom_1"}`))
+	})
+
+	ref, err := client.Domains.Update("dom_1", &UpdateDomainRequest{CustomReturnPath: "mail"})
+	if err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+	if ref.Id != "dom_1" {
+		t.Errorf("unexpected ref: %+v", ref)
+	}
+}

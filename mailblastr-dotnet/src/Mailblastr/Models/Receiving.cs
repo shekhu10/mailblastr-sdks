@@ -15,8 +15,14 @@ public class ReceivedAttachment
     [JsonPropertyName("content_type")]
     public string? ContentType { get; set; }
 
+    /// <summary>
+    /// Decoded size in bytes, or <c>null</c> when the ingest recorded none. The
+    /// standalone list route (<c>GET /emails/receiving/:id/attachments</c>)
+    /// really does send <c>null</c> here for a legacy row, so this is nullable —
+    /// the embedded copy on <see cref="ReceivedEmail.Attachments"/> substitutes 0.
+    /// </summary>
     [JsonPropertyName("size")]
-    public long Size { get; set; }
+    public long? Size { get; set; }
 
     [JsonPropertyName("content_id")]
     public string? ContentId { get; set; }

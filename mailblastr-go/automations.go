@@ -150,12 +150,26 @@ type AddAutomationStepRequest struct {
 	Key string `json:"key,omitempty"`
 }
 
-// UpdateAutomationStepRequest edits an existing step. Every field is optional;
-// the automation must be disabled.
+// UpdateAutomationStepRequest edits an existing step in place. The automation
+// must be disabled.
+//
+// The step is REPLACED, not patched: the API re-validates the whole body and
+// overwrites type + config, so send Type and the complete Config every time.
 type UpdateAutomationStepRequest struct {
-	Type   string         `json:"type,omitempty"`
+	// Type is REQUIRED — the API validates the update exactly like an add, so
+	// omitting it is a 422 validation_error ("type must be one of: …"), not a
+	// "leave the type alone".
+	Type string `json:"type"`
+	// Config replaces the step's configuration wholesale; anything you leave
+	// out is dropped, not preserved.
 	Config map[string]any `json:"config,omitempty"`
-	Key    string         `json:"key,omitempty"`
+
+	// Key is IGNORED by this endpoint: a step's graph key is fixed at creation
+	// so the connections referencing it keep working. Set it on
+	// AddAutomationStepRequest instead, or recreate the step.
+	//
+	// Deprecated: the API never reads it — sending one changes nothing.
+	Key string `json:"key,omitempty"`
 }
 
 // Automation limits and vocabulary enforced by the API.
@@ -322,7 +336,9 @@ func (s *AutomationsService) AddStepWithContext(ctx context.Context, id string, 
 	return request[AutomationStep](ctx, s.client, http.MethodPost, "/automations/"+esc(id)+"/steps", params, nil)
 }
 
-// UpdateStep edits an existing step; returns the updated step.
+// UpdateStep replaces an existing step's type and config; returns the updated
+// step. Type is required and Config is a wholesale replacement — the endpoint
+// re-validates the body like an add rather than patching field by field.
 // PATCH /automations/:id/steps/:stepId
 func (s *AutomationsService) UpdateStep(id, stepId string, params *UpdateAutomationStepRequest) (*AutomationStep, error) {
 	return s.UpdateStepWithContext(context.Background(), id, stepId, params)

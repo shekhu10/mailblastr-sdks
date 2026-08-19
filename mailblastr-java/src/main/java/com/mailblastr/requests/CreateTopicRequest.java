@@ -27,7 +27,11 @@ public final class CreateTopicRequest implements JsonPayload {
         /** REQUIRED. The sending domain this topic belongs to. */
         public Builder domain(String domain) { m.put("domain", domain); return this; }
         public Builder name(String name) { m.put("name", name); return this; }
-        /** {@code "opt_in"} or {@code "opt_out"}. */
+        /**
+         * REQUIRED. {@code "opt_in"} or {@code "opt_out"} — omitting it is a
+         * {@code 422 validation_error}. It is IMMUTABLE afterwards, which is
+         * why {@link UpdateTopicRequest} exposes no setter for it.
+         */
         public Builder defaultSubscription(String defaultSubscription) { m.put("default_subscription", defaultSubscription); return this; }
         /** {@code "public"} or {@code "private"}. */
         public Builder visibility(String visibility) { m.put("visibility", visibility); return this; }

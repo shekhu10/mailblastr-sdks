@@ -116,8 +116,10 @@ public partial interface IMailblastr
 
     /// <summary>
     /// Get a contact's topic subscriptions. Passing no
-    /// <paramref name="pagination"/> returns every topic: this endpoint only
-    /// pages when you supply pagination params. GET /contacts/:id/topics
+    /// <paramref name="pagination"/> asks for them all in one response — the
+    /// endpoint only slices to a page size when you supply pagination params —
+    /// but it is still capped at 1,000 rows, and <c>HasMore</c> says so when the
+    /// cap bites. GET /contacts/:id/topics
     /// </summary>
     Task<ContactTopics> ContactRetrieveTopicsAsync(string contactId, PaginationOptions? pagination = null, CancellationToken cancellationToken = default);
 

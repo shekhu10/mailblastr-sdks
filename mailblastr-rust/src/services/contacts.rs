@@ -282,8 +282,9 @@ impl ContactsSvc {
         self.config.send(req).await
     }
 
-    /// Get a contact's topic subscriptions. Passing `None` returns every
-    /// topic: this endpoint only pages when you supply pagination params.
+    /// Get a contact's topic subscriptions. Passing `None` skips the page
+    /// limit — the route then answers in one page capped at **1,000** topics,
+    /// with `has_more` reporting any truncation.
     /// `GET /contacts/:id/topics`
     pub async fn get_topics(
         &self,

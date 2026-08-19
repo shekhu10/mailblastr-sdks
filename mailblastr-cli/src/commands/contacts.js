@@ -82,8 +82,15 @@ function register({ group, leaf, act }) {
       .option('--unsubscribed', 'mark unsubscribed')
       .option('--subscribed', 'mark subscribed again')
       .option('--properties <json>', 'custom property values as a JSON object'),
-    ({ client, opts, args: [id] }) =>
-      client.contacts.update(
+    ({ client, opts, args: [id] }) => {
+      // Contradictory consent flags used to resolve silently in favour of
+      // --unsubscribed, which could write the OPPOSITE of what the operator
+      // meant onto a subscription state. Refuse, like every other mutually
+      // exclusive pair in this CLI.
+      if (opts.unsubscribed && opts.subscribed) {
+        throw new CliError('Provide only one of --unsubscribed or --subscribed.');
+      }
+      return client.contacts.update(
         clean({
           id,
           domain: opts.domain,
@@ -92,7 +99,8 @@ function register({ group, leaf, act }) {
           unsubscribed: opts.unsubscribed ? true : opts.subscribed ? false : undefined,
           properties: parseJson(opts.properties, '--properties'),
         }),
-      ),
+      );
+    },
   );
 
   act(

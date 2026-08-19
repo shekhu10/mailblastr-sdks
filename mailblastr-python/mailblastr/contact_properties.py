@@ -7,9 +7,9 @@ from .http_client import paginate, path_escape as _e
 
 
 class CreateParams(TypedDict, total=False):
-    key: str  # canonical merge-tag key (`name` is accepted as an alias)
+    key: str  # REQUIRED: canonical merge-tag key (`name` is accepted as an alias)
     name: str  # alias for `key`
-    type: str  # required: 'string' | 'number'
+    type: str  # 'string' (default) | 'number' — immutable once created
     fallback_value: Union[str, int, float]
 
 

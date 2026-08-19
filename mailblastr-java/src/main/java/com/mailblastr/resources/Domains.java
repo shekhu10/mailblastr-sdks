@@ -27,10 +27,11 @@ public final class Domains extends Resource {
     }
 
     /**
-     * List domains. With no pagination params the route returns ALL of them
-     * and {@code has_more:false}. Rows still awaiting a DNS-TXT ownership
-     * claim ({@code status: "claim"}) are excluded — reach those through
-     * {@link #getClaim(String)}. {@code GET /domains}
+     * List domains. With no pagination params the route skips paging and
+     * answers with all of them — capped at <strong>1,000</strong> rows, with
+     * {@code has_more} true if that ceiling bites. Rows still awaiting a
+     * DNS-TXT ownership claim ({@code status: "claim"}) are excluded — reach
+     * those through {@link #getClaim(String)}. {@code GET /domains}
      */
     public MailblastrResponse list() { return list(null); }
 

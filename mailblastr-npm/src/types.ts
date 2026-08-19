@@ -176,6 +176,30 @@ export interface SendEmailOptions {
  */
 export type BatchEmailOptions = Omit<SendEmailOptions, 'attachments' | 'scheduled_at'>;
 export interface CreateEmailResponse { id: string }
+
+/**
+ * The answer to a batch send (POST /emails/batch). The API serves a batch one
+ * of two ways, chosen by its SIZE alone — and both are success, so branch on
+ * `queued`, not on the absence of `error`:
+ *
+ * - **1–40 emails** are sent while the request is open → `200`, `queued` absent.
+ *   Every id in `data` has already been handed to the mail service.
+ * - **41–100 emails** are accepted, written as due-now sends and delivered in
+ *   the background → `202`, `queued: true`, `queued_count` = `data.length`.
+ *   The ids are real email ids from that moment (`mb.emails.get(id)` works),
+ *   but they start at `scheduled` and nothing has been transmitted yet.
+ *
+ * A caller that only reads `data` needs no change; a caller that must know
+ * whether the mail is already out has to read `queued`.
+ */
+export interface BatchSendResponse {
+  /** One `{ id }` per email, in request order. */
+  data: CreateEmailResponse[];
+  /** `true` only on a queued (202) batch. ABSENT on an inline 200 — never `false`. */
+  queued?: boolean;
+  /** How many emails were queued. Always equals `data.length`. Present only with `queued`. */
+  queued_count?: number;
+}
 export interface EmailEvent { type: string; created_at: string }
 export interface Email {
   object: 'email';
@@ -526,7 +550,11 @@ export interface Campaign {
   text?: string | null;
   reply_to?: string | null;
   preview_text?: string | null;
-  /** `draft`, `queued`, `scheduled`, `recurring`, `paused`, `sent`, `failed`. */
+  /**
+   * `draft`, `scheduled`, `recurring`, `queued`, `paused`, `canceled`, `sent`
+   * or `failed`. `queued` is the in-flight fan-out. `canceled` is terminal — a
+   * `queued` campaign that was stopped part-way; it cannot be re-sent.
+   */
   status: string;
   scheduled_at: string | null;
   sent_at: string | null;
@@ -554,8 +582,13 @@ export interface Campaign {
   recurrence?: { interval: CampaignRecurrence; every: number } | null;
   /** Set on auto-generated occurrences of a recurring campaign. */
   parent_campaign_id?: string | null;
-  /** Engagement counts — included only on GET /campaigns/:id (retrieve). */
-  statistics?: Omit<CampaignStats, 'object' | 'campaign_id'>;
+  /**
+   * Engagement counts — included only on GET /campaigns/:id (retrieve).
+   *
+   * Counts and `rates` only: the embedded block does NOT carry `links`. Call
+   * `mb.campaigns.stats(id)` for the per-link click breakdown.
+   */
+  statistics?: CampaignStatistics;
 }
 
 /** The A/B block as READ back from the API (`{ enabled: false }` when off). */
@@ -583,6 +616,7 @@ export interface CampaignListItem {
   subject: string | null;
   audience_id: string;
   segment_id: string | null;
+  /** Same vocabulary as {@link Campaign.status}. */
   status: string;
   ab_test: CampaignAbState;
   created_at: string | null;
@@ -741,10 +775,12 @@ export interface UpdateCampaignOptions {
   /** Max recipients fanned out per batch-day (1-100000; pass null to clear). */
   daily_batch_size?: number | null;
 }
-/** Per-campaign analytics returned by GET /campaigns/:id/stats. */
-export interface CampaignStats {
-  object: 'campaign_stats';
-  campaign_id: string;
+/**
+ * The counts-and-rates core of a campaign's analytics. This is exactly what
+ * `Campaign.statistics` carries on GET /campaigns/:id — note there is no
+ * `links` there; only GET /campaigns/:id/stats computes the link breakdown.
+ */
+export interface CampaignStatistics {
   total: number;
   delivered: number;
   opened: number;
@@ -754,7 +790,13 @@ export interface CampaignStats {
   complained: number;
   /** Percentages. Open/click/reply are over `delivered`, falling back to `total`. */
   rates: { delivery: number; open: number; click: number; reply: number; bounce: number; complaint: number };
-  /** Top 50 links by clicks, then url ascending. */
+}
+
+/** Per-campaign analytics returned by GET /campaigns/:id/stats. */
+export interface CampaignStats extends CampaignStatistics {
+  object: 'campaign_stats';
+  campaign_id: string;
+  /** Top 50 links by clicks, then url ascending. Only this endpoint returns it. */
   links: Array<{ url: string; clicks: number }>;
 }
 
@@ -779,18 +821,27 @@ export interface CampaignEngagement {
 /**
  * A/B winner evaluation returned by GET /campaigns/:id/ab. Note `zScore` and
  * `pValue` are camelCase on the wire — that is deliberate, not a typo.
+ *
+ * CAUTION on units: `rate` and `lift` here are FRACTIONS (`0.25` = 25%), unlike
+ * {@link CampaignStats.rates}, which are already percentages (`25` = 25%).
+ * Multiply these by 100 for display; do not multiply those.
  */
 export interface CampaignAbResult {
   object: 'campaign_ab';
   campaign_id: string;
   metric: 'open' | 'click' | 'reply';
+  /** `rate` = conversions / sent, as a fraction (0-1). */
   a: { variant: 'A'; sent: number; conversions: number; rate: number };
+  /** `rate` = conversions / sent, as a fraction (0-1). */
   b: { variant: 'B'; sent: number; conversions: number; rate: number };
   winner: 'A' | 'B';
   /** True when a variant had zero sends or the rates tied (winner defaults to A). */
   fallback: boolean;
+  /** Relative lift of the winner over the loser, as a fraction (`0.25` = +25%). */
   lift: number;
+  /** Signed toward the winner; `0` when undefined (zero sample or zero variance). */
   zScore: number;
+  /** One-sided; `1` when undefined. */
   pValue: number;
   /** Forced to `low` when either arm has fewer than 20 sends. */
   confidence: 'low' | 'medium' | 'high';
@@ -1033,7 +1084,23 @@ export interface AttachmentMeta {
 
 // ---- Inbound / received emails ----
 // Matches the backend received-email output (src/services/inbound.ts).
+/**
+ * One inbound attachment. The API serves this in two places whose fields differ
+ * slightly, so a few are optional here:
+ *
+ * - embedded in {@link ReceivedEmail.attachments} — no `object`, but carries the
+ *   relative `url` alias.
+ * - as a row of `mb.emails.receiving.listAttachments()` — always carries
+ *   `object: 'attachment'` and an `id`, and no `url`.
+ *
+ * `download_url` is present only when the bytes were actually persisted
+ * (`downloadable: true`); fetch them with
+ * `mb.emails.receiving.getAttachment(emailId, attachmentId)`.
+ */
 export interface ReceivedAttachment {
+  /** `'attachment'` on `listAttachments()` rows; absent on embedded attachments. */
+  object?: 'attachment';
+  /** Always set on rows written by the current ingest; absent only on legacy embedded rows. */
   id?: string;
   filename: string | null;
   content_type: string | null;
@@ -1043,7 +1110,7 @@ export interface ReceivedAttachment {
   downloadable: boolean;
   download_url?: string;
   expires_at?: string;
-  /** Backward-compatible relative-path alias. */
+  /** Backward-compatible relative-path alias. Embedded attachments only. */
   url?: string;
 }
 export interface ReceivedEmail {
@@ -1051,6 +1118,13 @@ export interface ReceivedEmail {
   id: string;
   from: string;
   to: string[];
+  /**
+   * The RECEIVING domain this message arrived via — the inbound counterpart of
+   * {@link Email.domain_id}. Always sent (`null` on legacy rows); optional here
+   * only so existing fixtures keep compiling. Read it to attribute inbound mail
+   * when the account receives on more than one domain.
+   */
+  domain_id?: string | null;
   cc?: string[];
   bcc?: string[];
   received_for?: string[];

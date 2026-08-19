@@ -20,8 +20,9 @@ public final class ApiKeys extends Resource {
     public ApiKeys(ApiClient api) { super(api); }
 
     /**
-     * List non-revoked keys. With no pagination params the route returns ALL
-     * of them and {@code has_more:false}. {@code GET /api-keys}
+     * List non-revoked keys. With no pagination params the route skips paging
+     * and answers with all of them — capped at <strong>1,000</strong> rows,
+     * with {@code has_more} true if that ceiling bites. {@code GET /api-keys}
      */
     public MailblastrResponse list() { return list(null); }
 

@@ -26,8 +26,10 @@ module Mailblastr
       end
 
       # Preview the contacts a segment currently resolves to (filter matches
-      # plus explicit memberships). With no pagination params every contact is
-      # returned. GET /segments/:id/contacts
+      # plus explicit memberships). With no pagination params the response is
+      # capped at 1,000 contacts and sets `has_more` — a segment can hold far
+      # more than that, so page with `limit` + `after` to read all of it.
+      # GET /segments/:id/contacts
       def contacts(segment_id, params = {})
         Client.request(
           :get,

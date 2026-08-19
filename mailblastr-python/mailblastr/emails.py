@@ -146,8 +146,9 @@ class Emails:
             """List a received email's attachments.
             GET /emails/receiving/:id/attachments
 
-            With no ``limit`` and no ``after`` cursor every attachment is
-            returned; supplying either applies normal paging."""
+            With no ``limit`` and no ``after`` cursor this returns up to 1,000
+            attachments, with ``has_more`` set when that cap bites; supplying
+            either applies normal paging."""
             return http_client.request(
                 "GET", f"/emails/receiving/{_e(email_id)}/attachments{paginate(params)}"
             )
@@ -203,9 +204,15 @@ class Emails:
 
         Batch items reject ``attachments`` and ``scheduled_at`` — send those
         individually via :meth:`send`. ``options={"idempotency_key": "..."}``
-        is honoured here too (same 1-255 rule as :meth:`send`); with a key set, a failure part
-        way through reports the emails that already went out on the raised
-        error's ``sent`` / ``sent_count``."""
+        is honoured here too (same 1-255 rule as :meth:`send`).
+
+        A failure PART WAY THROUGH always names the emails that already went out
+        on the raised error's ``sent`` / ``sent_count`` — with or without a key.
+        Always read them before resending, or you re-deliver that prefix. The key
+        changes only the STATUS: with one the partial answer is recorded and
+        returned as its canonical 429/503, so this SDK's automatic retry replays
+        it and sends nothing; without one the same name and body come back as a
+        422, precisely so the retry cannot re-run the batch."""
         return http_client.request("POST", "/emails/batch", params, options)
 
     @classmethod

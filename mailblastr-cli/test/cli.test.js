@@ -43,22 +43,29 @@ function makeMockClient(response = { data: { id: 'obj_1', ok: true }, error: nul
 }
 
 /** Run the CLI against a mocked client; returns calls, output, exit code. */
-async function runCli(argv, { response, env, clientFactory } = {}) {
+async function runCli(argv, { response, env, clientFactory, verifyResult } = {}) {
   const mock = makeMockClient(response);
   let out = '';
   let err = '';
   const created = [];
+  // `webhooks verify` is local-only: it goes through ctx.verifyWebhook and must
+  // never touch createClient, so record its arguments separately.
+  const verifyCalls = [];
   const ctx = createContext({
     createClient: clientFactory || ((apiKey, options) => {
       created.push({ apiKey, options });
       return mock.client;
     }),
+    verifyWebhook: (...args) => {
+      verifyCalls.push(args);
+      return verifyResult !== undefined ? verifyResult : { valid: true };
+    },
     stdout: (s) => { out += s; },
     stderr: (s) => { err += s; },
     env: env !== undefined ? env : { MAILBLASTR_API_KEY: 'mb_test_key' },
   });
   const exitCode = await run(ctx, argv);
-  return { calls: mock.calls, out, err, exitCode, created };
+  return { calls: mock.calls, out, err, exitCode, created, verifyCalls };
 }
 
 function lastCall(r) {
@@ -454,22 +461,60 @@ test('contacts import reads --csv and maps to contacts.import with strict flag (
 });
 
 test('webhooks verify computes a local signature check (SDK-4)', async () => {
-  const call = lastCall(await runCli([
+  const r = await runCli([
     'webhooks', 'verify',
     '--secret', 'whsec_test',
     '--payload', '{"type":"email.delivered"}',
     '--svix-id', 'msg_1', '--svix-timestamp', '1700000000', '--svix-signature', 'v1,abc',
     '--tolerance', '0',
-  ]));
-  assert.deepEqual([call.resource, call.method], ['webhooks', 'verify']);
-  assert.equal(call.args[0], '{"type":"email.delivered"}');
-  assert.deepEqual(call.args[1], { 'svix-id': 'msg_1', 'svix-timestamp': '1700000000', 'svix-signature': 'v1,abc' });
-  assert.equal(call.args[2], 'whsec_test');
-  assert.deepEqual(call.args[3], { toleranceSec: 0 });
+  ]);
+  assert.equal(r.exitCode, 0, r.err);
+  assert.equal(r.calls.length, 0, 'verify must not issue an SDK call');
+  assert.equal(r.verifyCalls.length, 1);
+  const [payload, headers, secret, options] = r.verifyCalls[0];
+  assert.equal(payload, '{"type":"email.delivered"}');
+  assert.deepEqual(headers, { 'svix-id': 'msg_1', 'svix-timestamp': '1700000000', 'svix-signature': 'v1,abc' });
+  assert.equal(secret, 'whsec_test');
+  assert.deepEqual(options, { toleranceSec: 0 });
 
   const bad = await runCli(['webhooks', 'verify', '--secret', 's', '--svix-id', 'm', '--svix-timestamp', 't', '--svix-signature', 'x']);
   assert.equal(bad.exitCode, 1);
   assert.match(bad.err, /--payload .* or --payload-file/);
+});
+
+test('webhooks verify needs no API key — it makes no request', async () => {
+  // The whole point of the command is running inside a webhook RECEIVER, which
+  // has no reason to hold a send-capable MailBlastr key.
+  const r = await runCli([
+    'webhooks', 'verify', '--secret', 'whsec_test', '--payload', '{}',
+    '--svix-id', 'msg_1', '--svix-timestamp', '1700000000', '--svix-signature', 'v1,abc',
+  ], { env: {} });
+  assert.equal(r.exitCode, 0, r.err);
+  assert.deepEqual(r.created, [], 'no client may be constructed');
+  assert.equal(r.verifyCalls.length, 1);
+  // No --tolerance → the SDK default (300s) applies; nothing is forced.
+  assert.deepEqual(r.verifyCalls[0][3], {});
+  assert.deepEqual(JSON.parse(r.out), { valid: true });
+});
+
+test('webhooks verify rejects a non-numeric --tolerance instead of skipping the freshness check', async () => {
+  // Number('5m') is NaN and the SDK gate is `toleranceSec > 0`, so a coerced
+  // NaN silently disabled the replay window and called a stale delivery valid.
+  const bad = await runCli([
+    'webhooks', 'verify', '--secret', 'whsec_test', '--payload', '{}',
+    '--svix-id', 'msg_1', '--svix-timestamp', '1700000000', '--svix-signature', 'v1,abc',
+    '--tolerance', '5m',
+  ]);
+  assert.equal(bad.exitCode, 1);
+  assert.match(bad.err, /--tolerance must be an integer/);
+
+  const negative = await runCli([
+    'webhooks', 'verify', '--secret', 'whsec_test', '--payload', '{}',
+    '--svix-id', 'msg_1', '--svix-timestamp', '1700000000', '--svix-signature', 'v1,abc',
+    '--tolerance', '-1',
+  ]);
+  assert.equal(negative.exitCode, 1);
+  assert.match(negative.err, /--tolerance must be 0 or greater/);
 });
 
 // ---- contact properties ----
@@ -594,6 +639,30 @@ test('templates create and publish', async () => {
   assert.deepEqual([call.method, call.args], ['publish', ['tmpl_1']]);
 });
 
+test('templates create / update carry the declared-variable registry', async () => {
+  // `variables` is a supported create/update field (it holds each variable's
+  // type and fallback, which the send path prefers when a caller omits it), and
+  // the CLI had no way to set it at all.
+  let call = lastCall(await runCli([
+    'templates', 'create', '--name', 'Welcome', '--html', '<p>Hi {{first_name}}</p>',
+    '--variables', '[{"key":"first_name","type":"string","fallback_value":"there"}]',
+  ]));
+  assert.deepEqual(call.args[0], {
+    name: 'Welcome',
+    html: '<p>Hi {{first_name}}</p>',
+    variables: [{ key: 'first_name', type: 'string', fallback_value: 'there' }],
+  });
+
+  // An empty array is meaningful: it clears the registry.
+  call = lastCall(await runCli(['templates', 'update', 'tmpl_1', '--variables', '[]']));
+  assert.deepEqual([call.method, call.args], ['update', ['tmpl_1', { variables: [] }]]);
+
+  const bad = await runCli(['templates', 'create', '--name', 'Welcome', '--variables', '{oops']);
+  assert.equal(bad.exitCode, 1);
+  assert.match(bad.err, /Invalid JSON for --variables/);
+  assert.equal(bad.calls.length, 0);
+});
+
 test('automations create / add-step / runs / stop', async () => {
   let call = lastCall(
     await runCli(['automations', 'create', '--name', 'Welcome series', '--domain', 'yourdomain.com', '--trigger', 'contact.created']),
@@ -702,6 +771,18 @@ test('output is pretty by default and raw with --json', async () => {
 
   r = await runCli(['emails', 'get', 'em_1', '--json'], { response: { data, error: null } });
   assert.equal(r.out, `${JSON.stringify(data)}\n`);
+});
+
+test('--json applies to the error stream too', async () => {
+  const error = { statusCode: 422, name: 'validation_error', message: 'domain is required' };
+  let r = await runCli(['emails', 'get', 'em_1', '--json'], { response: { data: null, error } });
+  assert.equal(r.exitCode, 1);
+  assert.equal(r.err, `${JSON.stringify(error)}\n`);
+
+  // A local usage error is the same envelope, honouring the same flag.
+  r = await runCli(['emails', 'get', 'em_1', '--json'], { env: {} });
+  assert.equal(r.exitCode, 1);
+  assert.equal(r.err, `${JSON.stringify({ statusCode: null, name: 'cli_error', message: 'Missing API key. Set the MAILBLASTR_API_KEY environment variable or pass --api-key.' })}\n`);
 });
 
 test('invalid JSON flag fails cleanly without calling the SDK', async () => {
@@ -833,6 +914,19 @@ test('domains add / update map the receiving capability and return-path flags', 
   assert.deepEqual(call.args, ['dom_1', { tls: 'enforced' }]);
 });
 
+test('contacts update refuses contradictory consent flags', async () => {
+  const r = await runCli(['contacts', 'update', 'a@b.com', '--unsubscribed', '--subscribed']);
+  assert.equal(r.exitCode, 1);
+  assert.match(r.err, /only one of --unsubscribed or --subscribed/);
+  assert.equal(r.calls.length, 0);
+
+  let call = lastCall(await runCli(['contacts', 'update', 'a@b.com', '--subscribed']));
+  assert.deepEqual(call.args, [{ id: 'a@b.com', unsubscribed: false }]);
+
+  call = lastCall(await runCli(['contacts', 'update', 'a@b.com', '--unsubscribed']));
+  assert.deepEqual(call.args, [{ id: 'a@b.com', unsubscribed: true }]);
+});
+
 test('contacts create / list accept --audience-id as an alternative to --domain', async () => {
   let call = lastCall(await runCli(['contacts', 'create', '--audience-id', 'aud_1', '--email', 'a@b.com']));
   assert.deepEqual(call.args[0], { audienceId: 'aud_1', email: 'a@b.com' });
@@ -903,12 +997,35 @@ test('campaigns update can re-target the domain and replace follow-ups', async (
   ]);
 });
 
-test('automations update-step maps to updateStep', async () => {
+test('automations update-step maps to updateStep and requires --type', async () => {
   const call = lastCall(
-    await runCli(['automations', 'update-step', 'auto_1', 'step_2', '--config', '{"timeout":"12 hours"}']),
+    await runCli([
+      'automations', 'update-step', 'auto_1', 'step_2',
+      '--type', 'wait_for_event',
+      '--config', '{"event":"email.opened","timeout":"12 hours"}',
+    ]),
   );
   assert.deepEqual([call.resource, call.method], ['automations', 'updateStep']);
-  assert.deepEqual(call.args, ['auto_1', 'step_2', { config: { timeout: '12 hours' } }]);
+  assert.deepEqual(call.args, [
+    'auto_1', 'step_2',
+    { type: 'wait_for_event', config: { event: 'email.opened', timeout: '12 hours' } },
+  ]);
+
+  // PATCH re-validates the whole step, so a body without `type` is a guaranteed
+  // 422 (`type must be one of: …`). Fail locally instead of round-tripping.
+  const noType = await runCli(['automations', 'update-step', 'auto_1', 'step_2', '--config', '{"event":"email.opened"}']);
+  assert.equal(noType.exitCode, 1);
+  assert.match(noType.err, /--type/);
+  assert.equal(noType.calls.length, 0);
+
+  // A step's graph key is immutable server-side; the flag only ever misled.
+  const withKey = await runCli([
+    'automations', 'update-step', 'auto_1', 'step_2', '--type', 'delay',
+    '--config', '{"duration":"1 day"}', '--key', 'renamed',
+  ]);
+  assert.equal(withKey.exitCode, 1);
+  assert.match(withKey.err, /unknown option/);
+  assert.equal(withKey.calls.length, 0);
 });
 
 test('events update patches or clears the schema (the name is immutable)', async () => {

@@ -42,7 +42,7 @@ One endpoint reports failure inside a `200` body rather than as an error: `webho
 
 List commands take `--limit` (integer `1`–`100`, default `20`) plus one of `--after` / `--before` — cursors are item ids, and passing both is rejected. Responses are `{ "object": "list", "has_more": bool, "data": [...] }`; page forward by feeding the last `data[].id` back as `--after`.
 
-Two default page sizes exist. `domains list`, `api-keys list`, `topics list`, `contacts list`, `contacts segments`, `contacts topics`, `segments list`, `segments contacts`, `campaigns list`, `contact-properties list`, `polls list` and `emails receiving attachments` skip the default `20` when you pass no pagination flag — but they do **not** return the whole collection: the response is capped at **1,000** rows, and `has_more` is `true` when that cap truncated it, so keep paging with `--after`. Everything else caps at 20 unless you raise `--limit`: `emails list`, `emails receiving list`, `templates list`, `webhooks list`, `audiences list`, `automations list`, `automations runs`, `events list` and `logs list`.
+Two default page sizes exist. `domains list`, `api-keys list`, `topics list`, `contacts list`, `contacts segments`, `contacts topics`, `segments list`, `segments contacts`, `campaigns list`, `contact-properties list`, `polls list`, `emails receiving list` and `emails receiving attachments` skip the default `20` when you pass no pagination flag — but they do **not** return the whole collection: the response is capped at **1,000** rows, and `has_more` is `true` when that cap truncated it, so keep paging with `--after`. Everything else caps at 20 unless you raise `--limit`: `emails list`, `templates list`, `webhooks list`, `audiences list`, `automations list`, `automations runs`, `events list` and `logs list`.
 
 A few endpoints are deliberately unpaginated and take no cursor flags — `emails sources`, `emails attachments`, `emails receiving addresses` and `campaigns engagement` (whose three lists are each capped at 500 rows server-side).
 
@@ -223,16 +223,26 @@ mailblastr templates create --name Welcome --subject 'Hi {{first_name}}' --html 
 mailblastr templates list
 mailblastr templates duplicate tmpl_123 --name 'Welcome v2'
 mailblastr templates publish tmpl_123
+
+# Declare the variables the template uses, with their types and fallbacks
+mailblastr templates update tmpl_123 \
+  --variables '[{"key":"first_name","type":"string","fallback_value":"there"},{"key":"seats","type":"number","fallback_value":1}]'
 ```
+
+`--variables` is the template's declared-variable registry, not the per-send values: a JSON array of `{"key","type"?,"fallback_value"?}` (max 50 entries; `type` is `string` or `number`, and a `number` fallback must parse as a number). A send prefers a declared fallback when the caller omits that variable, so a template with no registry has no fallbacks. Pass `[]` to clear it. Edits land on the draft — `templates publish` makes them live.
 
 ### Automations & events
 
 ```bash
 mailblastr automations create --name 'Welcome series' --domain yourdomain.com --trigger contact.created
 mailblastr automations add-step auto_123 --type send_email --config '{"template_id":"tmpl_welcome"}'
-mailblastr automations update-step auto_123 step_456 --config '{"timeout":"12 hours"}'
+mailblastr automations update-step auto_123 step_456 --type wait_for_event --config '{"event":"email.opened","timeout":"12 hours"}'
 mailblastr automations delete-step auto_123 step_456
 mailblastr automations update auto_123 --status enabled
+
+# update-step replaces the step outright, so --type is required and --config is
+# the complete new config. A step's graph key is immutable — delete and re-add
+# with `add-step --key` to re-key it.
 mailblastr automations runs auto_123
 mailblastr automations runs auto_123 --status failed,skipped   # filtered before paging; repeatable
 mailblastr automations run auto_123 run_456
@@ -267,7 +277,7 @@ mailblastr polls list
 mailblastr polls get em_123
 ```
 
-`webhooks verify` is the only command that makes no HTTP request: it recomputes the delivery signature locally and prints `{ valid, reason }`. It still resolves an API key first, like every other command, so `MAILBLASTR_API_KEY` (or `--api-key`) must be set even though nothing is sent. Pass the **exact raw body bytes** your endpoint received via `--payload` or `--payload-file` — re-serialized JSON will not match. `--tolerance <seconds>` caps timestamp skew (default `300`; `0` skips the freshness check). Note the exit code is `0` whenever the check ran, whatever the verdict — branch on `.valid`, not on `$?` (unlike `webhooks test`, which exits `1` on a failed delivery).
+`webhooks verify` is the only command that makes no HTTP request: it recomputes the delivery signature locally and prints `{ valid, reason }`. It is also the only command that needs **no API key** — it never contacts the API, so a webhook receiver can run it without holding a send-capable key. Pass the **exact raw body bytes** your endpoint received via `--payload` or `--payload-file` — re-serialized JSON will not match. `--tolerance <seconds>` caps timestamp skew (default `300`; `0` skips the freshness check). Note the exit code is `0` whenever the check ran, whatever the verdict — branch on `.valid`, not on `$?` (unlike `webhooks test`, which exits `1` on a failed delivery).
 
 #### API keys are read-only from the CLI
 

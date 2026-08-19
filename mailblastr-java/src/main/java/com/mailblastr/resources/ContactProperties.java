@@ -22,8 +22,10 @@ public final class ContactProperties extends Resource {
     }
 
     /**
-     * List the registry. With no pagination params ALL properties are returned
-     * and {@code has_more:false}. {@code GET /contact-properties}
+     * List the registry. With no pagination params the route skips paging and
+     * answers with the whole registry — capped at <strong>1,000</strong> rows,
+     * with {@code has_more} true if that ceiling bites.
+     * {@code GET /contact-properties}
      */
     public MailblastrResponse list() { return list(null); }
 

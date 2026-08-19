@@ -2,6 +2,7 @@ package mailblastr
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -19,6 +20,12 @@ const (
 	MaxPreviewTextLength = 150
 	// MaxBatchEmails is the cap on emails per POST /emails/batch call.
 	MaxBatchEmails = 100
+	// BatchSyncMax is the largest batch the API sends INLINE (HTTP 200). A
+	// bigger one is enqueued for the worker instead and answered with 202 and
+	// BatchSendResponse.Queued — the ids exist, the mail has not gone out yet.
+	// The one exception is a batch carrying a @mailblastr.dev simulator
+	// recipient, which stays inline at any size.
+	BatchSyncMax = 40
 	// MaxAttachmentBytes is the decoded-size cap for a single attachment.
 	MaxAttachmentBytes = 25 * 1024 * 1024
 	// MaxAttachmentsTotalBytes is the decoded-size cap across all attachments
@@ -51,17 +58,49 @@ type TemplateRef struct {
 	Variables map[string]any `json:"variables,omitempty"`
 }
 
+// ref reports which template this reference selects: Id wins, else Alias, else
+// "" (no reference at all).
+func (t *TemplateRef) ref() string {
+	if t == nil {
+		return ""
+	}
+	if t.Id != "" {
+		return t.Id
+	}
+	return t.Alias
+}
+
+// templateRef mirrors the server's reference extraction EXACTLY: a non-nil
+// nested Template shadows TemplateId, so a Template carrying neither Id nor
+// Alias references nothing even when TemplateId is set.
+func templateRef(nested *TemplateRef, templateId string) string {
+	if nested != nil {
+		return nested.ref()
+	}
+	return templateId
+}
+
 // SendEmailRequest is the payload for POST /emails.
 //
 // There is no Tags field: the API rejects `tags` outright with a 422
 // validation_error rather than dropping it silently.
+//
+// From and Subject are required for an ordinary send, and OPTIONAL when
+// TemplateId/Template selects a published template — the template's own from /
+// reply_to / subject fill whichever you leave empty. MarshalJSON implements
+// that: it omits an empty From/Subject only when a template is referenced,
+// because the API distinguishes an absent key (fall back to the template) from
+// a key present as "" (the caller really means empty).
 type SendEmailRequest struct {
 	// From is the sender, "Name <addr@domain>" or a bare address, on one of
-	// your verified domains. Max MaxFromLength characters.
+	// your verified domains. Max MaxFromLength characters. Leave empty to use
+	// the referenced template's own from address.
 	From string `json:"from"`
 	// To holds 1..MaxRecipients recipients.
-	To      []string `json:"to"`
-	Subject string   `json:"subject"`
+	To []string `json:"to"`
+	// Subject is required unless a template is referenced, in which case an
+	// empty value falls back to the template's own subject.
+	Subject string `json:"subject"`
 	// Bcc holds at most MaxRecipients addresses.
 	Bcc []string `json:"bcc,omitempty"`
 	// Cc holds at most MaxRecipients addresses.
@@ -101,9 +140,17 @@ type SendEmailRequest struct {
 // BatchEmailRequest is a single email in a batch send (POST /emails/batch).
 // Identical to SendEmailRequest minus Attachments and ScheduledAt — the batch
 // endpoint rejects both per item; send those individually via Emails.Send.
+//
+// As with SendEmailRequest, From and Subject may be left empty when
+// TemplateId/Template selects a template; MarshalJSON then omits them so the
+// template's own values fill in.
 type BatchEmailRequest struct {
-	From    string   `json:"from"`
-	To      []string `json:"to"`
+	// From is the sender. Leave empty to use the referenced template's own
+	// from address.
+	From string   `json:"from"`
+	To   []string `json:"to"`
+	// Subject is required unless a template is referenced, in which case an
+	// empty value falls back to the template's own subject.
 	Subject string   `json:"subject"`
 	Bcc     []string `json:"bcc,omitempty"`
 	Cc      []string `json:"cc,omitempty"`
@@ -135,14 +182,60 @@ type BatchEmailRequest struct {
 	Variables map[string]any `json:"variables,omitempty"`
 }
 
+// MarshalJSON serializes the send payload, omitting an empty From/Subject when
+// (and only when) a template is referenced.
+//
+// Without this the SDK always emitted `"from":""` and `"subject":""`, which the
+// API reads as "the caller supplied these" — so a template send with no
+// explicit From was rejected (422 missing_required_field) and one with no
+// explicit Subject went out with a BLANK subject instead of the template's.
+// Non-template payloads are unaffected: both keys are still always sent, so an
+// intentionally empty subject keeps working.
+func (r SendEmailRequest) MarshalJSON() ([]byte, error) {
+	type alias SendEmailRequest // strips MarshalJSON, so no recursion
+	if templateRef(r.Template, r.TemplateId) == "" {
+		return json.Marshal(alias(r))
+	}
+	// The outer (shallower) fields win over the embedded ones for the same JSON
+	// name, so these re-tag `from`/`subject` as omitempty for this payload only.
+	return json.Marshal(struct {
+		alias
+		From    string `json:"from,omitempty"`
+		Subject string `json:"subject,omitempty"`
+	}{alias: alias(r), From: r.From, Subject: r.Subject})
+}
+
+// MarshalJSON serializes one batch item, omitting an empty From/Subject when a
+// template is referenced. See SendEmailRequest.MarshalJSON.
+func (r BatchEmailRequest) MarshalJSON() ([]byte, error) {
+	type alias BatchEmailRequest
+	if templateRef(r.Template, r.TemplateId) == "" {
+		return json.Marshal(alias(r))
+	}
+	return json.Marshal(struct {
+		alias
+		From    string `json:"from,omitempty"`
+		Subject string `json:"subject,omitempty"`
+	}{alias: alias(r), From: r.From, Subject: r.Subject})
+}
+
 // CreateEmailResponse is the { id } acknowledgement of a send.
 type CreateEmailResponse struct {
 	Id string `json:"id"`
 }
 
 // BatchSendResponse wraps the ids created by a batch send.
+//
+// A batch above BatchSyncMax is QUEUED rather than sent inline: the API answers
+// 202 with Queued true, so the ids are reserved but the mail only goes out on
+// the worker's next tick. Check Queued before treating Data as "already sent".
 type BatchSendResponse struct {
 	Data []CreateEmailResponse `json:"data"`
+	// Queued is true only on the 202 queued path (batch above BatchSyncMax).
+	// False/absent means every email in Data was sent inline.
+	Queued bool `json:"queued,omitempty"`
+	// QueuedCount is how many emails were enqueued; 0 on the inline path.
+	QueuedCount int `json:"queued_count,omitempty"`
 }
 
 // EmailEvent is one entry of a sent email's event timeline.

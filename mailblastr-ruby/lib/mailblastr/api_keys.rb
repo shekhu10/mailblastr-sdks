@@ -8,9 +8,9 @@ module Mailblastr
   # means a leaked key cannot mint itself a replacement or widen its access.
   module ApiKeys
     class << self
-      # GET /api-keys — with no pagination params every non-revoked key is
-      # returned. `token` here is the 8-character display prefix, never the
-      # secret.
+      # GET /api-keys — with no pagination params one page carries up to 1,000
+      # non-revoked keys and `has_more` reports any truncation. `token` here is
+      # the 8-character display prefix, never the secret.
       def list(params = {})
         Client.request(:get, "/api-keys", query: Client.pagination(params))
       end

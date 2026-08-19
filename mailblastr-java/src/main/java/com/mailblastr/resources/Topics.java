@@ -22,8 +22,10 @@ public final class Topics extends Resource {
     }
 
     /**
-     * List a domain's topics. With no pagination params ALL of the pool's
-     * topics are returned and {@code has_more:false}. {@code GET /topics?domain=}
+     * List a domain's topics. With no pagination params the route skips paging
+     * and answers with the whole pool — capped at <strong>1,000</strong> rows,
+     * with {@code has_more} true if that ceiling bites.
+     * {@code GET /topics?domain=}
      */
     public MailblastrResponse list(String domain) { return list(domain, null); }
 

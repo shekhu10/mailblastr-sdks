@@ -52,7 +52,12 @@ class Segments extends Resource
      * explicit memberships). GET /segments/:id/contacts
      *
      * @param array $params Optional cursor pagination (limit, after, before).
-     *                      With no params every matching contact is returned.
+     *                      With no params the preview comes back in ONE page
+     *                      rather than a 20-row one, but it is still capped at
+     *                      1000 contacts — a segment can easily resolve to
+     *                      more, so page with 'after' while 'has_more' is true
+     *                      instead of treating the first response as the whole
+     *                      segment.
      */
     public function contacts(string $id, array $params = []): array
     {

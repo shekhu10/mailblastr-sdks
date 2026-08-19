@@ -24,9 +24,13 @@ class UpdateParams(TypedDict, total=False):
     name: str
     status: str  # 'enabled' | 'disabled'
     domain: str  # re-point at another domain (disabled automations only)
+    # Re-point the trigger (disabled automations only) — same vocabulary as
+    # create. Changing it away from 'mailblastr:schedule' clears trigger_config.
+    trigger: str
+    trigger_key: str  # graph key the trigger node is addressed by (default 'trigger')
     # {'at', 'timezone'} — update the 'mailblastr:schedule' trigger's schedule.
     trigger_config: Dict[str, str]
-    connections: List[Dict[str, str]]
+    connections: List[Dict[str, str]]  # disabled automations only
 
 
 class AddStepParams(TypedDict, total=False):

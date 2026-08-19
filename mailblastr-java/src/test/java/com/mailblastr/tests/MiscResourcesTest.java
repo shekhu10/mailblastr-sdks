@@ -48,14 +48,18 @@ public final class MiscResourcesTest {
                 .name("Welcome series")
                 .domain("yourdomain.com")
                 .status("enabled")
-                .step(AutomationStep.builder().key("t1").type("trigger").config("event", "contact.created").build())
+                // A steps[0] trigger step names its event in `config.event_name`
+                // — that is the only key the API reads it from (`config.event`
+                // is silently ignored and the automation keeps the default
+                // trigger).
+                .step(AutomationStep.builder().key("t1").type("trigger").config("event_name", "contact.created").build())
                 .step(AutomationStep.builder().key("s1").type("send_email").config("template_id", "tpl_1").build())
                 .connection(AutomationConnection.of("t1", "s1", "next"))
                 .build());
         Check.eq("automation create url", "https://api.test/automations", t.lastUrl);
         Check.contains("automation domain", t.lastBody, "\"domain\":\"yourdomain.com\"");
         Check.contains("automation steps", t.lastBody,
-                "\"steps\":[{\"key\":\"t1\",\"type\":\"trigger\",\"config\":{\"event\":\"contact.created\"}},"
+                "\"steps\":[{\"key\":\"t1\",\"type\":\"trigger\",\"config\":{\"event_name\":\"contact.created\"}},"
                         + "{\"key\":\"s1\",\"type\":\"send_email\",\"config\":{\"template_id\":\"tpl_1\"}}]");
         Check.contains("automation connections", t.lastBody,
                 "\"connections\":[{\"from\":\"t1\",\"to\":\"s1\",\"type\":\"next\"}]");
@@ -71,6 +75,19 @@ public final class MiscResourcesTest {
         Check.eq("stop url", "https://api.test/automations/auto_1/stop", t.lastUrl);
         mb.automations().update("auto_1", UpdateAutomationRequest.builder().status("disabled").build());
         Check.eq("automation update body", "{\"status\":\"disabled\"}", t.lastBody);
+        // PATCH /automations/:id accepts a new `trigger` (and the `trigger_key`
+        // that connections reference) on a disabled automation.
+        mb.automations().update("auto_1", UpdateAutomationRequest.builder()
+                .trigger("signup.completed").triggerKey("start").build());
+        Check.eq("automation update trigger body",
+                "{\"trigger\":\"signup.completed\",\"trigger_key\":\"start\"}", t.lastBody);
+        mb.automations().update("auto_1", UpdateAutomationRequest.builder()
+                .trigger("mailblastr:schedule")
+                .triggerConfig("2026-09-01T13:00:00.000Z", "America/New_York").build());
+        Check.eq("automation update schedule trigger body",
+                "{\"trigger\":\"mailblastr:schedule\",\"trigger_config\":"
+                        + "{\"at\":\"2026-09-01T13:00:00.000Z\",\"timezone\":\"America/New_York\"}}",
+                t.lastBody);
 
         // --- audiences (incl. sheet import) ---
         mb.audiences().create("Newsletter");

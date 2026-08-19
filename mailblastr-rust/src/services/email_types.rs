@@ -438,9 +438,26 @@ pub struct CreateEmailResponse {
 }
 
 /// `{ data: [{ id }, …] }` returned by a batch send.
+///
+/// **A large batch is QUEUED, not sent inline.** Above 40 emails the route
+/// cannot finish inside the platform's request ceiling, so it writes the
+/// emails as `scheduled` rows due now, answers `202`, and lets the worker
+/// send them on its next tick. The ids in [`data`](Self::data) are then
+/// emails that have NOT been handed to the provider yet, and
+/// [`queued`](Self::queued) is `true` — check it before treating a batch as
+/// transmitted, and poll `emails.get(id)` for the real outcome.
+///
+/// A batch carrying a `delivered@mailblastr.dev` simulator recipient always
+/// stays inline, whatever its size.
 #[derive(Debug, Clone, Deserialize)]
 pub struct SendEmailBatchResponse {
     pub data: Vec<CreateEmailResponse>,
+    /// `true` when the batch was QUEUED for the worker (HTTP 202) instead of
+    /// sent inline (HTTP 200). `false` on every inline send.
+    #[serde(default)]
+    pub queued: bool,
+    /// How many emails were queued. `None` on the inline path.
+    pub queued_count: Option<u64>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -573,13 +590,28 @@ pub struct AttachmentMeta {
     pub expires_at: Option<String>,
 }
 
+/// Read a numeric field that the API may send as JSON `null`, as `0`.
+///
+/// `#[serde(default)]` alone covers an ABSENT key only; an explicit `null`
+/// still fails the whole response. `GET /emails/receiving/:id/attachments`
+/// serializes `size` as `size ?? null`, so a stored attachment whose metadata
+/// predates the size field would otherwise make the entire page undecodable.
+fn null_as_zero<'de, D>(deserializer: D) -> std::result::Result<u64, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    Ok(Option::<u64>::deserialize(deserializer)?.unwrap_or(0))
+}
+
 /// One attachment of a RECEIVED email.
 #[derive(Debug, Clone, Deserialize)]
 pub struct ReceivedAttachment {
     pub id: Option<String>,
     pub filename: Option<String>,
     pub content_type: Option<String>,
-    #[serde(default)]
+    /// Byte length. `0` when the API reports none (it sends `null` for stored
+    /// metadata that predates the field).
+    #[serde(default, deserialize_with = "null_as_zero")]
     pub size: u64,
     pub content_id: Option<String>,
     pub content_disposition: Option<String>,

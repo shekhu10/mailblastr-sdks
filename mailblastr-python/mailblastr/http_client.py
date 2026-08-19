@@ -2,6 +2,7 @@
 
 import email.utils
 import json
+import math
 import time
 import urllib.error
 import urllib.request
@@ -84,19 +85,36 @@ def _config():
 
 def _parse_retry_after(header):
     """Parse a Retry-After header (delta-seconds or HTTP-date) → seconds.
-    Returns None when absent/unparseable. Not capped — this is the value
+    Returns None when absent or unparseable. Not capped — this is the value
     reported on the raised error, and a quota error can legitimately ask you to
-    wait an hour."""
+    wait an hour.
+
+    Nothing in here may raise: it runs while the MailblastrError for a failed
+    response is being built, so an exception would REPLACE the API's
+    {statusCode, name, message} with an unrelated one and leave the caller with
+    nothing to branch on. RFC 9110 allows either form and a proxy may rewrite
+    the value, so an unrecognised one simply means "no advice":
+    parsedate_to_datetime RAISES on a non-date (it does not return None), and a
+    non-finite float would reach time.sleep() as nan/inf."""
     if not header:
         return None
     try:
-        return max(0.0, float(header))
+        seconds = float(header)
+        if math.isfinite(seconds):
+            return max(0.0, seconds)
+        return None
     except (TypeError, ValueError):
         pass
-    parsed = email.utils.parsedate_to_datetime(header)
-    if parsed is not None:
+    try:
+        parsed = email.utils.parsedate_to_datetime(str(header))
+    except (TypeError, ValueError, OverflowError):
+        return None
+    if parsed is None:
+        return None
+    try:
         return max(0.0, parsed.timestamp() - time.time())
-    return None
+    except (OSError, OverflowError, ValueError):
+        return None
 
 
 def _retry_after_seconds(header):

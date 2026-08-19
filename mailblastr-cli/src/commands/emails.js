@@ -146,7 +146,11 @@ function register({ group, leaf, act }) {
   );
 
   act(
-    leaf(emails, 'batch', 'Send up to 100 emails in one request')
+    leaf(
+      emails,
+      'batch',
+      'Send up to 100 emails in one request (no attachments and no scheduled_at — the API 422s on either; send those individually)',
+    )
       .option('--file <path>', 'path to a JSON file containing an array of send payloads')
       .option('--data <json>', 'inline JSON array of send payloads')
       .option('--idempotency-key <key>', IDEMPOTENCY_KEY_HELP),

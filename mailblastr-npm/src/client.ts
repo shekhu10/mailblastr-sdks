@@ -58,9 +58,10 @@ function parseBody(text: string): unknown {
  * The API's envelope is `{ statusCode, name, message }`, but some errors carry
  * additive fields — `limit` on plan/quota rejections, `reputation` on
  * reputation gates, `sent`/`sent_count` on a partial batch failure — which are
- * preserved verbatim. Two non-envelope shapes also exist (`{"error":
- * "csrf_failed"}` and `{"error":"rate_limited"}`); their `error` string is
- * lifted into `name` so callers can still branch on it.
+ * preserved verbatim. One non-envelope shape also exists: the CSRF gate answers
+ * `{"error":"csrf_failed"|"csrf_origin"}`. A Bearer request never trips it, but
+ * the `error` string is lifted into `name` anyway so any such body can still be
+ * branched on rather than collapsing to `application_error`.
  *
  * `sent_count` falls back to `sent.length` when the body names the emails that
  * went out but omits the count, so a caller deciding what NOT to resend never

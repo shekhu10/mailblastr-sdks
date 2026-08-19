@@ -13,9 +13,10 @@ module Mailblastr
         Client.request(:get, "/domains/#{Client.path_escape(domain_id)}")
       end
 
-      # GET /domains — with no pagination params every domain is returned.
-      # Rows still pending a DNS-TXT ownership claim are excluded; read those
-      # through get_claim instead.
+      # GET /domains — with no pagination params one page carries up to 1,000
+      # domains and `has_more` reports any truncation; pass `limit` and walk
+      # `after` to read past that. Rows still pending a DNS-TXT ownership claim
+      # are excluded; read those through get_claim instead.
       def list(params = {})
         Client.request(:get, "/domains", query: Client.pagination(params))
       end
@@ -79,8 +80,11 @@ module Mailblastr
 
       # Apply DNS records via the Namecheap API (existing records preserved),
       # then auto-verify. POST /domains/:id/dns/namecheap
-      # params: { api_user: "...", api_key: "...", user_name: "..." } — the
-      # camelCase spellings (apiUser/apiKey/userName) are accepted too.
+      # params: { apiUser: "...", apiKey: "...", userName: "..." } — camelCase,
+      # the same spelling every MailBlastr SDK uses. `api_user` and `api_key`
+      # are accepted aliases, and the optional username may also be spelled
+      # `username`, but there is NO `user_name` alias: the API ignores that key,
+      # so a username sent under it is silently dropped.
       def apply_namecheap_dns(domain_id, params)
         Client.request(:post, "/domains/#{Client.path_escape(domain_id)}/dns/namecheap", body: params)
       end

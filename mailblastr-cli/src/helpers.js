@@ -56,11 +56,19 @@ function clean(obj) {
 
 /**
  * Add the standard cursor-pagination flags to a list command. The API accepts
- * an integer 1-100 (default 20) and rejects `--after` together with `--before`.
+ * an integer 1-100 and rejects `--after` together with `--before`.
+ *
+ * Omitting `--limit` does NOT mean "20 everywhere" and never means "everything":
+ * lib/api/pagination.ts applies its 20 default only to the `forceLimit` list
+ * routes, while the rest fall back to UNPAGINATED_MAX (1,000) — and both set
+ * `has_more` truthfully when the page was truncated. The old help text said
+ * "default 20" flatly, which understated ~1,000-row first pages on
+ * domains/contacts/segments/topics/campaigns/polls/api-keys/contact-properties
+ * and their friends. Page with `--after` and trust `has_more`, not a number.
  */
 function withPagination(cmd) {
   return cmd
-    .option('--limit <n>', 'max results per page (integer 1-100, default 20)')
+    .option('--limit <n>', 'max results per page (integer 1-100). Omitted: the endpoint default (20 on most lists, up to 1000 on the rest) — keep paging while has_more is true')
     .option('--after <cursor>', 'cursor: the id of the last item on the previous page')
     .option('--before <cursor>', 'cursor: the id of the first item on the next page');
 }

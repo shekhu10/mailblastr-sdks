@@ -1,8 +1,10 @@
 """Tests for the real HTTP layer (urllib monkeypatched at the urlopen level):
 auth header, JSON encoding, error raising, and configuration."""
 
+import email.utils
 import io
 import json
+import time
 import unittest
 import urllib.error
 from unittest import mock
@@ -139,6 +141,9 @@ class TestHttpClient(unittest.TestCase):
         self.assertEqual(data, b"\x89PNG...")
         self.assertEqual(captured["req"].get_header("Authorization"), "Bearer mb_test_key")
         self.assertIsNone(captured["req"].get_header("Content-type"))
+        # The binary routes sit under /api/emails and /api/domains, which the
+        # User-Agent gate covers too — no UA is a 403 before authentication.
+        self.assertEqual(captured["req"].get_header("User-agent"), http_client.USER_AGENT)
 
     def test_empty_response_returns_none(self):
         with mock.patch("urllib.request.urlopen", return_value=FakeResponse(b"")):
@@ -330,6 +335,61 @@ class TestHttpClient(unittest.TestCase):
         """Whitespace-only trims to length 0 server-side — a 400, not a local
         raise. It is still transmitted so the API reports it."""
         self.assertEqual(self._capture_idempotency_header("   "), "   ")
+
+    def _error_with_retry_after(self, value, status=429):
+        """Raise `status` with this Retry-After and return the caught exception.
+        A FRESH HTTPError per attempt, like urllib produces in real life."""
+        mailblastr.max_retries = 0  # isolate error construction from the retry loop
+        self.addCleanup(setattr, mailblastr, "max_retries", None)
+        body = json.dumps(
+            {"statusCode": status, "name": "rate_limit_exceeded", "message": "slow down"}
+        ).encode("utf-8")
+
+        def fake_urlopen(req, **kwargs):
+            raise urllib.error.HTTPError(
+                "https://www.mailblastr.com/api/emails", status, "Too Many",
+                {"Retry-After": value}, io.BytesIO(body),
+            )
+
+        with mock.patch("urllib.request.urlopen", side_effect=fake_urlopen):
+            with mock.patch("time.sleep"):
+                with self.assertRaises(MailblastrError) as ctx:
+                    http_client.request("POST", "/emails", {"x": 1})
+        return ctx.exception
+
+    def test_unparseable_retry_after_keeps_the_error_envelope(self):
+        """A Retry-After the SDK cannot read costs the caller that HINT ONLY —
+        never the error itself. `parsedate_to_datetime` RAISES on a non-date
+        (Python 3.10+); unguarded, that ValueError replaced the API's
+        {statusCode, name, message} while it was being constructed, so
+        `except MailblastrError` never fired and there was no `name` to branch
+        on. RFC 9110 permits either form and a proxy may rewrite the value."""
+        for value in ("soon", "", "0x10", "Tue, 99 Xxx 9999"):
+            e = self._error_with_retry_after(value)
+            self.assertEqual(e.name, "rate_limit_exceeded", value)
+            self.assertEqual(e.status_code, 429, value)
+            self.assertIsNone(e.retry_after, value)
+            self.assertIsNone(http_client._retry_after_seconds(value), value)
+
+    def test_non_finite_retry_after_is_ignored(self):
+        """float('nan') / float('inf') parse fine and then reach time.sleep(),
+        which raises on nan and never returns on inf."""
+        for value in ("nan", "inf", "-inf"):
+            e = self._error_with_retry_after(value)
+            self.assertEqual(e.name, "rate_limit_exceeded", value)
+            self.assertIsNone(e.retry_after, value)
+            self.assertIsNone(http_client._retry_after_seconds(value), value)
+
+    def test_http_date_retry_after_is_honoured(self):
+        """The other RFC 9110 form still works — a date in the past is 0, not
+        negative, so it can be handed to sleep() unchecked."""
+        self.assertEqual(
+            self._error_with_retry_after("Wed, 21 Oct 2015 07:28:00 GMT").retry_after, 0.0
+        )
+        future = email.utils.formatdate(time.time() + 120, usegmt=True)
+        self.assertAlmostEqual(
+            self._error_with_retry_after(future).retry_after, 120.0, delta=5.0
+        )
 
     def test_422_is_not_retried(self):
         mailblastr.max_retries = 2

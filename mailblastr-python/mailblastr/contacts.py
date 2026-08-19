@@ -220,8 +220,9 @@ class Contacts:
     def list_segments(cls, contact_id, params=None):
         """List the segments a contact belongs to (``id``/``name``/
         ``created_at`` only, not full segment objects). Called with no
-        pagination params every segment is returned.
-        GET /contacts/:id/segments"""
+        pagination params this returns up to 1,000 segments in one response,
+        with ``has_more`` set when that cap bites — pass ``limit`` for normal
+        1-100 paging. GET /contacts/:id/segments"""
         return http_client.request(
             "GET", f"/contacts/{_e(contact_id)}/segments{paginate(params)}"
         )
@@ -229,7 +230,8 @@ class Contacts:
     @classmethod
     def get_topics(cls, contact_id, params=None):
         """Get a contact's topic subscriptions. Called with no pagination
-        params every topic is returned. GET /contacts/:id/topics"""
+        params this returns up to 1,000 topics in one response, with
+        ``has_more`` set when that cap bites. GET /contacts/:id/topics"""
         return http_client.request(
             "GET", f"/contacts/{_e(contact_id)}/topics{paginate(params)}"
         )

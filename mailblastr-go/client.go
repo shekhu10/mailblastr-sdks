@@ -6,10 +6,15 @@
 //	client := mailblastr.NewClient("mb_xxxxxxxxx")
 //	sent, err := client.Emails.Send(&mailblastr.SendEmailRequest{
 //		From:    "Acme <hello@yourdomain.com>",
-//		To:      []string{"user@example.com"},
+//		To:      []string{"delivered@mailblastr.dev"},
 //		Subject: "Hello from MailBlastr",
 //		Html:    "<p>Your first email</p>",
 //	})
+//
+// delivered@mailblastr.dev is the simulator address for an IMMEDIATE send — it
+// exercises the whole path without delivering anything. Reserved documentation
+// domains (example.com/.net/.org, .test, .invalid) are rejected with a 422
+// reserved_recipient, so swap in a real recipient for a real send.
 //
 // Every method has a context-aware variant (e.g. SendWithContext). Non-2xx
 // API responses are returned as a *MailblastrError.
@@ -373,7 +378,9 @@ type Client struct {
 
 	// Timeout bounds every HTTP request (JSON and raw/binary paths alike),
 	// applied per attempt via a request context. Default DefaultTimeout (30s).
-	// A value of 0 disables the timeout.
+	// A value of 0 drops that per-attempt deadline — note that NewClient also
+	// sets HTTPClient.Timeout to DefaultTimeout, so clear that too (or supply
+	// your own HTTPClient) to run genuinely unbounded requests.
 	Timeout time.Duration
 	// MaxRetries is how many times a 429 or 503 response is retried before the
 	// error is returned. Default DefaultMaxRetries (2); 0 disables retries.

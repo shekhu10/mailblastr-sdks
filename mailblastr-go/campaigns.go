@@ -322,6 +322,12 @@ type CampaignAbResult struct {
 	Confidence string `json:"confidence,omitempty"`
 	// Reason is a human-readable explanation of the decision.
 	Reason string `json:"reason,omitempty"`
+
+	// Status is always empty: this endpoint returns only the evaluation, never
+	// a status. The A/B run's status lives on the campaign itself, as
+	// Campaign.AbTest.Status (GET /campaigns/:id).
+	//
+	// Deprecated: read Campaign.AbTest.Status instead.
 	Status string `json:"status,omitempty"`
 }
 

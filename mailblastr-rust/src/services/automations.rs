@@ -474,34 +474,43 @@ impl AddAutomationStepOptions {
 }
 
 /// Options for `automations.update_step`
-/// (`PATCH /automations/:id/steps/:step_id`). Every field is optional.
-#[derive(Debug, Clone, Default, Serialize)]
+/// (`PATCH /automations/:id/steps/:step_id`).
+///
+/// `type` is REQUIRED — the route runs the same validator as `add_step`, which
+/// rejects a body without one as `422 validation_error` ("type must be one
+/// of: …"). A step is therefore replaced type-and-config together, never
+/// config alone: always resend the step's current type, even when only
+/// `config` is changing.
+///
+/// The graph `key` and `position` are NOT updatable here: the route forwards
+/// only `type` and `config` to storage, deliberately, so connections that
+/// reference the step keep working. Delete and re-add the step to change its
+/// key.
+#[derive(Debug, Clone, Serialize)]
 pub struct UpdateAutomationStepOptions {
-    #[serde(rename = "type", skip_serializing_if = "Option::is_none")]
-    pub step_type: Option<String>,
+    #[serde(rename = "type")]
+    pub step_type: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub config: Option<Value>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub key: Option<String>,
 }
 
 impl UpdateAutomationStepOptions {
-    pub fn new() -> Self {
-        Self::default()
+    /// `step_type` is the type the step should have AFTER the update — resend
+    /// its current type when you are only changing `config`.
+    pub fn new(step_type: impl Into<String>) -> Self {
+        Self {
+            step_type: step_type.into(),
+            config: None,
+        }
     }
 
     pub fn with_type(mut self, step_type: impl Into<String>) -> Self {
-        self.step_type = Some(step_type.into());
+        self.step_type = step_type.into();
         self
     }
 
     pub fn with_config(mut self, config: Value) -> Self {
         self.config = Some(config);
-        self
-    }
-
-    pub fn with_key(mut self, key: impl Into<String>) -> Self {
-        self.key = Some(key.into());
         self
     }
 }
@@ -626,8 +635,10 @@ impl AutomationsSvc {
             .await
     }
 
-    /// Update a step's type/config/key; returns the updated step. The
-    /// automation must be disabled.
+    /// Update a step's type and config; returns the updated step. The
+    /// automation must be disabled, and `type` is required even when only the
+    /// config changes (see [`UpdateAutomationStepOptions`]). The step's graph
+    /// key and position are stable and cannot be changed here.
     /// `PATCH /automations/:id/steps/:step_id`
     pub async fn update_step(
         &self,

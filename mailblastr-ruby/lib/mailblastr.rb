@@ -25,11 +25,16 @@ require "mailblastr/polls"
 #
 #   sent = Mailblastr::Emails.send({
 #     from: "Acme <hello@yourdomain.com>",
-#     to: ["user@example.com"],
+#     to: ["delivered@mailblastr.dev"],
 #     subject: "Hello from MailBlastr",
 #     html: "<p>Your first email</p>"
 #   })
 #   sent["id"] # => "..."
+#
+# `delivered@mailblastr.dev` is the mailbox simulator: the send is accepted and
+# produces a real email object without reaching a provider. Swap in a real
+# recipient when you go live — an address on a reserved documentation domain
+# (example.com, .test, .invalid) is refused with 422 `reserved_recipient`.
 module Mailblastr
   DEFAULT_BASE_URL = "https://www.mailblastr.com/api"
 

@@ -38,6 +38,24 @@ $result = WebhookSignature::verify($payload, [
 ], 'plain-secret');
 check_same('webhook.verify: raw secret', ['valid' => true], $result);
 
+// A caller-supplied `whsec_` secret whose suffix is not valid STANDARD base64
+// still has to verify: the server derives its signing key with Node's lenient
+// Buffer.from(suffix, 'base64'), which skips characters outside the alphabet and
+// accepts the URL-safe one. Decoding strictly here fell back to the raw secret as
+// the key and rejected every genuine delivery as no_match.
+$looseSuffix = 'top-secret key!';
+$looseSecret = 'whsec_' . $looseSuffix;
+// What the server signs with: URL-safe chars folded in, everything else dropped.
+$serverKey = base64_decode(strtr($looseSuffix, '-_', '+/'), false);
+check('webhook.verify: lenient secret decodes to a non-empty key', $serverKey !== '');
+$looseSig = base64_encode(hash_hmac('sha256', $id . '.' . $timestamp . '.' . $payload, $serverKey, true));
+$result = WebhookSignature::verify($payload, [
+    'svix-id' => $id,
+    'svix-timestamp' => $timestamp,
+    'svix-signature' => 'v1,' . $looseSig,
+], $looseSecret);
+check_same('webhook.verify: non-strict whsec_ suffix matches the server key', ['valid' => true], $result);
+
 // Multiple space-separated signatures: any match wins.
 $result = WebhookSignature::verify($payload, [
     'svix-id' => $id,

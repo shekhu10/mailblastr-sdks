@@ -229,6 +229,51 @@ public class EmailCreated
     public string Id { get; set; } = null!;
 }
 
+/// <summary>
+/// The full answer to a batch send (POST /emails/batch).
+/// </summary>
+/// <remarks>
+/// <para>
+/// The API serves a batch one of two ways, chosen by its SIZE alone — and both
+/// are success, so branch on <see cref="Queued"/>, never on "no exception was
+/// thrown":
+/// </para>
+/// <list type="bullet">
+///   <item><description><b>1–40 emails</b> are sent while the request is open
+///   (HTTP 200, <see cref="Queued"/> false). Every id in <see cref="Data"/> has
+///   already been handed to the mail service.</description></item>
+///   <item><description><b>41–100 emails</b> are accepted, written as due-now
+///   sends and delivered in the background (HTTP 202, <see cref="Queued"/> true,
+///   <see cref="QueuedCount"/> = <c>Data.Count</c>). The ids are real email ids
+///   from that moment — <c>EmailRetrieveAsync(id)</c> works — but they start at
+///   <c>scheduled</c> and NOTHING has been transmitted yet.</description></item>
+/// </list>
+/// <para>
+/// A batch carrying a <c>@mailblastr.dev</c> simulator recipient stays inline at
+/// any size.
+/// </para>
+/// </remarks>
+public class BatchSendResponse
+{
+    /// <summary>One <c>{ id }</c> per email, in request order.</summary>
+    [JsonPropertyName("data")]
+    public List<EmailCreated> Data { get; set; } = new();
+
+    /// <summary>
+    /// True only on the queued (202) path. The API omits the field entirely on
+    /// an inline 200, which decodes as false.
+    /// </summary>
+    [JsonPropertyName("queued")]
+    public bool Queued { get; set; }
+
+    /// <summary>
+    /// How many emails were enqueued — always <c>Data.Count</c>. Null on the
+    /// inline path, where the API sends no such field.
+    /// </summary>
+    [JsonPropertyName("queued_count")]
+    public int? QueuedCount { get; set; }
+}
+
 /// <summary>One entry of a sent email's event timeline.</summary>
 public class EmailEvent
 {

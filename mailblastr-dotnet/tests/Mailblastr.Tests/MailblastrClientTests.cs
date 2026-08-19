@@ -349,6 +349,74 @@ public class MailblastrClientTests
         Assert.StartsWith("[", stub.LastRequestBody!.TrimStart());
     }
 
+    /// <summary>
+    /// A batch of 41-100 is accepted and delivered in the BACKGROUND: HTTP 202
+    /// with `queued: true`, so the ids exist but nothing has been transmitted.
+    /// Dropping those fields left a caller unable to tell that apart from an
+    /// inline send.
+    /// </summary>
+    [Fact]
+    public async Task EmailBatchSend_SurfacesTheQueuedPath()
+    {
+        var stub = new StubHttpMessageHandler();
+        stub.ScriptedResponses.Enqueue((HttpStatusCode.Accepted,
+            """{"data":[{"id":"em_1"},{"id":"em_2"}],"queued":true,"queued_count":2}""", null));
+        var client = MailblastrClient.Create("mb_test_key", new MailblastrClientOptions { HttpMessageHandler = stub });
+
+        var response = await client.EmailBatchSendAsync(new[]
+        {
+            new BatchEmailMessage { From = "a@acme.com", To = "delivered@mailblastr.dev", Subject = "1" },
+            new BatchEmailMessage { From = "a@acme.com", To = "delivered@mailblastr.dev", Subject = "2" },
+        });
+
+        Assert.Equal("https://www.mailblastr.com/api/emails/batch", stub.LastRequest.RequestUri!.AbsoluteUri);
+        Assert.True(response.Queued);
+        Assert.Equal(2, response.QueuedCount);
+        Assert.Equal(new[] { "em_1", "em_2" }, response.Data.Select(e => e.Id));
+        // The batch body is still a bare JSON array.
+        Assert.StartsWith("[", stub.LastRequestBody!.TrimStart());
+    }
+
+    [Fact]
+    public async Task EmailBatchSend_InlinePathReportsNotQueued()
+    {
+        // An inline 200 omits `queued`/`queued_count` entirely.
+        var (client, _) = CreateClient("""{"data":[{"id":"em_1"}]}""");
+
+        var response = await client.EmailBatchSendAsync(new[]
+        {
+            new BatchEmailMessage { From = "a@acme.com", To = "delivered@mailblastr.dev", Subject = "1" },
+        });
+
+        Assert.False(response.Queued);
+        Assert.Null(response.QueuedCount);
+        Assert.Equal("em_1", Assert.Single(response.Data).Id);
+    }
+
+    /// <summary>
+    /// GET /emails/receiving/:id/attachments sends `size: null` when the ingest
+    /// recorded no size (lib/inbound/read.ts toReceivedAttachmentItem). A
+    /// non-nullable long made System.Text.Json throw, so the whole list call
+    /// failed as `invalid_response` and no row reached the caller.
+    /// </summary>
+    [Fact]
+    public async Task ReceivedEmailListAttachments_AcceptsANullSize()
+    {
+        var (client, _) = CreateClient("""
+            {"object":"list","has_more":false,"data":[
+              {"object":"attachment","id":"0","filename":"note.txt","size":null,
+               "content_type":"text/plain","content_disposition":"attachment",
+               "content_id":null,"downloadable":false}]}
+            """);
+
+        var attachments = await client.ReceivedEmailListAttachmentsAsync("rec_1");
+
+        var row = Assert.Single(attachments.Data);
+        Assert.Null(row.Size);
+        Assert.Equal("note.txt", row.Filename);
+        Assert.False(row.Downloadable);
+    }
+
     [Fact]
     public async Task NonSuccess_ThrowsMailblastrExceptionWithParsedErrorShape()
     {

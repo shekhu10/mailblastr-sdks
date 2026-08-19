@@ -248,7 +248,9 @@ class Contacts extends Resource
      * List the segments a contact belongs to. GET /contacts/:id/segments
      *
      * @param array $params Optional cursor pagination (limit, after, before).
-     *                      With no params every segment is returned.
+     *                      With no params the list comes back in ONE page
+     *                      instead of a 20-row one, still capped at 1000 rows
+     *                      with 'has_more' reporting the truncation.
      */
     public function listSegments(string $id, array $params = []): array
     {
@@ -262,7 +264,9 @@ class Contacts extends Resource
      * Get a contact's topic subscriptions. GET /contacts/:id/topics
      *
      * @param array $params Optional cursor pagination (limit, after, before).
-     *                      With no params every topic is returned.
+     *                      With no params the list comes back in ONE page
+     *                      instead of a 20-row one, still capped at 1000 rows
+     *                      with 'has_more' reporting the truncation.
      */
     public function getTopics(string $id, array $params = []): array
     {

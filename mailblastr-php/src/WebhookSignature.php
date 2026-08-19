@@ -88,11 +88,20 @@ final class WebhookSignature
     /**
      * Derive the HMAC key from a `whsec_`-prefixed secret (base64-decode the
      * suffix); a secret without the prefix is used as raw UTF-8 bytes.
+     *
+     * The decode is deliberately LENIENT, mirroring the key the server actually
+     * SIGNS with: its own secretToKey uses Node's `Buffer.from(suffix,
+     * 'base64')`, which ignores characters outside the alphabet and accepts the
+     * URL-safe one. Decoding strictly here returned false for a caller-supplied
+     * secret (POST /webhooks accepts one) whose suffix was not valid standard
+     * base64, fell back to the raw string as the key, and then rejected every
+     * genuine delivery as `no_match`.
      */
     private static function secretToKey(string $secret): string
     {
         if (str_starts_with($secret, 'whsec_')) {
-            $decoded = base64_decode(substr($secret, strlen('whsec_')), true);
+            $suffix = strtr(substr($secret, strlen('whsec_')), '-_', '+/');
+            $decoded = base64_decode($suffix, false);
             if ($decoded !== false && $decoded !== '') {
                 return $decoded;
             }

@@ -67,8 +67,10 @@ class Segments:
     def contacts(cls, segment_id, params=None):
         """Preview the contacts a segment currently resolves to (filter matches
         plus explicit memberships). Items are a reduced contact shape with no
-        ``properties``. Called with no pagination params every contact is
-        returned. GET /segments/:id/contacts"""
+        ``properties``. Called with no pagination params this returns up to
+        1,000 contacts in one response, with ``has_more`` set when that cap
+        bites — pass ``limit`` for normal 1-100 paging.
+        GET /segments/:id/contacts"""
         return http_client.request(
             "GET", f"/segments/{_e(segment_id)}/contacts{paginate(params)}"
         )

@@ -436,8 +436,9 @@ pub struct ContactTopicSubscription {
 #[derive(Debug, Clone, Deserialize)]
 pub struct ContactTopics {
     pub object: String,
-    /// Whether another page exists. The endpoint only pages when
-    /// `get_topics` is called with `PaginationParams`.
+    /// Whether another page exists. `get_topics` without `PaginationParams`
+    /// skips the page limit but is still capped at 1,000 rows, and this flag
+    /// reports that truncation — never assume a single call was exhaustive.
     #[serde(default)]
     pub has_more: bool,
     pub data: Vec<ContactTopicSubscription>,

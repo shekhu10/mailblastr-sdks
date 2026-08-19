@@ -44,8 +44,9 @@ class ReceivingEmails extends Resource
      * List a received email's attachments. GET /emails/receiving/:id/attachments
      *
      * @param array $params Optional cursor pagination (limit, after, before).
-     *                      With neither limit nor after, every attachment is
-     *                      returned with has_more:false.
+     *                      With neither limit nor after the whole list comes
+     *                      back in one page, still capped at 1000 rows;
+     *                      'has_more' is true when that cap truncated it.
      */
     public function listAttachments(string $id, array $params = []): array
     {

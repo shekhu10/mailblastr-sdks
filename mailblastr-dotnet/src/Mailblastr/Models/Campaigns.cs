@@ -167,6 +167,12 @@ public class Campaign
     [JsonPropertyName("preview_text")]
     public string? PreviewText { get; set; }
 
+    /// <summary>
+    /// <c>draft</c>, <c>scheduled</c>, <c>recurring</c>, <c>queued</c> (fanning
+    /// out now), <c>paused</c> (reputation gate), <c>canceled</c>, <c>sent</c> or
+    /// <c>failed</c>. <c>canceled</c> is terminal — a <c>queued</c> campaign that
+    /// was stopped part-way; it cannot be re-sent.
+    /// </summary>
     [JsonPropertyName("status")]
     public string Status { get; set; } = null!;
 
@@ -249,7 +255,11 @@ public class CampaignListItem
     [JsonPropertyName("segment_id")]
     public string? SegmentId { get; set; }
 
-    /// <summary><c>draft</c>, <c>queued</c>, <c>scheduled</c>, <c>recurring</c>, <c>paused</c>, <c>sent</c>, <c>failed</c>.</summary>
+    /// <summary>
+    /// <c>draft</c>, <c>scheduled</c>, <c>recurring</c>, <c>queued</c>,
+    /// <c>paused</c>, <c>canceled</c>, <c>sent</c> or <c>failed</c>.
+    /// <c>canceled</c> is terminal and not re-sendable.
+    /// </summary>
     [JsonPropertyName("status")]
     public string Status { get; set; } = null!;
 

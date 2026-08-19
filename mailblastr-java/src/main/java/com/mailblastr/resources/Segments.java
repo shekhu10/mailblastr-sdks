@@ -38,8 +38,10 @@ public final class Segments extends Resource {
      * Preview the contacts a segment currently resolves to (filter matches plus
      * explicit memberships). Items use a reduced contact shape — no
      * {@code object} key and no {@code properties}. With no pagination params
-     * the route returns EVERY match and {@code has_more:false}.
-     * {@code GET /segments/:id/contacts}
+     * the route skips paging and answers with every match up to a ceiling of
+     * <strong>1,000</strong> rows; {@code has_more} goes true when a segment is
+     * larger than that, so page on with {@code after} instead of treating one
+     * unpaged call as complete. {@code GET /segments/:id/contacts}
      */
     public MailblastrResponse contacts(String id) { return contacts(id, null); }
 

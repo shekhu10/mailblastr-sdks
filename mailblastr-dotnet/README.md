@@ -156,6 +156,7 @@ events, api keys, logs, polls.
 // Emails
 await mailblastr.EmailSendAsync(message);
 await mailblastr.EmailBatchAsync(messages);                    // List<BatchEmailMessage>, max 100
+await mailblastr.EmailBatchSendAsync(messages);                // same call, full response (Queued)
 await mailblastr.EmailListAsync(new PaginationOptions { Limit = 20 });
 await mailblastr.EmailListAsync(new EmailListOptions            // server-side filters
 {
@@ -193,6 +194,33 @@ Pass `BatchEmailMessage` items to `EmailBatchAsync` — the batch endpoint rejec
 rule holds at compile time. The older `IEnumerable<EmailMessage>` overload is
 `[Obsolete]` for exactly that reason; send attachments or scheduled messages one
 at a time through `EmailSendAsync`.
+
+A batch is served one of two ways, chosen by SIZE alone, and both are success —
+so if you need to know whether the mail is actually out, call
+`EmailBatchSendAsync` and read `Queued`:
+
+```csharp
+BatchSendResponse batch = await mailblastr.EmailBatchSendAsync(messages, idempotencyKey: "nightly-2026-08-19");
+
+if (batch.Queued)
+{
+    // 41-100 emails: accepted (HTTP 202) and delivered in the BACKGROUND. The
+    // ids are real — EmailRetrieveAsync(id) works — but they start at
+    // `scheduled` and nothing has been transmitted yet.
+    Console.WriteLine($"{batch.QueuedCount} emails queued");
+}
+else
+{
+    // 1-40 emails: already handed to the mail service before the call returned.
+    Console.WriteLine($"{batch.Data.Count} emails sent");
+}
+```
+
+`EmailBatchAsync` returns `batch.Data` and nothing else, so it cannot report the
+queued case. An inline batch near the 40 boundary can also take ~100s
+server-side, past the 30s default `MailblastrClientOptions.Timeout` — raise it
+for batches that large, and always pass an idempotency key so a client that
+gives up mid-request can replay the recorded answer instead of re-sending.
 
 ### Contacts are DOMAIN-FIRST
 

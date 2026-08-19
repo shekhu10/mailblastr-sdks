@@ -58,9 +58,10 @@ class Domains:
 
     @classmethod
     def list(cls, params=None):
-        """List domains. Called with no pagination params every domain is
-        returned; pending claims (status ``claim``) are never listed here —
-        read them with :meth:`get_claim`. GET /domains"""
+        """List domains. Called with no pagination params this returns up to
+        1,000 domains in one response, with ``has_more`` set when that cap
+        bites; pending claims (status ``claim``) are never listed here — read
+        them with :meth:`get_claim`. GET /domains"""
         return http_client.request("GET", f"/domains{paginate(params)}")
 
     @classmethod

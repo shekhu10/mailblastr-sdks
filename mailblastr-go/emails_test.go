@@ -2,6 +2,7 @@ package mailblastr
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"strings"
 	"testing"
@@ -221,5 +222,198 @@ func TestReceivingGetAttachmentRawBytes(t *testing.T) {
 	}
 	if string(got) != string(raw) {
 		t.Errorf("bytes = %v, want %v", got, raw)
+	}
+}
+
+// A send that references a template must OMIT an empty `from`/`subject` so the
+// template's own values fill in. The API keys off key PRESENCE
+// (lib/send/resolve_template.ts: `body.from != null ? body.from : published.from`),
+// so `"from":""` counted as "supplied": the send was rejected with 422
+// missing_required_field, and a supplied-from/blank-subject payload went out
+// with an EMPTY subject instead of the template's.
+func TestTemplateSendOmitsEmptyFromAndSubject(t *testing.T) {
+	client := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		body := decodeBody(t, r)
+		if _, present := body["from"]; present {
+			t.Errorf("empty from must be omitted for a template send, got %#v", body["from"])
+		}
+		if _, present := body["subject"]; present {
+			t.Errorf("empty subject must be omitted for a template send, got %#v", body["subject"])
+		}
+		tpl, ok := body["template"].(map[string]any)
+		if !ok || tpl["id"] != "tpl_1" {
+			t.Errorf("template = %#v", body["template"])
+		}
+		w.Write([]byte(`{"id":"em_1"}`))
+	})
+
+	_, err := client.Emails.Send(&SendEmailRequest{
+		To:       []string{"delivered@mailblastr.dev"},
+		Template: &TemplateRef{Id: "tpl_1", Variables: map[string]any{"name": "Ada"}},
+	})
+	if err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+}
+
+// The flat `template_id` form gets the same treatment.
+func TestTemplateIdSendOmitsEmptyFromAndSubject(t *testing.T) {
+	client := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		body := decodeBody(t, r)
+		if _, present := body["from"]; present {
+			t.Error("empty from must be omitted when template_id is set")
+		}
+		if _, present := body["subject"]; present {
+			t.Error("empty subject must be omitted when template_id is set")
+		}
+		if body["template_id"] != "tpl_1" {
+			t.Errorf("template_id = %#v", body["template_id"])
+		}
+		w.Write([]byte(`{"id":"em_1"}`))
+	})
+
+	if _, err := client.Emails.Send(&SendEmailRequest{
+		To:         []string{"delivered@mailblastr.dev"},
+		TemplateId: "tpl_1",
+	}); err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+}
+
+// An explicit From/Subject still overrides the template's, so both keys are
+// present when the caller supplies them.
+func TestTemplateSendKeepsExplicitFromAndSubject(t *testing.T) {
+	client := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		body := decodeBody(t, r)
+		if body["from"] != "Acme <hello@yourdomain.com>" || body["subject"] != "Override" {
+			t.Errorf("from = %#v, subject = %#v", body["from"], body["subject"])
+		}
+		w.Write([]byte(`{"id":"em_1"}`))
+	})
+
+	if _, err := client.Emails.Send(&SendEmailRequest{
+		From:       "Acme <hello@yourdomain.com>",
+		Subject:    "Override",
+		To:         []string{"delivered@mailblastr.dev"},
+		TemplateId: "tpl_1",
+	}); err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+}
+
+// Without a template the two keys are ALWAYS sent, empty included: the API
+// documents `subject: ""` as a legal empty subject (only null/absent is
+// "missing"), and a missing `from` must still surface as the server's
+// missing_required_field rather than being silently reshaped by the SDK.
+func TestNonTemplateSendAlwaysSendsFromAndSubject(t *testing.T) {
+	client := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		body := decodeBody(t, r)
+		from, hasFrom := body["from"]
+		subject, hasSubject := body["subject"]
+		if !hasFrom || from != "" {
+			t.Errorf("from = %#v (present=%v), want present and empty", from, hasFrom)
+		}
+		if !hasSubject || subject != "" {
+			t.Errorf("subject = %#v (present=%v), want present and empty", subject, hasSubject)
+		}
+		w.Write([]byte(`{"id":"em_1"}`))
+	})
+
+	if _, err := client.Emails.Send(&SendEmailRequest{
+		To:   []string{"delivered@mailblastr.dev"},
+		Text: "no template here",
+	}); err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+}
+
+// A nested Template carrying neither Id nor Alias references NOTHING — the
+// server's extractor lets a non-null `template` shadow `template_id` — so
+// from/subject must keep being sent.
+func TestEmptyTemplateRefShadowsTemplateId(t *testing.T) {
+	client := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		body := decodeBody(t, r)
+		if _, present := body["from"]; !present {
+			t.Error("from must still be sent: an id-less template references nothing")
+		}
+		if _, present := body["subject"]; !present {
+			t.Error("subject must still be sent: an id-less template references nothing")
+		}
+		w.Write([]byte(`{"id":"em_1"}`))
+	})
+
+	if _, err := client.Emails.Send(&SendEmailRequest{
+		To:         []string{"delivered@mailblastr.dev"},
+		TemplateId: "tpl_1",
+		Template:   &TemplateRef{Variables: map[string]any{"name": "Ada"}},
+	}); err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+}
+
+// Batch items follow the same rule.
+func TestBatchTemplateItemOmitsEmptyFromAndSubject(t *testing.T) {
+	client := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		var items []map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&items); err != nil {
+			t.Fatalf("decode batch body: %v", err)
+		}
+		if len(items) != 1 {
+			t.Fatalf("items = %d, want 1", len(items))
+		}
+		if _, present := items[0]["from"]; present {
+			t.Error("empty from must be omitted for a template batch item")
+		}
+		if _, present := items[0]["subject"]; present {
+			t.Error("empty subject must be omitted for a template batch item")
+		}
+		w.Write([]byte(`{"data":[{"id":"em_1"}]}`))
+	})
+
+	if _, err := client.Batch.SendEmails([]*BatchEmailRequest{
+		{To: []string{"delivered@mailblastr.dev"}, Template: &TemplateRef{Alias: "welcome"}},
+	}); err != nil {
+		t.Fatalf("SendEmails: %v", err)
+	}
+}
+
+// A batch larger than BatchSyncMax is QUEUED, not sent: HTTP 202 with
+// `queued`/`queued_count` alongside the reserved ids. Callers must be able to
+// tell that apart from an inline send.
+func TestBatchQueuedResponse(t *testing.T) {
+	if BatchSyncMax != 40 {
+		t.Fatalf("BatchSyncMax = %d, want 40", BatchSyncMax)
+	}
+	client := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusAccepted)
+		w.Write([]byte(`{"data":[{"id":"em_1"},{"id":"em_2"}],"queued":true,"queued_count":2}`))
+	})
+
+	res, err := client.Batch.SendEmails([]*BatchEmailRequest{
+		{From: "a@b.com", To: []string{"delivered@mailblastr.dev"}, Subject: "1", Text: "one"},
+		{From: "a@b.com", To: []string{"delivered@mailblastr.dev"}, Subject: "2", Text: "two"},
+	})
+	if err != nil {
+		t.Fatalf("SendEmails: %v", err)
+	}
+	if !res.Queued || res.QueuedCount != 2 || len(res.Data) != 2 {
+		t.Errorf("queued batch not surfaced: %+v", res)
+	}
+}
+
+// An inline (200) batch must NOT look queued.
+func TestBatchInlineResponseIsNotQueued(t *testing.T) {
+	client := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{"data":[{"id":"em_1"}]}`))
+	})
+
+	res, err := client.Batch.SendEmails([]*BatchEmailRequest{
+		{From: "a@b.com", To: []string{"delivered@mailblastr.dev"}, Subject: "1", Text: "one"},
+	})
+	if err != nil {
+		t.Fatalf("SendEmails: %v", err)
+	}
+	if res.Queued || res.QueuedCount != 0 {
+		t.Errorf("inline batch reported as queued: %+v", res)
 	}
 }

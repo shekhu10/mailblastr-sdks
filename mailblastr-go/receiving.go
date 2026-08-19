@@ -106,6 +106,10 @@ type ReceivingService struct {
 
 // List lists received emails. GET /emails/receiving
 // For the received_for filter use ListFiltered.
+//
+// This endpoint's unpaged default is divergent: with no Limit and no cursor it
+// returns up to 1,000 rows in one response (HasMore reports the truncation).
+// Set Limit for normal 1-100 paging.
 func (s *ReceivingService) List(params *ListParams) (*ListResponse[ReceivedEmail], error) {
 	return s.ListWithContext(context.Background(), params)
 }

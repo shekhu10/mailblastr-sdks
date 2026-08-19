@@ -175,8 +175,10 @@ public final class Emails extends Resource {
 
         /**
          * List a received email's attachments. With no pagination params the
-         * route returns ALL attachments and {@code has_more:false}; pass
-         * {@link ListParams} to page. {@code GET /emails/receiving/:id/attachments}
+         * route skips paging and answers with every attachment — capped at
+         * <strong>1,000</strong>, with {@code has_more} true if that ceiling
+         * bites; pass {@link ListParams} to page.
+         * {@code GET /emails/receiving/:id/attachments}
          */
         public MailblastrResponse listAttachments(String id) {
             return listAttachments(id, null);

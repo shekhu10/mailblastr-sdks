@@ -488,6 +488,35 @@ test('emails.sources + receiving.listAddresses map to the right routes', async (
   ]);
 });
 
+test('a received email exposes domain_id and list rows expose object/id', async () => {
+  // The inbound serializer returns `domain_id` (the receiving domain) alongside
+  // the sent-side counterpart, and listAttachments rows are `object:'attachment'`
+  // items with an always-present id. Both must be reachable without a cast.
+  const { fn } = mockFetch(200, {
+    object: 'received_email', id: 'r1', from: 'them@example.com',
+    to: ['support@mine.com'], domain_id: 'dom_1', subject: 'Hi',
+    raw_available: false, created_at: '2026-08-19T00:00:00.000Z',
+  });
+  const mb = new Mailblastr('mb_test', { baseUrl: 'https://api.test', fetch: fn });
+  const got = await mb.emails.receiving.get('r1');
+  assert.equal(got.data!.domain_id, 'dom_1');
+
+  const list = mockFetch(200, {
+    object: 'list', has_more: false,
+    data: [{
+      object: 'attachment', id: 'att_1', filename: 'a.pdf', size: 12,
+      content_type: 'application/pdf', content_disposition: 'attachment',
+      content_id: null, downloadable: true,
+      download_url: 'https://api.test/emails/receiving/r1/attachments/att_1',
+    }],
+  });
+  const mb2 = new Mailblastr('mb_test', { baseUrl: 'https://api.test', fetch: list.fn });
+  const atts = await mb2.emails.receiving.listAttachments('r1');
+  assert.equal(atts.data!.data[0].object, 'attachment');
+  assert.equal(atts.data!.data[0].id, 'att_1');
+  assert.equal(atts.data!.data[0].downloadable, true);
+});
+
 test('emails.receiving maps every method', async () => {
   const { fn, calls } = mockFetch(200, {});
   const mb = new Mailblastr('mb_test', { baseUrl: 'https://api.test', fetch: fn });
@@ -523,6 +552,37 @@ test('batch.send posts the payload array to /emails/batch', async () => {
   assert.equal(calls[0].method, 'POST');
   assert.equal(calls[0].url, 'https://api.test/emails/batch');
   assert.ok(Array.isArray(calls[0].body));
+});
+
+test('an inline batch (200) reports no `queued` flag', async () => {
+  const { fn } = mockFetch(200, { data: [{ id: 'e-1' }, { id: 'e-2' }] });
+  const mb = new Mailblastr('mb_test', { baseUrl: 'https://api.test', fetch: fn });
+  const res = await mb.batch.send([
+    { from: 'a@x.com', to: 'delivered@mailblastr.dev', subject: 's', text: 't' },
+    { from: 'a@x.com', to: 'delivered@mailblastr.dev', subject: 's', text: 't' },
+  ]);
+  assert.equal(res.error, null);
+  assert.equal(res.data!.data.length, 2);
+  // Absent, not false — the caller must be able to tell "sent" from "queued".
+  assert.equal(res.data!.queued, undefined);
+  assert.equal(res.data!.queued_count, undefined);
+});
+
+test('a queued batch (202) surfaces queued + queued_count as success', async () => {
+  // Batches above the inline ceiling (41-100 emails) are accepted and delivered
+  // in the background: HTTP 202 with { data, queued, queued_count }. 202 must
+  // read as success, and both extra fields must reach the caller — the ids are
+  // real but nothing has been transmitted yet.
+  const ids = Array.from({ length: 41 }, (_, i) => ({ id: `e-${i}` }));
+  const { fn } = mockFetch(202, { data: ids, queued: true, queued_count: 41 });
+  const mb = new Mailblastr('mb_test', { baseUrl: 'https://api.test', fetch: fn });
+  const res = await mb.emails.batch(
+    ids.map(() => ({ from: 'a@x.com', to: 'delivered@mailblastr.dev', subject: 's', text: 't' })),
+  );
+  assert.equal(res.error, null);
+  assert.equal(res.data!.queued, true);
+  assert.equal(res.data!.queued_count, 41);
+  assert.equal(res.data!.queued_count, res.data!.data.length);
 });
 
 test('domains claim methods map to the right routes', async () => {
@@ -925,6 +985,40 @@ test('segments accept a members_only status and an engagement filter', async () 
   });
   assert.equal(calls[0].body.filter.status, 'members_only');
   assert.deepEqual(calls[0].body.filter.engagement, { event: 'opened', campaign_id: 'cmp1' });
+});
+
+test('campaign.statistics carries counts only — `links` is stats-only', async () => {
+  // GET /campaigns/:id embeds getCampaignStats() verbatim, which computes counts
+  // and rates and NOTHING else. Only GET /campaigns/:id/stats adds `links`, so
+  // the embedded block must not promise it — `statistics.links.length` used to
+  // typecheck and then throw on undefined.
+  const statistics = {
+    total: 10, delivered: 9, opened: 4, clicked: 2, replied: 1, bounced: 1, complained: 0,
+    rates: { delivery: 90, open: 44.4, click: 22.2, reply: 11.1, bounce: 10, complaint: 0 },
+  };
+  const { fn } = mockFetch(200, {
+    object: 'campaign', id: 'c1', name: null, audience_id: 'aud_1', segment_id: null,
+    topic_id: null, from: 'a@x.com', subject: 's', status: 'sent',
+    scheduled_at: null, sent_at: null, created_at: '2026-08-19T00:00:00.000Z',
+    statistics,
+  });
+  const mb = new Mailblastr('mb_test', { baseUrl: 'https://api.test', fetch: fn });
+  const res = await mb.campaigns.get('c1');
+  assert.deepEqual(res.data!.statistics, statistics);
+  // The embedded block is CampaignStatistics (no `links`); the stats endpoint's
+  // CampaignStats extends it and adds one.
+  // The cast has to go via `unknown`: CampaignStatistics has no `links` at all,
+  // which is the whole point — a direct property read would not compile.
+  assert.equal((res.data!.statistics as unknown as Record<string, unknown>).links, undefined);
+
+  const withLinks = mockFetch(200, {
+    object: 'campaign_stats', campaign_id: 'c1', ...statistics,
+    links: [{ url: 'https://acme.com', clicks: 2 }],
+  });
+  const mb2 = new Mailblastr('mb_test', { baseUrl: 'https://api.test', fetch: withLinks.fn });
+  const stats = await mb2.campaigns.stats('c1');
+  assert.equal(stats.data!.links[0].clicks, 2);
+  assert.equal(stats.data!.delivered, 9);
 });
 
 test('campaigns.engagement maps to GET /campaigns/:id/engagement', async () => {

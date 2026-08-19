@@ -33,6 +33,37 @@ $over = str_repeat('k', \Mailblastr\Client::IDEMPOTENCY_KEY_MAX_LENGTH + 1);
 $mb->emails->send(['from' => 'a@x.com', 'to' => 'u@e.com', 'subject' => 's', 'text' => 'b'], ['idempotencyKey' => $over]);
 check('emails.send: over-long idempotency key is left to the server', in_array('Idempotency-Key: ' . $over, $t->last()['headers'], true));
 
+// A key the API accepts must never be dropped on the way out. '0' and 0 are
+// valid 1-character keys, but PHP's empty() is true for both — gating the header
+// on !empty() silently turned an idempotent send into a plain one, so an
+// automatic 429/503 retry could deliver the same email twice.
+$idemHeaders = static fn (array $request): array => array_values(array_filter(
+    $request['headers'],
+    static fn (string $h): bool => str_starts_with($h, 'Idempotency-Key:')
+));
+foreach ([['0', "'0'"], [0, '0 (int)'], [12345, '12345 (int)']] as [$key, $label]) {
+    $t->queue(200, ['id' => 'em_3']);
+    $mb->emails->send(
+        ['from' => 'a@x.com', 'to' => 'delivered@mailblastr.dev', 'subject' => 's', 'text' => 'b'],
+        ['idempotencyKey' => $key],
+    );
+    check_same(
+        "emails.send: idempotency key {$label} is sent verbatim",
+        ['Idempotency-Key: ' . $key],
+        $idemHeaders($t->last()),
+    );
+}
+// An absent, empty or non-scalar key sends no header at all (the API rejects an
+// empty one with 400 invalid_idempotency_key).
+foreach ([[null, 'null'], ['', "''"], [[], 'array']] as [$key, $label]) {
+    $t->queue(200, ['id' => 'em_4']);
+    $mb->emails->send(
+        ['from' => 'a@x.com', 'to' => 'delivered@mailblastr.dev', 'subject' => 's', 'text' => 'b'],
+        ['idempotencyKey' => $key],
+    );
+    check_same("emails.send: idempotency key {$label} sends no header", [], $idemHeaders($t->last()));
+}
+
 // ---- batch->send (JSON list body) ----
 [$mb, $t] = make_client();
 $t->queue(200, ['data' => [['id' => 'em_1'], ['id' => 'em_2']]]);

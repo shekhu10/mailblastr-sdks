@@ -334,8 +334,13 @@ impl SegmentsSvc {
 
     /// Preview the contacts a segment currently resolves to (filter matches ∪
     /// explicit memberships). Rows are the reduced [`SegmentContact`] shape.
-    /// With no `limit` and no `after` cursor the route returns the WHOLE
-    /// membership with `has_more: false`. `GET /segments/:id/contacts`
+    ///
+    /// With no `limit` and no `after` cursor the route returns as much of the
+    /// membership as fits in ONE page, capped at **1,000** rows — a segment
+    /// larger than that is truncated, and `has_more` says so. Do not treat an
+    /// unpaginated call as the whole membership: keep walking with
+    /// `with_after(last_id)` while `has_more` is true.
+    /// `GET /segments/:id/contacts`
     pub async fn contacts(
         &self,
         segment_id: &str,

@@ -37,10 +37,3 @@ internal sealed class ApiErrorBody
     [JsonExtensionData]
     public Dictionary<string, JsonElement>? Extra { get; set; }
 }
-
-/// <summary>Envelope for endpoints that return a bare <c>{ data: [...] }</c> (e.g. POST /emails/batch).</summary>
-internal sealed class DataEnvelope<T>
-{
-    [JsonPropertyName("data")]
-    public List<T> Data { get; set; } = new();
-}

@@ -8,7 +8,13 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
-/** Body of {@code PATCH /automations/:id}. */
+/**
+ * Body of {@code PATCH /automations/:id}.
+ *
+ * <p>Changing the {@code domain}, {@code trigger}, {@code trigger_config} or
+ * {@code connections} requires the automation to be DISABLED first — each is a
+ * {@code 422 validation_error} on an enabled one.
+ */
 public final class UpdateAutomationRequest implements JsonPayload {
     private final Map<String, Object> body;
 
@@ -27,6 +33,26 @@ public final class UpdateAutomationRequest implements JsonPayload {
         public Builder status(String status) { m.put("status", status); return this; }
         /** Re-point at another of your domains (disabled automations only). */
         public Builder domain(String domain) { m.put("domain", domain); return this; }
+
+        /**
+         * Change the event that starts a run (disabled automations only). Same
+         * vocabulary as {@link CreateAutomationRequest.Builder#trigger(String)}:
+         * {@code contact.created}, the built-in {@code mailblastr:schedule}
+         * (which also needs {@link #triggerConfig(String, String)}), an
+         * engagement event, or any custom event name you send via
+         * {@code events().send(...)}. Any other {@code mailblastr:} name is
+         * rejected.
+         */
+        public Builder trigger(String trigger) { m.put("trigger", trigger); return this; }
+
+        /**
+         * Rename the trigger node that {@link #connection(AutomationConnection)
+         * connections} reference (default {@code "trigger"}). The API reads it
+         * only while applying a trigger change, so pass
+         * {@link #trigger(String)} alongside it — on its own it is ignored.
+         */
+        public Builder triggerKey(String triggerKey) { m.put("trigger_key", triggerKey); return this; }
+
         /**
          * Update the {@code mailblastr:schedule} trigger's schedule. Only
          * valid on automations with that trigger.

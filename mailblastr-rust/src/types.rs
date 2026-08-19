@@ -241,9 +241,17 @@ pub struct IdResponse {
 
 /// The standard `{ object: 'list', has_more, data }` envelope returned by
 /// every `list` endpoint.
+///
+/// [`has_more`](Self::has_more) is the only trustworthy end-of-collection
+/// signal. No list endpoint returns an unbounded collection: a supplied
+/// `limit` caps the page at that size, and omitting `limit` where the endpoint
+/// allows it caps the page at **1,000** rows. Keep paging with
+/// [`PaginationParams::with_after`] while `has_more` is `true`.
 #[derive(Debug, Clone, Deserialize)]
 pub struct ListResponse<T> {
     pub object: String,
+    /// `true` when the collection continues past this page — including when an
+    /// unpaginated call was truncated at the 1,000-row ceiling.
     #[serde(default)]
     pub has_more: bool,
     pub data: Vec<T>,
@@ -267,7 +275,9 @@ pub struct RemovedResponse {
 /// ```
 #[derive(Debug, Clone, Default)]
 pub struct PaginationParams {
-    /// Page size (most endpoints cap at 100).
+    /// Page size. Must be **1–100**; anything outside that range is a
+    /// `422 validation_error`. Omitted, some endpoints default to 20 and the
+    /// rest answer in one page capped at 1,000 rows (see [`ListResponse`]).
     pub limit: Option<u32>,
     /// Cursor: id of the last item on the previous page.
     pub after: Option<String>,

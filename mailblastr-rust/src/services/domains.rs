@@ -367,7 +367,8 @@ impl DomainsSvc {
 
     /// List domains. Rows with a pending ownership CLAIM are excluded — reach
     /// those through [`get_claim`](Self::get_claim). With no pagination params
-    /// the route returns EVERY domain with `has_more: false`. `GET /domains`
+    /// the route answers in one page capped at **1,000** domains, with
+    /// `has_more` reporting any truncation. `GET /domains`
     pub async fn list(&self, params: Option<PaginationParams>) -> Result<ListResponse<Domain>> {
         let req = self
             .config

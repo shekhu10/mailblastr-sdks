@@ -56,6 +56,19 @@ class DomainsTest < Minitest::Test
     assert_equal "u", last_body["apiUser"]
   end
 
+  # The API reads the Namecheap credentials as `apiUser`/`apiKey` (with
+  # `api_user`/`api_key` as aliases) and the optional username as `userName` or
+  # `username` — there is NO `user_name` alias, so the gem must transmit these
+  # keys byte-for-byte rather than rewriting them into a snake_case spelling
+  # the server would ignore.
+  def test_namecheap_credentials_are_transmitted_verbatim
+    Mailblastr::Domains.apply_namecheap_dns("dom_1", { apiUser: "u", apiKey: "k", userName: "acme-sub" })
+    assert_equal "acme-sub", last_body["userName"]
+
+    Mailblastr::Domains.apply_namecheap_dns("dom_1", { api_user: "u", api_key: "k", username: "acme-sub" })
+    assert_equal({ "api_user" => "u", "api_key" => "k", "username" => "acme-sub" }, last_body)
+  end
+
   def test_mx_check_and_records_csv
     Mailblastr::Domains.mx_check("yourdomain.com")
     assert_request :get, "/domains/mx-check?name=yourdomain.com"

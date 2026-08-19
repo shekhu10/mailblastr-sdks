@@ -34,6 +34,28 @@ public final class SegmentsCampaignsTest {
                         + "\"property_filters\":[{\"key\":\"plan\",\"operator\":\"eq\",\"value\":\"pro\"}]}}",
                 t.lastBody);
 
+        // --- segments: members_only + the campaign-engagement predicate ---
+        // Both are real server values (lib/contacts/segment_body.ts): status
+        // accepts members_only, and `filter.engagement` narrows the segment to
+        // one campaign's engagement.
+        mb.segments().create(CreateSegmentRequest.builder()
+                .domain("example.com")
+                .name("Re-engage")
+                .filter(SegmentFilter.builder()
+                        .status("members_only")
+                        .engagement("not_opened", "cmp_1")
+                        .build())
+                .build());
+        Check.eq("segment engagement create body",
+                "{\"domain\":\"example.com\",\"name\":\"Re-engage\",\"filter\":{\"status\":\"members_only\","
+                        + "\"engagement\":{\"event\":\"not_opened\",\"campaign_id\":\"cmp_1\"}}}",
+                t.lastBody);
+        // Clearing needs an explicit null — an omitted key keeps the stored one.
+        mb.segments().update("seg_1", UpdateSegmentRequest.builder()
+                .filter(SegmentFilter.builder().clearEngagement().build()).build());
+        Check.eq("segment clear engagement body",
+                "{\"filter\":{\"engagement\":null}}", t.lastBody);
+
         // --- segments: list is domain-scoped ---
         mb.segments().list("example.com", ListParams.builder().limit(5).build());
         Check.eq("segment list url", "https://api.test/segments?domain=example.com&limit=5", t.lastUrl);

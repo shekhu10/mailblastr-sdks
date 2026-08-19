@@ -1,6 +1,17 @@
 'use strict';
 
-const { clean, withPagination, pagination } = require('../helpers');
+const { parseJson, clean, withPagination, pagination } = require('../helpers');
+
+/**
+ * `variables` is the template's declared-variable registry, not the per-send
+ * values: a JSON array of `{"key","type"?,"fallback_value"?}` (max 50, `type`
+ * is 'string' | 'number', a number's fallback must parse as a number). The send
+ * path prefers a declared fallback when a caller omits the variable, so a
+ * template with no registry has no fallbacks — which is why this could not be
+ * left to the dashboard. Passing `[]` clears the registry.
+ */
+const VARIABLES_HELP =
+  'declared variables as a JSON array of {"key","type"?,"fallback_value"?} (max 50; [] clears them)';
 
 function register({ group, leaf, act }) {
   const templates = group('templates', 'Manage email templates');
@@ -13,7 +24,8 @@ function register({ group, leaf, act }) {
       .option('--text <text>', 'plain-text body')
       .option('--from <from>', 'default sender')
       .option('--reply-to <address>', 'default reply-to')
-      .option('--alias <alias>', 'stable handle for sending by alias'),
+      .option('--alias <alias>', 'stable handle for sending by alias')
+      .option('--variables <json>', VARIABLES_HELP),
     ({ client, opts }) =>
       client.templates.create(
         clean({
@@ -24,6 +36,7 @@ function register({ group, leaf, act }) {
           from: opts.from,
           reply_to: opts.replyTo,
           alias: opts.alias,
+          variables: parseJson(opts.variables, '--variables'),
         }),
       ),
   );
@@ -44,7 +57,8 @@ function register({ group, leaf, act }) {
       .option('--text <text>', 'plain-text body')
       .option('--from <from>', 'default sender')
       .option('--reply-to <address>', 'default reply-to')
-      .option('--alias <alias>', 'stable handle'),
+      .option('--alias <alias>', 'stable handle')
+      .option('--variables <json>', VARIABLES_HELP),
     ({ client, opts, args: [id] }) =>
       client.templates.update(
         id,
@@ -56,6 +70,7 @@ function register({ group, leaf, act }) {
           from: opts.from,
           reply_to: opts.replyTo,
           alias: opts.alias,
+          variables: parseJson(opts.variables, '--variables'),
         }),
       ),
   );

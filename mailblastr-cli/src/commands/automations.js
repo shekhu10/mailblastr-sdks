@@ -74,16 +74,29 @@ function register({ group, leaf, act }) {
       ),
   );
 
+  // PATCH /automations/:id/steps/:stepId re-validates the WHOLE step through the
+  // same validateStep the create path uses, so `--type` is required here too: a
+  // body without it fails `type must be one of: …` (422) before the config is
+  // ever looked at. It was optional, which made `update-step … --config …` — the
+  // form the docs showed — a request that could never succeed.
+  //
+  // `--key` is deliberately absent: the server updates a step's type and config
+  // only (the graph key and position are stable), so a `key` in the body was
+  // accepted and silently dropped, leaving the caller believing the step had
+  // been re-keyed and its connections re-pointed. Delete and re-add the step
+  // with `add-step --key` to change its key.
   act(
     leaf(automations, 'update-step <id> <stepId>', 'Update a step of an automation')
-      .option('--type <type>', 'new step type')
-      .option('--config <json>', 'new step config as JSON (replaces the stored config)')
-      .option('--key <key>', 'new step key (for connections)'),
+      .requiredOption(
+        '--type <type>',
+        "step type: 'send_email' | 'wait_for_event' | 'delay' | 'condition' | 'split' | 'add_to_segment' | 'contact_update' | 'contact_delete'",
+      )
+      .option('--config <json>', 'new step config as JSON (replaces the stored config)'),
     ({ client, opts, args: [id, stepId] }) =>
       client.automations.updateStep(
         id,
         stepId,
-        clean({ type: opts.type, config: parseJson(opts.config, '--config'), key: opts.key }),
+        clean({ type: opts.type, config: parseJson(opts.config, '--config') }),
       ),
   );
 

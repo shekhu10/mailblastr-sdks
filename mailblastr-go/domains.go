@@ -113,8 +113,12 @@ type DomainCapabilitiesInput struct {
 
 // UpdateDomainRequest is the payload for PATCH /domains/:id.
 type UpdateDomainRequest struct {
-	OpenTracking      *bool  `json:"open_tracking,omitempty"`
-	ClickTracking     *bool  `json:"click_tracking,omitempty"`
+	OpenTracking  *bool `json:"open_tracking,omitempty"`
+	ClickTracking *bool `json:"click_tracking,omitempty"`
+	// CustomReturnPath re-points the MAIL FROM subdomain (Return-Path). It must
+	// be a single DNS label, e.g. "send" or "mail"; anything else is a 422
+	// validation_error. Changing it re-issues the domain's DNS records.
+	CustomReturnPath  string `json:"custom_return_path,omitempty"`
 	TrackingSubdomain string `json:"tracking_subdomain,omitempty"`
 	// CustomTracking enables/disables the custom open/click tracking host.
 	CustomTracking *bool                    `json:"custom_tracking,omitempty"`

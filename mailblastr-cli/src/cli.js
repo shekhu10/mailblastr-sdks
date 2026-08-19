@@ -34,6 +34,13 @@ function createContext(overrides = {}) {
       const { Mailblastr } = require('mailblastr');
       return new Mailblastr(apiKey, options);
     },
+    // Pure, offline signature check. The SDK exports it as a standalone
+    // function precisely so it can be used WITHOUT a client — `webhooks verify`
+    // makes no HTTP request, so it must not demand an API key it never sends.
+    verifyWebhook(payload, headers, secret, options) {
+      const { verifyWebhookSignature } = require('mailblastr');
+      return verifyWebhookSignature(payload, headers, secret, options);
+    },
     stdout: (s) => process.stdout.write(s),
     stderr: (s) => process.stderr.write(s),
     env: process.env,
@@ -58,9 +65,13 @@ function print(ctx, data, opts) {
   ctx.stdout(`${s}\n`);
 }
 
-/** Print an API/CLI error to stderr and mark the run failed. */
-function fail(ctx, error) {
-  ctx.stderr(`${JSON.stringify(error, null, 2)}\n`);
+/**
+ * Print an API/CLI error to stderr and mark the run failed. `--json` means
+ * "raw compact JSON output" for BOTH streams — an error printed pretty while
+ * the flag asked for compact made the flag a half-truth.
+ */
+function fail(ctx, error, opts = {}) {
+  ctx.stderr(`${opts.json ? JSON.stringify(error) : JSON.stringify(error, null, 2)}\n`);
   ctx.exitCode = 1;
 }
 
@@ -71,16 +82,25 @@ function fail(ctx, error) {
  * and returns its `{ data, error }` result.
  */
 function makeToolkit(program, ctx) {
+  // Commands declared `local` make no HTTP request, so they neither resolve a
+  // client nor advertise the auth flags. Declared once, on the leaf; `act` reads
+  // it back rather than taking a second, drift-prone copy of the same fact.
+  const localCommands = new WeakSet();
+
   function group(name, description) {
     return program.command(name).description(description);
   }
-  function leaf(parent, spec, description) {
-    return parent
-      .command(spec)
-      .description(description)
-      .option('--api-key <key>', 'API key (default: MAILBLASTR_API_KEY env var)')
-      .option('--base-url <url>', 'API base URL (default: MAILBLASTR_BASE_URL env var)')
-      .option('--json', 'raw compact JSON output (default: pretty-printed)');
+  function leaf(parent, spec, description, options = {}) {
+    const cmd = parent.command(spec).description(description);
+    if (options.local) {
+      localCommands.add(cmd);
+    } else {
+      cmd
+        .option('--api-key <key>', 'API key (default: MAILBLASTR_API_KEY env var)')
+        .option('--base-url <url>', 'API base URL (default: MAILBLASTR_BASE_URL env var)');
+    }
+    // `--json` still applies: a local command prints its result like any other.
+    return cmd.option('--json', 'raw compact JSON output (default: pretty-printed)');
   }
   function act(cmd, handler) {
     cmd.action(async (...cbArgs) => {
@@ -88,9 +108,9 @@ function makeToolkit(program, ctx) {
       const args = cbArgs.slice(0, -1);
       const opts = command.opts();
       try {
-        const client = getClient(ctx, opts);
-        const result = await handler({ client, opts, args });
-        if (result && result.error) return fail(ctx, result.error);
+        const client = localCommands.has(cmd) ? undefined : getClient(ctx, opts);
+        const result = await handler({ client, ctx, opts, args });
+        if (result && result.error) return fail(ctx, result.error, opts);
         print(ctx, result ? result.data : null, opts);
         // Some endpoints answer 200 while reporting a failed operation in the
         // body (e.g. POST /webhooks/:id/test → { ok: false }). A handler flags
@@ -99,7 +119,7 @@ function makeToolkit(program, ctx) {
         return undefined;
       } catch (err) {
         if (err instanceof CliError) {
-          return fail(ctx, { statusCode: null, name: 'cli_error', message: err.message });
+          return fail(ctx, { statusCode: null, name: 'cli_error', message: err.message }, opts);
         }
         throw err;
       }
@@ -123,7 +143,7 @@ function buildProgram(ctx) {
     })
     .addHelpText(
       'after',
-      '\nAuthentication:\n  Set MAILBLASTR_API_KEY (or pass --api-key to any command).\n  Set MAILBLASTR_BASE_URL (or --base-url) to target a different API host.\n\nExamples:\n  mailblastr emails send --from \'Acme <hi@yourdomain.com>\' --to a@b.com --subject hello --html \'<p>hi</p>\'\n  mailblastr contacts list --domain yourdomain.com\n  mailblastr events send --domain yourdomain.com --name signup.completed --email a@b.com --data \'{"plan":"pro"}\'',
+      '\nAuthentication:\n  Set MAILBLASTR_API_KEY (or pass --api-key to any command).\n  Set MAILBLASTR_BASE_URL (or --base-url) to target a different API host.\n\nExamples:\n  mailblastr emails send --from \'Acme <hi@yourdomain.com>\' --to delivered@mailblastr.dev --subject hello --html \'<p>hi</p>\'\n  mailblastr contacts list --domain yourdomain.com\n  mailblastr events send --domain yourdomain.com --name signup.completed --email ada@example.com --data \'{"plan":"pro"}\'',
     );
 
   const toolkit = makeToolkit(program, ctx);

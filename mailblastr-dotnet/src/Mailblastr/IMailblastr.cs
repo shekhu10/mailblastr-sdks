@@ -38,13 +38,50 @@ public partial interface IMailblastr
     Task<List<EmailCreated>> EmailBatchAsync(IEnumerable<EmailMessage> messages, string? idempotencyKey = null, CancellationToken cancellationToken = default);
 
     /// <summary>
-    /// Send up to 100 emails in one request. Batch items reject
-    /// <c>attachments</c> and <c>scheduled_at</c> — send those individually via
-    /// <see cref="EmailSendAsync"/>. <paramref name="idempotencyKey"/> follows the
-    /// same 1–255 character rule as <see cref="EmailSendAsync"/>.
-    /// POST /emails/batch
+    /// Send up to 100 emails in one request, returning just the created ids.
+    /// Batch items reject <c>attachments</c> and <c>scheduled_at</c> — send those
+    /// individually via <see cref="EmailSendAsync"/>.
+    /// <paramref name="idempotencyKey"/> follows the same 1–255 character rule as
+    /// <see cref="EmailSendAsync"/>. POST /emails/batch
+    /// <para>
+    /// The ids alone do NOT say whether the mail has gone out: a batch of 41–100
+    /// is accepted and delivered in the BACKGROUND, and this overload cannot
+    /// report that. Use <see cref="EmailBatchSendAsync"/> and read
+    /// <see cref="BatchSendResponse.Queued"/> when that distinction matters.
+    /// </para>
     /// </summary>
     Task<List<EmailCreated>> EmailBatchAsync(IEnumerable<BatchEmailMessage> messages, string? idempotencyKey = null, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Send up to 100 emails in one request and return the API's FULL answer —
+    /// the created ids plus whether the batch was queued rather than sent inline.
+    /// POST /emails/batch
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Identical request to <see cref="EmailBatchAsync(IEnumerable{BatchEmailMessage}, string, CancellationToken)"/>;
+    /// the difference is the response. A batch of 1–40 is sent while the request
+    /// is open (<see cref="BatchSendResponse.Queued"/> false); 41–100 are written
+    /// as due-now sends and delivered in the background
+    /// (<see cref="BatchSendResponse.Queued"/> true), so nothing has been
+    /// transmitted when the call returns. Both are success.
+    /// </para>
+    /// <para>
+    /// An inline batch near the 40 boundary can take ~100s server-side, well past
+    /// this client's 30s default <see cref="MailblastrClientOptions.Timeout"/> —
+    /// raise it for batches that large, and always pass
+    /// <paramref name="idempotencyKey"/>, because a client that gives up
+    /// mid-request cannot otherwise tell what was already sent.
+    /// </para>
+    /// </remarks>
+    /// <param name="messages">The emails to send (max 100).</param>
+    /// <param name="idempotencyKey">
+    /// Optional <c>Idempotency-Key</c>; same 1–255 character rule as
+    /// <see cref="EmailSendAsync"/>. On a partial failure the recorded answer
+    /// names the emails that DID go out — see <see cref="MailblastrException.Sent"/>.
+    /// </param>
+    /// <param name="cancellationToken">Token to cancel the request.</param>
+    Task<BatchSendResponse> EmailBatchSendAsync(IEnumerable<BatchEmailMessage> messages, string? idempotencyKey = null, CancellationToken cancellationToken = default);
 
     /// <summary>List sent emails (trimmed rows — see <see cref="SentEmailListItem"/>). GET /emails</summary>
     Task<ListResponse<SentEmailListItem>> EmailListAsync(PaginationOptions? pagination = null, CancellationToken cancellationToken = default);
@@ -71,9 +108,15 @@ public partial interface IMailblastr
     /// <summary>Retrieve one attachment of a sent email. GET /emails/:id/attachments/:attachmentId</summary>
     Task<AttachmentMeta> EmailRetrieveAttachmentAsync(string emailId, string attachmentId, CancellationToken cancellationToken = default);
 
-    /// <summary>Reschedule a scheduled email. PATCH /emails/:id</summary>
+    /// <summary>
+    /// Reschedule an email — only while it is still <c>scheduled</c>; anything
+    /// that has started sending is a 422. PATCH /emails/:id
+    /// </summary>
     /// <param name="emailId">Id of the scheduled email.</param>
-    /// <param name="scheduledAt">ISO 8601 timestamp of the new send time.</param>
+    /// <param name="scheduledAt">
+    /// The new send time: an ISO 8601 timestamp or a relative phrase such as
+    /// <c>in 1 min</c>. It must be in the future and at most 30 days ahead.
+    /// </param>
     /// <param name="cancellationToken">Token to cancel the request.</param>
     Task<ObjectRef> EmailUpdateAsync(string emailId, string scheduledAt, CancellationToken cancellationToken = default);
 
@@ -102,9 +145,9 @@ public partial interface IMailblastr
 
     /// <summary>
     /// List a received email's attachments. Pass <paramref name="pagination"/> to
-    /// page; with no <c>Limit</c> and no <c>After</c> cursor the route returns ALL
-    /// attachments with <c>HasMore = false</c>.
-    /// GET /emails/receiving/:id/attachments
+    /// page; with no <c>Limit</c> and no <c>After</c> cursor the route answers in
+    /// one response, still bounded by a 1,000-row ceiling that <c>HasMore</c>
+    /// reports truthfully. GET /emails/receiving/:id/attachments
     /// </summary>
     Task<ListResponse<ReceivedAttachment>> ReceivedEmailListAttachmentsAsync(string receivedEmailId, PaginationOptions? pagination = null, CancellationToken cancellationToken = default);
 

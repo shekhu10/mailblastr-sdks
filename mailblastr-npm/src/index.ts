@@ -2,7 +2,7 @@ import { createHmac, timingSafeEqual } from 'node:crypto';
 import { HttpClient, type ClientConfig, DEFAULT_BASE_URL, VERSION, USER_AGENT, IDEMPOTENCY_KEY_MAX_LENGTH } from './client';
 import type {
   Result, RequestOptions, PaginationParams, ObjectRef,
-  SendEmailOptions, BatchEmailOptions, CreateEmailResponse, Email, SentEmailListItem,
+  SendEmailOptions, BatchEmailOptions, CreateEmailResponse, BatchSendResponse, Email, SentEmailListItem,
   ListEmailsParams, ListReceivedEmailsParams, EmailSource, ReceivingAddressStats,
   AttachmentMeta, ReceivedAttachment, ReceivedEmail, ForwardReceivedEmailOptions,
   ReplyReceivedEmailOptions,
@@ -89,8 +89,11 @@ class ReceivingEmails {
     return this.http.request('GET', p`/emails/receiving/${id}`);
   }
   /**
-   * List a received email's attachments. GET /emails/receiving/:id/attachments —
-   * with no `limit` and no `after` cursor every attachment is returned.
+   * List a received email's attachments. GET /emails/receiving/:id/attachments.
+   *
+   * With no `limit` and no cursor the response is still capped at 1000 rows
+   * (the server's unpaginated ceiling) and sets `has_more: true` when it bites
+   * — keep walking with `after` rather than treating one page as complete.
    */
   listAttachments(id: string, params?: PaginationParams): Promise<Result<ListResponse<ReceivedAttachment>>> {
     return this.http.request('GET', p`/emails/receiving/${id}/attachments` + paginate(params));
@@ -143,8 +146,19 @@ class Emails {
    * Send up to 100 emails in one request. POST /emails/batch (alias of
    * `mb.batch.send`). Batch items reject `attachments` and `scheduled_at` —
    * send those individually via `emails.send`.
+   *
+   * Two modes, chosen by batch SIZE and both successful — read
+   * {@link BatchSendResponse.queued} to tell them apart: up to 40 emails are
+   * sent inline (`queued` absent), 41–100 are accepted and delivered in the
+   * background (`queued: true`).
+   *
+   * An inline batch near the 40 boundary can take ~100s server-side, well past
+   * this client's 30s default timeout — raise it with
+   * `new Mailblastr(key, { timeoutMs })` if you send batches that large, and
+   * always pass an `idempotencyKey`, since a client that gives up mid-request
+   * cannot tell what was already sent.
    */
-  batch(payloads: BatchEmailOptions[], options?: RequestOptions): Promise<Result<{ data: CreateEmailResponse[] }>> {
+  batch(payloads: BatchEmailOptions[], options?: RequestOptions): Promise<Result<BatchSendResponse>> {
     return this.http.request('POST', '/emails/batch', payloads, options);
   }
   /**
@@ -204,8 +218,19 @@ class Batch {
    * Send up to 100 emails in one request. POST /emails/batch. Batch items
    * reject `attachments` and `scheduled_at` — send those individually via
    * `emails.send`.
+   *
+   * Two modes, chosen by batch SIZE and both successful — read
+   * {@link BatchSendResponse.queued} to tell them apart: up to 40 emails are
+   * sent inline (`queued` absent), 41–100 are accepted and delivered in the
+   * background (`queued: true`).
+   *
+   * An inline batch near the 40 boundary can take ~100s server-side, well past
+   * this client's 30s default timeout — raise it with
+   * `new Mailblastr(key, { timeoutMs })` if you send batches that large, and
+   * always pass an `idempotencyKey`, since a client that gives up mid-request
+   * cannot tell what was already sent.
    */
-  send(payloads: BatchEmailOptions[], options?: RequestOptions): Promise<Result<{ data: CreateEmailResponse[] }>> {
+  send(payloads: BatchEmailOptions[], options?: RequestOptions): Promise<Result<BatchSendResponse>> {
     return this.http.request('POST', '/emails/batch', payloads, options);
   }
 }
@@ -219,8 +244,12 @@ class Domains {
     return this.http.request('GET', p`/domains/${id}`);
   }
   /**
-   * List domains. With no pagination params every domain is returned;
-   * pass `limit` to page. Rows still in the `claim` state are excluded.
+   * List domains. Rows still in the `claim` state are excluded.
+   *
+   * With no pagination params the response is capped at 1000 rows (the
+   * server's unpaginated ceiling) and sets `has_more: true` when it bites —
+   * pass `limit` and walk with `after` instead of assuming one page is
+   * everything.
    */
   list(params?: PaginationParams): Promise<Result<ListResponse<Domain>>> {
     return this.http.request('GET', `/domains${paginate(params)}`);
@@ -485,7 +514,12 @@ class ContactProperties {
 /** Read-only results of the in-email poll widget. `mb.polls`. */
 class Polls {
   constructor(private readonly http: HttpClient) {}
-  /** One summary row per email that has poll responses. With no `limit`, all of them. GET /polls */
+  /**
+   * One summary row per email that has poll responses. GET /polls.
+   *
+   * With no `limit` the response is capped at 1000 rows (the server's
+   * unpaginated ceiling) and sets `has_more: true` when it bites.
+   */
   list(params?: PaginationParams): Promise<Result<ListResponse<Poll>>> {
     return this.http.request('GET', `/polls${paginate(params)}`);
   }
@@ -508,7 +542,11 @@ class Campaigns {
   /**
    * List campaigns. Rows are the trimmed {@link CampaignListItem} (no bodies,
    * no follow-ups, no statistics) — use `campaigns.get(id)` for the full
-   * object. With no params every campaign is returned.
+   * object.
+   *
+   * With no params the response is capped at 1000 rows (the server's
+   * unpaginated ceiling) and sets `has_more: true` when it bites — page with
+   * `limit`/`after` rather than assuming one call returns every campaign.
    */
   list(params?: PaginationParams): Promise<Result<ListResponse<CampaignListItem>>> {
     return this.http.request('GET', `/campaigns${paginate(params)}`);
@@ -524,7 +562,22 @@ class Campaigns {
   send(id: string, payload?: { scheduled_at?: string; schedule_timezone?: string }): Promise<Result<{ id: string }>> {
     return this.http.request('POST', p`/campaigns/${id}/send`, payload ?? {});
   }
-  /** Cancel a scheduled campaign (returns it to draft). POST /campaigns/:id/cancel */
+  /**
+   * Stop a campaign's remaining work. POST /campaigns/:id/cancel — accepted
+   * only on `scheduled`, `recurring`, `paused` and `queued`; any other status
+   * is a `validation_error`.
+   *
+   * The resulting status depends on whether the send had started:
+   * - `scheduled` / `recurring` / `paused` → back to **`draft`**, editable and
+   *   re-sendable; the pending job (next occurrence included) is dropped.
+   * - `queued` (already fanning out) → **`canceled`**, which is TERMINAL. Part
+   *   of the audience has already been mailed, so it is deliberately not
+   *   re-sendable; copies already handed to the mail service cannot be
+   *   recalled. What stops is every remaining recipient — for a staggered
+   *   campaign, every future batch-day.
+   *
+   * Read `data.status` to see which happened.
+   */
   cancel(id: string): Promise<Result<Campaign>> {
     return this.http.request('POST', p`/campaigns/${id}/cancel`);
   }
@@ -621,7 +674,12 @@ class Topics {
   get(id: string): Promise<Result<Topic>> {
     return this.http.request('GET', p`/topics/${id}`);
   }
-  /** List a domain's topics (`domain` is required). With no `limit`, all of them. */
+  /**
+   * List a domain's topics (`domain` is required).
+   *
+   * With no `limit` the response is capped at 1000 rows (the server's
+   * unpaginated ceiling) and sets `has_more: true` when it bites.
+   */
   list(params: ListTopicsParams): Promise<Result<ListResponse<Topic>>> {
     const q = addPagination(new URLSearchParams({ domain: params.domain }), params);
     return this.http.request('GET', `/topics?${q.toString()}`);
@@ -902,7 +960,12 @@ class Events {
  */
 class ApiKeys {
   constructor(private readonly http: HttpClient) {}
-  /** List active keys (revoked ones are excluded). With no params, all of them. */
+  /**
+   * List active keys (revoked ones are excluded).
+   *
+   * With no params the response is capped at 1000 rows (the server's
+   * unpaginated ceiling) and sets `has_more: true` when it bites.
+   */
   list(params?: PaginationParams): Promise<Result<ListResponse<ApiKey>>> {
     return this.http.request('GET', `/api-keys${paginate(params)}`);
   }
