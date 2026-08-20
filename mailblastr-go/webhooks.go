@@ -1,6 +1,7 @@
 package mailblastr
 
 import (
+	"bytes"
 	"context"
 	"crypto/hmac"
 	"crypto/sha256"
@@ -9,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf16"
 )
 
 // Webhook event names accepted by CreateWebhookRequest.Events and
@@ -225,6 +227,28 @@ func (s *WebhooksService) Verify(payload []byte, headers http.Header, secret str
 // '-'/'_' onto '+'/'/' before testing membership, so both spellings decode.
 const b64Alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
 
+// maskedUnits reproduces the FIRST thing Node's base64 decoder does to a
+// string: it walks the value as UTF-16 code units and keeps only the low 8
+// bits of each one, before any alphabet lookup happens. The masking is not a
+// detail of the lookup — it changes which characters exist. U+0141 'Ł' masks
+// to 0x41 'A' and contributes six bits of data; U+013D 'Ľ' masks to 0x3D '='
+// and TERMINATES the value, truncating the key. Go strings are UTF-8 and
+// range-ing one yields codepoints, so the conversion to code units has to be
+// explicit: an astral character such as U+1D441 '𝑁' contributes its two
+// surrogate halves 0xD835/0xDC41 — masking to '5' and 'A' — and NOT its four
+// UTF-8 bytes, which would decode to something else entirely. Getting this
+// wrong is silent: the derived key merely differs from the signer's, so
+// verification answers no_match and a correctly configured endpoint rejects
+// every genuine delivery as forged.
+func maskedUnits(s string) []byte {
+	units := utf16.Encode([]rune(s))
+	out := make([]byte, len(units))
+	for i, u := range units {
+		out[i] = byte(u) // low 8 bits; the rest of the code unit is discarded
+	}
+	return out
+}
+
 // lenientB64 decodes base64 the way the signer does, not the way Go does.
 //
 // The backend derives its key with Node's Buffer.from(suffix, "base64")
@@ -241,26 +265,34 @@ const b64Alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456
 // delivery came back {Valid: false, Reason: "no_match"} and the handler 401'd
 // real MailBlastr events. Node, python (_b64_lenient) and php are all lenient;
 // this reproduces them byte for byte.
+//
+// Everything below operates on maskedUnits(s), never on s itself, because the
+// UTF-16 low-byte mask has to run BEFORE these rules see the input: 'Ľ' only
+// terminates the value once it has become '=', and 'Ł' only carries data once
+// it has become 'A'. Splitting on '=' in the original string first would miss
+// both.
 func lenientB64(s string) []byte {
-	if i := strings.IndexByte(s, '='); i >= 0 {
-		s = s[:i] // Node's decoder treats '=' as a terminator, not as padding to skip
+	masked := maskedUnits(s)
+	if i := bytes.IndexByte(masked, '='); i >= 0 {
+		masked = masked[:i] // Node's decoder treats '=' as a terminator, not as padding to skip
 	}
-	cleaned := strings.Map(func(r rune) rune {
+	cleaned := make([]byte, 0, len(masked))
+	for _, c := range masked {
 		switch {
-		case r == '-':
-			return '+'
-		case r == '_':
-			return '/'
-		case strings.ContainsRune(b64Alphabet, r):
-			return r
-		default:
-			return -1 // whitespace, punctuation, anything else: ignored, not fatal
+		case c == '-':
+			c = '+'
+		case c == '_':
+			c = '/'
 		}
-	}, s)
+		if strings.IndexByte(b64Alphabet, c) >= 0 {
+			cleaned = append(cleaned, c)
+		}
+		// whitespace, punctuation, anything else: ignored, not fatal
+	}
 	if len(cleaned)%4 == 1 {
 		cleaned = cleaned[:len(cleaned)-1] // a single leftover character encodes no byte
 	}
-	raw, err := base64.RawStdEncoding.DecodeString(cleaned)
+	raw, err := base64.RawStdEncoding.DecodeString(string(cleaned))
 	if err != nil {
 		return nil // unreachable: cleaned is alphabet-only and never length%4 == 1
 	}
@@ -271,6 +303,12 @@ func lenientB64(s string) []byte {
 // (base64-decodes the suffix leniently, exactly as the signer does — see
 // lenientB64); a secret without the prefix, or one whose suffix decodes to
 // nothing, is used as raw UTF-8 bytes.
+//
+// The fallback takes the WHOLE secret, "whsec_" prefix included, and its real
+// UTF-8 bytes — lenientB64's UTF-16 low-byte masking applies only inside the
+// decoder. "whsec_中文" decodes to nothing (both code units mask outside the
+// alphabet) and keys on the 12 bytes of "whsec_中文", not on the two masked
+// ones.
 func secretToKey(secret string) []byte {
 	if suffix, ok := strings.CutPrefix(secret, "whsec_"); ok {
 		if raw := lenientB64(suffix); len(raw) > 0 {

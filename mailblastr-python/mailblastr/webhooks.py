@@ -78,33 +78,74 @@ def _read_header(headers, name):
     return None
 
 
-# Base64 alphabet, plus the URL-safe spellings of the last two characters.
+# Base64 alphabet as BYTE values, plus the URL-safe spellings of the last two
+# characters. Bytes, not characters, because rule 5 in `_b64_lenient` reduces the
+# suffix to bytes before anything in it is looked up in this table.
 _B64_ALPHABET = frozenset(
-    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/-_"
+    b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/-_"
 )
+
+# `-`/`_` are the URL-safe spellings of `+`/`/`: TRANSLATED, never dropped (rule 3).
+_B64_URLSAFE = bytes.maketrans(b"-_", b"+/")
 
 
 def _b64_lenient(text):
     """Decode base64 the way the signer does, not the way Python does.
 
     The backend derives its key with Node's ``Buffer.from(suffix, 'base64')``
-    (lib/crypto.ts ``secretToKey``), which is LENIENT: it ignores characters
-    outside the alphabet, accepts the URL-safe ``-``/``_`` spellings, needs no
-    ``=`` padding, and decodes a trailing partial group (dropping a lone 1-char
-    remainder, which carries no whole byte). ``base64.b64decode`` does none of
-    that — it raises ``binascii.Error`` on any length that is not a multiple of
-    four and silently DISCARDS ``-``/``_``. A caller-supplied secret (the
-    ``secret`` field on POST /webhooks) that is unpadded or URL-safe therefore
-    produced a DIFFERENT key here than at the signer, and every valid delivery
-    came back ``{"valid": False, "reason": "no_match"}``. Ruby (``unpack1("m")``)
-    and the Node SDK are both lenient; this reproduces them byte for byte.
+    (lib/crypto.ts ``secretToKey``), and every SDK has to reproduce that byte for
+    byte: a key that differs from the signer's does not fail loudly, it reports
+    ``no_match``, so a correctly configured endpoint silently treats every
+    genuine delivery as forged. Node's rules are NOT the RFC's — following the
+    RFC is exactly how this shipped broken twice — and all five of these matter:
+
+    1. ``=`` TERMINATES the input. Everything from the first ``=`` onward is
+       DISCARDED; it is not "padding to be stripped". ``"YWJj====ZA"`` is
+       ``b"abc"``, not ``b"abcd"``, and ``"Y=WJj"`` decodes to NOTHING (which
+       sends ``_secret_to_key`` down its raw-bytes fallback). Stripping ``=``
+       and decoding the rest was this function's own residual divergence — the
+       one 5.0.0 propagated to five other SDKs by porting it.
+    2. Characters outside the alphabet are SKIPPED, never fatal: whitespace,
+       punctuation and non-ASCII are ignored, so ``"YW!Jj"`` is ``b"abc"``.
+    3. ``-`` and ``_`` are the URL-safe spellings of ``+`` and ``/`` and must be
+       TRANSLATED, not dropped.
+    4. A trailing group of ONE character carries no whole byte and contributes
+       nothing; 2 chars give 1 byte, 3 give 2.
+    5. The unit Node reads is the LOW 8 BITS OF EACH UTF-16 CODE UNIT, not the
+       codepoint and not the UTF-8 bytes: `Buffer.from(str, 'base64')` masks
+       every code unit with ``0xFF`` before the table lookup. So ``"YWŁj"`` is
+       ``b"abc"`` mangled to ``616023`` (U+0141 & 0xFF = 0x41 ``A``), U+013D
+       masks to 0x3D and TERMINATES the input under rule 1, and an astral
+       character contributes its two SURROGATE halves' low bytes — ``"𝑁"`` is
+       0xD835/0xDC41 → ``"5A"`` → the single byte 0xE4, never its UTF-8 bytes.
+       This is
+       why it must run BEFORE rules 1-4: split the raw string on ``=`` and
+       U+013D never terminates anything. Invisible to ASCII tests, which is how
+       all nine SDKs scored a clean sweep on the old corpus while diverging on
+       every secret carrying a codepoint above 0xFF.
+
+    ``base64.b64decode`` obeys none of this — it raises ``binascii.Error`` on a
+    length that is not a multiple of four, silently discards ``-``/``_``, and
+    happily decodes past an interior ``=``. So it is used only for the final
+    fixed-up group decode; the truncation, the alphabet filter and the URL-safe
+    translation are done here, because that is where every language's built-in
+    parts ways with Node. A caller-supplied secret (the ``secret`` field on
+    POST /webhooks, which the backend accepts verbatim with no shape
+    validation) can be any of these shapes.
     """
-    cleaned = "".join(c for c in text if c in _B64_ALPHABET).replace("-", "+").replace("_", "/")
+    # Rule 5 first: UTF-16LE lays out two bytes per code unit little-endian, so
+    # `[0::2]` IS the `& 0xFF` mask. `surrogatepass` is mandatory — without it an
+    # astral character (or a lone surrogate a caller pasted in) raises instead of
+    # yielding the two halves Node sees, and `text.encode("utf-8")` here would
+    # give U+1D441 three bytes of entirely different values.
+    masked = text.encode("utf-16-le", "surrogatepass")[0::2]
+    head = masked.split(b"=", 1)[0]
+    cleaned = bytes(b for b in head if b in _B64_ALPHABET).translate(_B64_URLSAFE)
     remainder = len(cleaned) % 4
     if remainder == 1:
         cleaned = cleaned[:-1]  # a single leftover character encodes no byte
     elif remainder:
-        cleaned += "=" * (4 - remainder)
+        cleaned += b"=" * (4 - remainder)
     try:
         return base64.b64decode(cleaned)
     except (ValueError, binascii.Error):  # pragma: no cover - defensive
@@ -113,7 +154,14 @@ def _b64_lenient(text):
 
 def _secret_to_key(secret):
     """Derive the HMAC key from a ``whsec_``-prefixed secret (base64-decode the
-    suffix); a secret without the prefix is used as raw UTF-8 bytes."""
+    suffix); a secret without the prefix is used as raw UTF-8 bytes.
+
+    The fallback shape is as load-bearing as the decoder and is easy to get
+    subtly wrong: when the suffix decodes to ZERO bytes — ``whsec_``, ``whsec_=``,
+    ``whsec_Y``, ``whsec_!!!!`` — the server keys off the WHOLE secret including
+    the ``whsec_`` prefix, not the suffix and not an empty key. Anything else
+    here fails exactly as invisibly as a wrong decoder.
+    """
     s = str(secret or "")
     if s.startswith("whsec_"):
         decoded = _b64_lenient(s[len("whsec_"):])

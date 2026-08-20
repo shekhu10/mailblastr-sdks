@@ -13,14 +13,14 @@ Official Java SDK for the [MailBlastr](https://www.mailblastr.com) email API —
 <dependency>
   <groupId>com.mailblastr</groupId>
   <artifactId>mailblastr</artifactId>
-  <version>5.0.0</version>
+  <version>5.0.1</version>
 </dependency>
 ```
 
 ### Gradle
 
 ```groovy
-implementation 'com.mailblastr:mailblastr:5.0.0'
+implementation 'com.mailblastr:mailblastr:5.0.1'
 ```
 
 The jar is plain JVM bytecode compiled for **Java 11**, so it is consumable

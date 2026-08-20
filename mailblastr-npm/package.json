@@ -1,6 +1,6 @@
 {
   "name": "mailblastr",
-  "version": "5.0.0",
+  "version": "5.0.1",
   "description": "Official Node.js SDK for the MailBlastr email API — send transactional and marketing email from your own verified domain.",
   "keywords": [
     "mailblastr",

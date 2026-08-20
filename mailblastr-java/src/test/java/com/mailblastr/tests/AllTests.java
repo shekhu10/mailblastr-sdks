@@ -8,6 +8,7 @@ public final class AllTests {
         SegmentsCampaignsTest.run();
         DomainsTest.run();
         WebhooksTest.run();
+        WebhookKeyConformanceTest.run();
         MiscResourcesTest.run();
         ContractParityTest.run();
         HttpCoreTest.run();

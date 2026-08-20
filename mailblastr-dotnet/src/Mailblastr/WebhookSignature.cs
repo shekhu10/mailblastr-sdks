@@ -82,57 +82,100 @@ public static class WebhookSignature
     }
 
     /// <summary>
-    /// Derive the HMAC key from a <c>whsec_</c>-prefixed secret (base64-decode
-    /// the suffix); a secret without the prefix is used as raw UTF-8 bytes.
-    /// Mirrors the backend's key derivation.
+    /// Derive the HMAC key from the signing secret, mirroring the backend's
+    /// own <c>secretToKey</c> (mailblastr_webapp/lib/crypto.ts) byte for byte:
+    /// base64-decode the part after <c>whsec_</c>, and fall back to the raw
+    /// UTF-8 bytes of the WHOLE string when there is no prefix or the suffix
+    /// decodes to nothing.
     /// </summary>
     private static byte[] SecretToKey(string secret)
     {
         const string prefix = "whsec_";
         if (secret.StartsWith(prefix, StringComparison.Ordinal))
         {
-            // Mirror Node's Buffer.from(suffix, 'base64') — the decoder the
-            // server signs with (lib/crypto.ts secretToKey): it accepts the
-            // URL-safe '-'/'_' spellings, needs no '=' padding, ignores
-            // characters outside the alphabet, and drops a lone trailing
-            // character that encodes no byte. Convert.FromBase64String does
-            // none of that, so an unpadded or URL-safe secret — POST /webhooks
-            // takes a caller-supplied `secret` verbatim, which is how you mirror
-            // one across providers — threw FormatException, fell through to the
-            // raw UTF-8 branch below, and keyed the HMAC with the literal
-            // "whsec_…" string. That derives a DIFFERENT key than the signer,
-            // so every genuine delivery came back `no_match`.
-            var sb = new StringBuilder();
-            foreach (var ch in secret.AsSpan(prefix.Length))
+            var decoded = DecodeBase64LikeNode(secret.AsSpan(prefix.Length));
+            if (decoded.Length > 0)
             {
-                if (ch == '-') sb.Append('+');
-                else if (ch == '_') sb.Append('/');
-                else if (char.IsAsciiLetterOrDigit(ch) || ch == '+' || ch == '/') sb.Append(ch);
+                return decoded;
             }
-            var cleaned = sb.ToString();
-            var remainder = cleaned.Length % 4;
-            if (remainder == 1)
-            {
-                cleaned = cleaned[..^1]; // a single leftover character encodes no byte
-            }
-            else if (remainder != 0)
-            {
-                cleaned = cleaned.PadRight(cleaned.Length + (4 - remainder), '=');
-            }
-            try
-            {
-                var decoded = Convert.FromBase64String(cleaned);
-                if (decoded.Length > 0)
-                {
-                    return decoded;
-                }
-            }
-            catch (FormatException)
-            {
-                // Fall through to raw bytes, matching the signer's own fallback.
-            }
+            // Zero bytes is not an error to the signer. It keeps the WHOLE
+            // secret — `whsec_` prefix included — as the key, so shapes like
+            // `whsec_`, `whsec_=`, `whsec_Y` and `whsec_éüñ` all land here.
+            // Falling through with the prefix stripped, or with an empty key,
+            // is its own silent no_match; that is why this branch lives in the
+            // caller rather than inside the decoder, which only ever reports
+            // how many bytes it produced.
         }
         return Encoding.UTF8.GetBytes(secret);
+    }
+
+    /// <summary>
+    /// Decode a base64 string the way Node's <c>Buffer.from(s, 'base64')</c>
+    /// does — the decoder the server signs with. It is far more forgiving than
+    /// <see cref="Convert.FromBase64String(string)"/>, and the difference is
+    /// reachable in production: POST /webhooks stores a caller-supplied
+    /// <c>secret</c> verbatim with no shape validation, so a customer can save
+    /// any of the spellings handled below. Deriving a key that differs from the
+    /// signer's does not fail loudly — verification just returns
+    /// <c>no_match</c>, and a correctly configured endpoint silently treats
+    /// every genuine delivery as forged.
+    /// </summary>
+    private static byte[] DecodeBase64LikeNode(ReadOnlySpan<char> suffix)
+    {
+        var sb = new StringBuilder(suffix.Length);
+        foreach (var unit in suffix)
+        {
+            // 5. The alphabet is indexed by the LOW 8 BITS of each UTF-16 code
+            //    unit, not by the codepoint — Node masks with 0xFF before the
+            //    table lookup, so 'Ł' (U+0141) IS 'A' to the decoder and 'Ľ'
+            //    (U+013D) IS the '=' that ends the input. The mask has to run
+            //    AHEAD of every rule below: split on '=' first and U+013D never
+            //    gets the chance to terminate anything.
+            //
+            //    Iterating `char` is the whole trick on .NET — strings already
+            //    ARE UTF-16, so an astral character like '𝑁' (U+1D441)
+            //    arrives as its two surrogates D835/DC41 and contributes '5'
+            //    then 'A': two units, not the four bytes of its UTF-8 form.
+            //    Switch this loop to EnumerateRunes/codepoints and every
+            //    non-Latin-1 secret derives a key the signer never used.
+            var ch = (char)(unit & 0xFF);
+
+            // 1. '=' TERMINATES the input. It is not padding to be stripped:
+            //    everything from the first '=' onward is discarded, so Node
+            //    reads "YWJj====ZA" as "abc", never "abcd". Filtering '=' out
+            //    and decoding what follows is the bug this SDK shipped — it
+            //    turned the 4-byte key of `whsec_YWJjZA==ZXh0cmE` into a
+            //    9-byte one.
+            if (ch == '=') break;
+
+            // 2. '-' and '_' are the URL-safe spellings of '+' and '/'. They
+            //    must be TRANSLATED, not dropped — dropping them silently
+            //    shortens the key instead of changing it.
+            if (ch == '-') sb.Append('+');
+            else if (ch == '_') sb.Append('/');
+            // 3. Anything outside the alphabet is SKIPPED, never fatal:
+            //    whitespace, punctuation and non-ASCII alike ("YW!Jj" is "abc").
+            else if (char.IsAsciiLetterOrDigit(ch) || ch == '+' || ch == '/') sb.Append(ch);
+        }
+
+        // 4. A trailing group of ONE character carries no whole byte, so Node
+        //    discards it (2 chars -> 1 byte, 3 -> 2, 4 -> 3). Re-pad every
+        //    other remainder, because Convert.FromBase64String demands a
+        //    multiple of 4; on the groups that DO carry bytes the two decoders
+        //    agree, which is why the final decode can stay a framework call.
+        var remainder = sb.Length % 4;
+        if (remainder == 1)
+        {
+            sb.Length -= 1;
+        }
+        else if (remainder != 0)
+        {
+            sb.Append('=', 4 - remainder);
+        }
+
+        // Every surviving character is now in the standard alphabet and the
+        // length is a multiple of 4, so this cannot throw.
+        return sb.Length == 0 ? Array.Empty<byte>() : Convert.FromBase64String(sb.ToString());
     }
 
     /// <summary>Constant-time compare of two base64 signature strings.</summary>

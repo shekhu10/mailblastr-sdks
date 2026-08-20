@@ -89,23 +89,174 @@ final class WebhookSignature
      * Derive the HMAC key from a `whsec_`-prefixed secret (base64-decode the
      * suffix); a secret without the prefix is used as raw UTF-8 bytes.
      *
-     * The decode is deliberately LENIENT, mirroring the key the server actually
-     * SIGNS with: its own secretToKey uses Node's `Buffer.from(suffix,
-     * 'base64')`, which ignores characters outside the alphabet and accepts the
-     * URL-safe one. Decoding strictly here returned false for a caller-supplied
-     * secret (POST /webhooks accepts one) whose suffix was not valid standard
-     * base64, fell back to the raw string as the key, and then rejected every
-     * genuine delivery as `no_match`.
+     * This has to reproduce the server's own secretToKey
+     * (mailblastr_webapp/lib/crypto.ts) BYTE FOR BYTE, because a key that
+     * differs from the signer's does not fail loudly: verify just reports
+     * `no_match`, so a correctly configured endpoint silently treats every
+     * genuine delivery as forged.
+     *
+     * Two rules live here, and both have shipped broken:
+     *
+     *  - The decode is LENIENT (see nodeBase64Decode). Decoding strictly
+     *    returned false for a caller-supplied secret whose suffix was not valid
+     *    standard base64 — POST /webhooks accepts one verbatim, with no shape
+     *    validation — fell back to the raw string as the key, and rejected
+     *    every genuine delivery.
+     *  - An EMPTY decode falls back to the whole secret, `whsec_` prefix
+     *    INCLUDED, not to the suffix. `whsec_Y` therefore signs with the seven
+     *    UTF-8 bytes `whsec_Y`, because one leftover base64 character carries
+     *    no whole byte.
      */
     private static function secretToKey(string $secret): string
     {
         if (str_starts_with($secret, 'whsec_')) {
-            $suffix = strtr(substr($secret, strlen('whsec_')), '-_', '+/');
-            $decoded = base64_decode($suffix, false);
-            if ($decoded !== false && $decoded !== '') {
+            $decoded = self::nodeBase64Decode(substr($secret, strlen('whsec_')));
+            if ($decoded !== '') {
                 return $decoded;
             }
         }
         return $secret;
+    }
+
+    /**
+     * Decode base64 the way Node's `Buffer.from(str, 'base64')` does — which is
+     * NOT what any base64 RFC says, and not what PHP's base64_decode does in
+     * either mode. Following the RFC is precisely how the key-derivation bugs
+     * got written, so these rules are empirical:
+     *
+     *  5. THE UNIT IS THE LOW 8 BITS OF EACH UTF-16 CODE UNIT, not the
+     *     codepoint and not the UTF-8 byte. Node masks every code unit with
+     *     0xFF before the table lookup, so `Ł` (U+0141) is read as `A` and `Ľ`
+     *     (U+013D) is read as `=` and terminates the value. It runs FIRST,
+     *     ahead of rules 1-4, because rule 1 has to see the masked bytes or
+     *     U+013D never terminates anything. See utf16CodeUnitLowBytes.
+     *  1. `=` TERMINATES the input. Everything from the first `=` onward is
+     *     DISCARDED; it is not "padding to be stripped". `YWJj====ZA` decodes
+     *     to `abc`, NOT `abcd`. PHP's non-strict base64_decode strips the `=`
+     *     and keeps going, which is exactly the divergence this fixes.
+     *  2. Characters outside the alphabet are SKIPPED, never fatal — whitespace,
+     *     punctuation and masked-away code units are ignored (`YW!Jj` is `abc`).
+     *     The filter below is byte-wise with no /u modifier, which is correct
+     *     only because rule 5 already flattened the string to one byte per code
+     *     unit; running it on raw UTF-8 would drop `Ł` instead of reading `A`.
+     *  3. `-` and `_` are the URL-safe spellings of `+` and `/` and are
+     *     TRANSLATED, not dropped. This too is post-mask: `中` (U+4E2D) masks to
+     *     0x2D `-`, so it becomes `+` rather than being discarded.
+     *  4. A trailing group of ONE character contributes no byte (2 chars -> 1
+     *     byte, 3 -> 2, 4 -> 3). We drop it before decoding so that the string
+     *     handed to base64_decode is always a clean, strictly decodable one.
+     */
+    private static function nodeBase64Decode(string $input): string
+    {
+        $input = self::utf16CodeUnitLowBytes($input);
+
+        $terminator = strpos($input, '=');
+        if ($terminator !== false) {
+            $input = substr($input, 0, $terminator);
+        }
+
+        $chars = preg_replace('#[^A-Za-z0-9+/]#', '', strtr($input, '-_', '+/')) ?? '';
+        if (strlen($chars) % 4 === 1) {
+            $chars = substr($chars, 0, -1);
+        }
+
+        $decoded = base64_decode($chars, true);
+        return $decoded === false ? '' : $decoded;
+    }
+
+    /**
+     * Flatten a UTF-8 PHP string to ONE BYTE PER UTF-16 CODE UNIT — the low 8
+     * bits of each — which is the alphabet-lookup unit Node actually uses.
+     *
+     * A JS string is UTF-16, and Node's base64 decoder masks each code unit
+     * with 0xFF before consulting the table, so a non-ASCII character is not
+     * "some junk that gets skipped": it aliases onto whatever ASCII character
+     * shares its low byte. `YWŁj` is `YWAj` (U+0141 -> 0x41), and `YWJjĽZA`
+     * stops at `YWJj` because U+013D masks to 0x3D, an `=`. A PHP string is
+     * UTF-8 bytes, so we must reconstruct the code units before masking —
+     * taking UTF-8 bytes directly is a different answer for everything above
+     * U+007F, and was worth 1300/3000 on the differential fuzz against Node.
+     *
+     * Astral characters are the reason this cannot be "decode the codepoint and
+     * mask it": U+1D441 is ONE codepoint but TWO code units, the surrogates
+     * 0xD835/0xDC41, contributing `5` and `A` — a real byte, not nothing.
+     *
+     * Bytes that are not valid UTF-8 have no JS-string counterpart; Node would
+     * have read them as U+FFFD, so we emit 0xFD. How many replacements a bad
+     * run produces is immaterial — 0xFD is outside the alphabet either way, so
+     * every spelling of "malformed" filters out to the same empty contribution.
+     */
+    private static function utf16CodeUnitLowBytes(string $input): string
+    {
+        $out = '';
+        $len = strlen($input);
+
+        for ($i = 0; $i < $len;) {
+            $lead = ord($input[$i]);
+            if ($lead < 0x80) {
+                $out .= $input[$i];
+                $i++;
+                continue;
+            }
+
+            // Sequence length, the bits the lead byte carries, and the smallest
+            // codepoint it may legally encode (rejects overlong forms).
+            if (($lead & 0xE0) === 0xC0) {
+                $tail = 1;
+                $cp = $lead & 0x1F;
+                $min = 0x80;
+            } elseif (($lead & 0xF0) === 0xE0) {
+                $tail = 2;
+                $cp = $lead & 0x0F;
+                $min = 0x800;
+            } elseif (($lead & 0xF8) === 0xF0) {
+                $tail = 3;
+                $cp = $lead & 0x07;
+                $min = 0x10000;
+            } else {
+                $out .= "\xfd"; // continuation byte with no lead, or 0xF8+
+                $i++;
+                continue;
+            }
+
+            if ($i + $tail >= $len) {
+                $out .= "\xfd"; // truncated at end of input
+                $i++;
+                continue;
+            }
+
+            $wellFormed = true;
+            for ($k = 1; $k <= $tail; $k++) {
+                $cont = ord($input[$i + $k]);
+                if (($cont & 0xC0) !== 0x80) {
+                    $wellFormed = false;
+                    break;
+                }
+                $cp = ($cp << 6) | ($cont & 0x3F);
+            }
+
+            // Surrogate halves are rejected here on purpose: CESU-8 `ED B1 81`
+            // is U+DC41, whose low byte is an `A`, but Node reading those bytes
+            // sees U+FFFD and contributes nothing. Decoding it would invent a
+            // base64 character the server never saw.
+            if (!$wellFormed || $cp < $min || $cp > 0x10FFFF || ($cp >= 0xD800 && $cp <= 0xDFFF)) {
+                $out .= "\xfd";
+                $i++;
+                continue;
+            }
+
+            $i += $tail + 1;
+
+            if ($cp < 0x10000) {
+                $out .= chr($cp & 0xFF);
+                continue;
+            }
+
+            $v = $cp - 0x10000;
+            $out .= chr((0xD800 + ($v >> 10)) & 0xFF);
+            $out .= chr((0xDC00 + ($v & 0x3FF)) & 0xFF);
+        }
+
+        return $out;
     }
 }

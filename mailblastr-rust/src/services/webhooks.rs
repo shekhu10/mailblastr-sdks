@@ -233,13 +233,44 @@ const B64_LENIENT: GeneralPurpose = GeneralPurpose::new(
 /// `secret` verbatim, with no format validation, and
 /// [`CreateWebhookOptions::with_secret`] is how you set it. npm, python, php
 /// and ruby are all lenient; this reproduces them byte for byte.
+///
+/// The order below is load-bearing, and getting it wrong is what shipped twice:
+/// `=` TERMINATES the input, it is not padding to be stripped. Node stops at the
+/// first `=` and DISCARDS the rest, so `"YWJj====ZA"` is `"abc"` — not `"abcd"`.
+/// Filtering `=` out as just another non-alphabet character and decoding what
+/// remains silently concatenates the tail onto the head, so a secret that merely
+/// looks over-padded derives a longer, wrong key. The truncation therefore has
+/// to happen BEFORE the alphabet filter, because the filter would otherwise eat
+/// the very `=` that marks where the input ends. Truncating can also leave
+/// nothing at all (`"=YWJj"` -> `""`, `"Y=WJj"` -> `"Y"`, a lone char that
+/// carries no whole byte), which is not an error here — it returns empty and
+/// [`secret_to_key`] takes the raw-UTF-8 fallback, exactly as the server does.
+///
+/// One rule sits AHEAD of all of that, and no SDK had it: the unit Node feeds
+/// the base64 table is the low 8 bits of each UTF-16 CODE UNIT — not the
+/// codepoint, and not the UTF-8 byte. `Buffer.from(s, 'base64')` masks every
+/// code unit with `0xFF` before the lookup, so `'\u{0141}'` becomes `0x41` `'A'`
+/// and contributes a real sextet, `'\u{013D}'` becomes `0x3D` `'='` and
+/// TERMINATES the input, and an ASTRAL char arrives as its two SURROGATES
+/// (U+1D441 -> 0xD835, 0xDC41 -> `'5'`, `'A'`), never as its four UTF-8 bytes.
+/// Rust strings are UTF-8, so the mask has to run over [`str::encode_utf16`]:
+/// masking `chars()` would collapse U+1D441 into one unit, and masking
+/// `as_bytes()` would spread it over four, each deriving a different key. The
+/// masking is the FIRST step for the same reason the `=` truncation precedes the
+/// alphabet filter — the split has to see the MASKED bytes or U+013D never
+/// terminates. None of this is visible to an ASCII test: every SDK passed the
+/// 31-vector ASCII corpus while mis-deriving the key for any secret a customer
+/// pasted with a character above U+00FF in it, and every genuine delivery to
+/// that endpoint came back `no_match`.
 fn b64_lenient(s: &str) -> Vec<u8> {
-    let mut cleaned: String = s
-        .chars()
-        .filter_map(|c| match c {
-            '-' => Some('+'),
-            '_' => Some('/'),
-            'A'..='Z' | 'a'..='z' | '0'..='9' | '+' | '/' => Some(c),
+    let masked: Vec<u8> = s.encode_utf16().map(|unit| (unit & 0xFF) as u8).collect();
+    let terminated = masked.split(|b| *b == b'=').next().unwrap_or(&[]);
+    let mut cleaned: Vec<u8> = terminated
+        .iter()
+        .filter_map(|&b| match b {
+            b'-' => Some(b'+'),
+            b'_' => Some(b'/'),
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'+' | b'/' => Some(b),
             _ => None,
         })
         .collect();
@@ -251,6 +282,15 @@ fn b64_lenient(s: &str) -> Vec<u8> {
 
 /// Derive the HMAC key from a `whsec_`-prefixed secret (base64-decode the
 /// suffix); a secret without the prefix is used as raw UTF-8 bytes.
+///
+/// The empty-decode branch is as much a part of the contract as the decoder is.
+/// When the suffix yields ZERO bytes — it was empty, all junk, all non-ASCII, or
+/// truncated away by a leading `=` — the server does NOT key the HMAC with an
+/// empty key: it falls back to the UTF-8 bytes of the WHOLE secret, `whsec_`
+/// prefix INCLUDED. So `"whsec_="` keys on the 7 bytes of `"whsec_="`, not on
+/// nothing. Returning the decoded bytes unconditionally, or stripping the prefix
+/// before the fallback, both derive a key the signer never used and turn every
+/// genuine delivery into `no_match`.
 fn secret_to_key(secret: &str) -> Vec<u8> {
     if let Some(b64) = secret.strip_prefix("whsec_") {
         let bytes = b64_lenient(b64);
@@ -552,6 +592,519 @@ mod tests {
                 res.valid,
                 "{secret} rejected a genuine delivery: {:?}",
                 res.reason
+            );
+        }
+    }
+
+    // --- `whsec_` key-derivation conformance corpus -----------------------
+    //
+    // Generated FROM NODE by scripts/webhook-b64-corpus.mjs and inlined here on
+    // purpose: read from that path at runtime and a published crate's tests stop
+    // working, since the file ships with the monorepo, not the tarball.
+    //
+    // These vectors exist because a key that differs from the signer's does not
+    // fail loudly. Verification just answers `no_match`, so a correctly wired
+    // customer endpoint silently treats 100% of its genuine deliveries as
+    // forged, and nothing anywhere logs a complaint. That failure has shipped
+    // twice; the fix now has vectors instead of a plausible-looking reimplementation.
+    //
+    // `sig` is signed by NODE with the SERVER's key, never through
+    // `secret_to_key`. That is the whole point — a signature made through the
+    // function under test agrees with any deriver, a broken one included, so it
+    // can only prove self-consistency. Only the server's own signature can prove
+    // agreement with the server.
+    //
+    // 41 vectors, 10 of them raw-fallback. Both counts are asserted below and
+    // the array length is pinned in the type, because the previous 31-vector
+    // embed was ALL-ASCII and every SDK passed it while getting rule 5 wrong; a
+    // lossy re-embed that quietly drops the ten high-codepoint vectors would go
+    // green again on exactly the shapes that were broken in production.
+    //
+    // (name, secret, key_hex, key_is_raw_fallback, sig)
+    #[allow(clippy::type_complexity)]
+    const CORPUS: [(&str, &str, &str, bool, &str); 41] = [
+        (
+            "std_padded",
+            "whsec_YWJjZA==",
+            "61626364",
+            false,
+            "v1,iQ3TgsWvMC6o2n0/+63tfcDdY+HpKHS1hGv7EXnaDmg=",
+        ),
+        (
+            "std_unpadded",
+            "whsec_YWJjZA",
+            "61626364",
+            false,
+            "v1,iQ3TgsWvMC6o2n0/+63tfcDdY+HpKHS1hGv7EXnaDmg=",
+        ),
+        (
+            "std_exact4",
+            "whsec_YWJj",
+            "616263",
+            false,
+            "v1,mTxyeI+DVWF63uQ5z0GuEyZ1Xlg+Z1pz6v675XyPSgk=",
+        ),
+        (
+            "short_1",
+            "whsec_Y",
+            "77687365635f59",
+            true,
+            "v1,ZMKGqdkd7rDYPj+XX10aKkkyV1NMbcTZ7tFWT6FOwdI=",
+        ),
+        (
+            "short_2",
+            "whsec_YW",
+            "61",
+            false,
+            "v1,xnhr17yqBov566EgLaHShB0U7fh87lB6A7uiu7MAgLo=",
+        ),
+        (
+            "short_3",
+            "whsec_YWJ",
+            "6162",
+            false,
+            "v1,Fen63yOpcFJsYPJGDIVlJAcEyTdJLIHURAdGZghc0kI=",
+        ),
+        (
+            "interior_eq",
+            "whsec_YWJjZA==ZXh0cmE",
+            "61626364",
+            false,
+            "v1,iQ3TgsWvMC6o2n0/+63tfcDdY+HpKHS1hGv7EXnaDmg=",
+        ),
+        (
+            "single_eq_mid",
+            "whsec_SGVsbG8=V29ybGQ",
+            "48656c6c6f",
+            false,
+            "v1,CZX45uWtP5WJeQEwRlfXHLHcHVZCe/8kJBOVyFNtg5Y=",
+        ),
+        (
+            "eq_at_pos1",
+            "whsec_Y=WJj",
+            "77687365635f593d574a6a",
+            true,
+            "v1,UIfA+R8GMffinY6yCKf04G/2VJDSROFMoPH2eyquI0s=",
+        ),
+        (
+            "leading_eq",
+            "whsec_=YWJj",
+            "77687365635f3d59574a6a",
+            true,
+            "v1,bCBBdBeVJ0HXeLD7IFOD+yuxa6OmPlOE1aglni87vcg=",
+        ),
+        (
+            "only_eq",
+            "whsec_=",
+            "77687365635f3d",
+            true,
+            "v1,+Kwou17QNljxc57ZDXLHUV65F24WTp2IJ2Wrt4QX7GU=",
+        ),
+        (
+            "urlsafe",
+            "whsec_a-b_cd",
+            "6be6ff71",
+            false,
+            "v1,fkOORhSnL1g+us9oP06M38Upg0O0DWHEjNrEp14Db3o=",
+        ),
+        (
+            "urlsafe_long",
+            "whsec_SGVsbG8td29ybGRfMTIz",
+            "48656c6c6f2d776f726c645f313233",
+            false,
+            "v1,MQuwMf+xxNaiL4iSVxVAfo2ipZyhiRQ2nECOhs+/9cc=",
+        ),
+        (
+            "space",
+            "whsec_YW Jj",
+            "616263",
+            false,
+            "v1,mTxyeI+DVWF63uQ5z0GuEyZ1Xlg+Z1pz6v675XyPSgk=",
+        ),
+        (
+            "newline",
+            "whsec_YW\nJj",
+            "616263",
+            false,
+            "v1,mTxyeI+DVWF63uQ5z0GuEyZ1Xlg+Z1pz6v675XyPSgk=",
+        ),
+        (
+            "tab",
+            "whsec_YW\tJj",
+            "616263",
+            false,
+            "v1,mTxyeI+DVWF63uQ5z0GuEyZ1Xlg+Z1pz6v675XyPSgk=",
+        ),
+        (
+            "crlf",
+            "whsec_YWJj\r\nZA",
+            "61626364",
+            false,
+            "v1,iQ3TgsWvMC6o2n0/+63tfcDdY+HpKHS1hGv7EXnaDmg=",
+        ),
+        (
+            "junk_bang",
+            "whsec_YW!Jj",
+            "616263",
+            false,
+            "v1,mTxyeI+DVWF63uQ5z0GuEyZ1Xlg+Z1pz6v675XyPSgk=",
+        ),
+        (
+            "junk_at",
+            "whsec_YW@#Jj",
+            "616263",
+            false,
+            "v1,mTxyeI+DVWF63uQ5z0GuEyZ1Xlg+Z1pz6v675XyPSgk=",
+        ),
+        (
+            "junk_unicode",
+            "whsec_YWéJj",
+            "616263",
+            false,
+            "v1,mTxyeI+DVWF63uQ5z0GuEyZ1Xlg+Z1pz6v675XyPSgk=",
+        ),
+        (
+            "all_junk",
+            "whsec_!!!!",
+            "77687365635f21212121",
+            true,
+            "v1,58LmcOHpECIN1Kd9LCIwLIMvCWoASpvHQmdFktsf+gU=",
+        ),
+        (
+            "empty",
+            "whsec_",
+            "77687365635f",
+            true,
+            "v1,aPFabYSxb1mJ7chEB+03S8aHnrX0lOYMM3NlpX8jlD0=",
+        ),
+        (
+            "urlsafe_junk_eq",
+            "whsec_a-b_c=d!e",
+            "6be6ff",
+            false,
+            "v1,tCZ7/6V9FvVbB2YgSNYiDUQHBdTKAOdTBdvcu5juq4k=",
+        ),
+        (
+            "real_shape",
+            "whsec_cg6z29GIzlSydvyOkBWpEsGcKujWfHKh",
+            "720eb3dbd188ce54b276fc8e9015a912c19c2ae8d67c72a1",
+            false,
+            "v1,9ibSgi4IvJt6jD8z6VsRB20hKehvwsMa2ytnUAiUTrM=",
+        ),
+        (
+            "long_mixed",
+            "whsec_QUJDREVGR0hJSktMTU5PUFFSU1RVVldYWVph-_YmNkZQ==",
+            "4142434445464748494a4b4c4d4e4f505152535455565758595a61fbf626364650",
+            false,
+            "v1,wWHwga20dee3TMzivzmoRroQs9kbOe7nExI/9q8Arkc=",
+        ),
+        (
+            "plus_slash",
+            "whsec_a+b/cd",
+            "6be6ff71",
+            false,
+            "v1,fkOORhSnL1g+us9oP06M38Upg0O0DWHEjNrEp14Db3o=",
+        ),
+        (
+            "mixed_alpha",
+            "whsec_a-b/c_d+e",
+            "6be6ff73f77e",
+            false,
+            "v1,dexpl11tMd2WSNauNI5gjPiV1e53krdgh0erdyvdgoI=",
+        ),
+        (
+            "many_eq",
+            "whsec_YWJj====ZA",
+            "616263",
+            false,
+            "v1,mTxyeI+DVWF63uQ5z0GuEyZ1Xlg+Z1pz6v675XyPSgk=",
+        ),
+        (
+            "eq_then_pad",
+            "whsec_YWJjZA===",
+            "61626364",
+            false,
+            "v1,iQ3TgsWvMC6o2n0/+63tfcDdY+HpKHS1hGv7EXnaDmg=",
+        ),
+        (
+            "nonascii_only",
+            "whsec_éüñ",
+            "77687365635fc3a9c3bcc3b1",
+            true,
+            "v1,EFNGWPcyr/96NM1jNdYvBKQ7cDfDlPpx1D8QnQV0bX4=",
+        ),
+        (
+            "digits",
+            "whsec_MTIzNDU2Nzg5MA",
+            "31323334353637383930",
+            false,
+            "v1,RAjKzOdb0xlpZlm64AFX2dHxtKQ45vjn7ccB2VgrYxo=",
+        ),
+        (
+            "hi_masks_to_A",
+            "whsec_YWŁj",
+            "616023",
+            false,
+            "v1,VL40mx0DtTM2Ikt2oCpzCyFMH7ScXmNlILOohrV8QNM=",
+        ),
+        (
+            "hi_masks_to_eq",
+            "whsec_YWJjĽZA",
+            "616263",
+            false,
+            "v1,mTxyeI+DVWF63uQ5z0GuEyZ1Xlg+Z1pz6v675XyPSgk=",
+        ),
+        (
+            "hi_masks_to_a",
+            "whsec_šš",
+            "69",
+            false,
+            "v1,qH+B7OwJNP75A4fe3wfM9VmT2/NDw3CmQzM4wFLDa6Y=",
+        ),
+        (
+            "hi_masks_to_4",
+            "whsec_YWJሴ",
+            "616278",
+            false,
+            "v1,DaONzoMXkQD31ZqPmBOAOGJgLUGdfvTQ8laGoBzdhz0=",
+        ),
+        (
+            "hi_masks_to_nul",
+            "whsec_ĀĀĀĀ",
+            "77687365635fc480c480c480c480",
+            true,
+            "v1,JVTFqibx23iRpUpvctjVuWsso1nYD2MtGUBfIwaOc/Y=",
+        ),
+        (
+            "fullwidth",
+            "whsec_ＹＷＪｊ",
+            "f7b2",
+            false,
+            "v1,1KN9k08myfWQt8J2QP1T1iecIEckkiLWohn3HwjKCho=",
+        ),
+        (
+            "astral_pair",
+            "whsec_𝑁",
+            "e4",
+            false,
+            "v1,VlIqZd+gIP90ykvTun54mNp62zzcFqpPgTSR1MNDcyM=",
+        ),
+        (
+            "astral_emoji",
+            "whsec_🎉",
+            "77687365635ff09f8e89",
+            true,
+            "v1,wMaEB8aUXtVZo6CX0fOjkc2gWXqwvU10RIxi4KzRX6k=",
+        ),
+        (
+            "cjk_skipped",
+            "whsec_中文",
+            "77687365635fe4b8ade69687",
+            true,
+            "v1,uK9WdHrxDFXtkfPvRaB5k/JBwL3EoYA762+/mb/V6yk=",
+        ),
+        (
+            "mixed_hi_lo",
+            "whsec_YWŁjĽZAšš",
+            "616023",
+            false,
+            "v1,VL40mx0DtTM2Ikt2oCpzCyFMH7ScXmNlILOohrV8QNM=",
+        ),
+    ];
+    const CORPUS_BODY: &str = "{\"type\":\"email.delivered\",\"data\":{\"id\":\"em_1\"}}";
+    const CORPUS_ID: &str = "msg_conformance";
+    const CORPUS_TS: &str = "1787200000";
+
+    fn to_hex(bytes: &[u8]) -> String {
+        bytes.iter().map(|b| format!("{b:02x}")).collect()
+    }
+
+    /// Every secret shape must derive the byte-for-byte key Node derives.
+    ///
+    /// The corpus covers all five of Node's rules, each of which some SDK got
+    /// wrong: `=` TERMINATES rather than pads (`YWJj====ZA` is `abc`, not
+    /// `abcd`), out-of-alphabet bytes are skipped rather than fatal, `-`/`_` are
+    /// translated rather than dropped, a 1-char trailing group contributes no
+    /// byte, and the unit fed to the table is the low byte of each UTF-16 code
+    /// unit rather than the codepoint or the UTF-8 byte.
+    #[test]
+    fn derives_node_s_key_for_every_corpus_secret() {
+        assert_eq!(
+            CORPUS.len(),
+            41,
+            "corpus must keep all 41 Node-generated vectors"
+        );
+        let mut wrong = Vec::new();
+        for (name, secret, key_hex, _, _) in CORPUS {
+            let got = to_hex(&secret_to_key(secret));
+            if got != key_hex {
+                wrong.push(format!("{name}: expected {key_hex}, derived {got}"));
+            }
+        }
+        assert!(
+            wrong.is_empty(),
+            "{}/{} secrets derived a key the signer never used:\n  {}",
+            wrong.len(),
+            CORPUS.len(),
+            wrong.join("\n  ")
+        );
+    }
+
+    /// The same corpus through the PUBLIC verify API, against Node's own
+    /// signatures — this is what a customer's endpoint actually calls.
+    ///
+    /// `tolerance_secs: 0` skips the freshness check because the corpus `ts` is
+    /// fixed and would otherwise go stale minutes after it was generated,
+    /// failing every vector for a reason that has nothing to do with the key.
+    /// Freshness is covered separately by
+    /// `rejects_a_stale_timestamp_under_default_tolerance`.
+    #[test]
+    fn verifies_node_signed_deliveries_for_every_corpus_secret() {
+        assert_eq!(
+            CORPUS.len(),
+            41,
+            "corpus must keep all 41 Node-generated vectors"
+        );
+        let mut rejected = Vec::new();
+        for (name, secret, _, _, sig) in CORPUS {
+            let headers = WebhookHeaders::new(CORPUS_ID, CORPUS_TS, sig);
+            let res = verify_webhook_signature(CORPUS_BODY, &headers, secret, &NO_TOLERANCE);
+            if !res.valid {
+                rejected.push(format!("{name} ({:?})", res.reason));
+            }
+        }
+        assert!(
+            rejected.is_empty(),
+            "{}/{} genuine deliveries rejected as forged:\n  {}",
+            rejected.len(),
+            CORPUS.len(),
+            rejected.join("\n  ")
+        );
+    }
+
+    /// The raw-UTF-8 fallback, called out on its own because it is the half that
+    /// lives in the CALLER rather than the decoder, and every SDK got it wrong.
+    ///
+    /// When the suffix decodes to ZERO bytes the key is the UTF-8 of the WHOLE
+    /// secret — `whsec_` prefix INCLUDED — not an empty key and not the bare
+    /// suffix. Ten of the 41 vectors land here, three of them only because
+    /// masking emptied them, for two different reasons: `ĀĀĀĀ` masks to four
+    /// NULs and `🎉` to 0x3C/0x89, none of which are in the alphabet; `中文`
+    /// masks to 0x2D and 0x87, and 0x2D IS in the alphabet (it is the URL-safe
+    /// `-`), so it survives the filter and empties only because ONE usable
+    /// character cannot encode a byte. Same outcome, different rule.
+    #[test]
+    fn empty_decode_falls_back_to_the_whole_secret_as_utf8() {
+        let fallbacks: Vec<_> = CORPUS.iter().filter(|v| v.3).collect();
+        assert_eq!(
+            fallbacks.len(),
+            10,
+            "corpus should hold 10 raw-fallback shapes"
+        );
+
+        for (name, secret, key_hex, _, sig) in fallbacks {
+            // The whole secret, prefix and all — not `secret[6..]`, not empty.
+            assert_eq!(
+                to_hex(secret.as_bytes()),
+                *key_hex,
+                "{name}: fallback key must be the whole secret's UTF-8 bytes"
+            );
+            assert_eq!(
+                to_hex(&secret_to_key(secret)),
+                *key_hex,
+                "{name}: derived key"
+            );
+
+            let headers = WebhookHeaders::new(CORPUS_ID, CORPUS_TS, *sig);
+            assert!(
+                verify_webhook_signature(CORPUS_BODY, &headers, secret, &NO_TOLERANCE).valid,
+                "{name}: rejected a genuine delivery"
+            );
+        }
+    }
+
+    /// `=` ends the input; it does not pad it. Pinned separately so the
+    /// regression that shipped twice has a test naming it.
+    #[test]
+    fn eq_terminates_the_suffix_rather_than_padding_it() {
+        // Tail after the first `=` is DISCARDED, never concatenated.
+        assert_eq!(secret_to_key("whsec_YWJj====ZA"), b"abc".to_vec());
+        assert_eq!(secret_to_key("whsec_YWJjZA==ZXh0cmE"), b"abcd".to_vec());
+        assert_eq!(secret_to_key("whsec_SGVsbG8=V29ybGQ"), b"Hello".to_vec());
+        // Truncating to nothing decodable is the raw fallback, not an empty key.
+        assert_eq!(secret_to_key("whsec_=YWJj"), b"whsec_=YWJj".to_vec());
+        assert_eq!(secret_to_key("whsec_Y=WJj"), b"whsec_Y=WJj".to_vec());
+    }
+
+    /// Rule 5: the unit is the LOW BYTE of each UTF-16 CODE UNIT.
+    ///
+    /// Pinned separately, and by name, because it is the one rule no ASCII
+    /// vector can catch: the old 31-vector corpus was green in every SDK while
+    /// all of them mis-derived every key below, so any customer whose secret
+    /// carried a character above U+00FF had 100% of its genuine deliveries
+    /// answered `no_match`. Each case is a different consequence of the mask —
+    /// it can MINT an alphabet character out of a letter that has none, it can
+    /// mint the TERMINATOR, and on an astral codepoint it runs over the two
+    /// SURROGATES rather than the scalar.
+    #[test]
+    fn masks_utf16_code_units_to_their_low_byte() {
+        // U+0141 masks to 0x41 'A': a real sextet, not a skipped junk char.
+        assert_eq!(secret_to_key("whsec_YW\u{0141}j"), vec![0x61, 0x60, 0x23]);
+        // U+013D masks to 0x3D '=', which TERMINATES — the trailing `ZA` is gone.
+        assert_eq!(secret_to_key("whsec_YWJj\u{013D}ZA"), b"abc".to_vec());
+        // U+0161 masks to 0x61 'a'; the 2-char group carries exactly one byte.
+        assert_eq!(secret_to_key("whsec_\u{0161}\u{0161}"), vec![0x69]);
+        // U+1234 masks to 0x34 '4' — the mask is the low byte, not a codepoint
+        // range check, so a Ethiopic syllable is a digit here.
+        assert_eq!(secret_to_key("whsec_YWJ\u{1234}"), vec![0x61, 0x62, 0x78]);
+        // Fullwidth Ｙ Ｗ Ｊ ｊ mask to '9', '7', '*', 'J'; the '*' is skipped.
+        assert_eq!(
+            secret_to_key("whsec_\u{FF39}\u{FF37}\u{FF2A}\u{FF4A}"),
+            vec![0xf7, 0xb2]
+        );
+        // U+1D441 is ASTRAL: its surrogates 0xD835/0xDC41 mask to '5' and 'A'.
+        assert_eq!(secret_to_key("whsec_\u{1D441}"), vec![0xe4]);
+        // ...and emphatically NOT its UTF-8 bytes (f0 9d 91 81), whose low bytes
+        // are all outside the alphabet and would decode to nothing, taking the
+        // raw fallback instead of this one byte.
+        assert_ne!(
+            secret_to_key("whsec_\u{1D441}"),
+            "whsec_\u{1D441}".as_bytes().to_vec()
+        );
+        // Masking runs BEFORE the alphabet filter, so the decode can empty out
+        // into the raw fallback two ways. U+0100 masks to NUL and U+1F389 to
+        // 0x3C/0x89 — none in the alphabet, so all are skipped as junk. U+4E2D
+        // is the interesting one: it masks to 0x2D, which IS in the alphabet
+        // (URL-safe `-`), so it is NOT skipped; the decode empties because
+        // U+6587 masks to 0x87 and one lone usable character encodes no byte.
+        for secret in [
+            "whsec_\u{0100}\u{0100}\u{0100}\u{0100}",
+            "whsec_\u{1F389}",
+            "whsec_\u{4E2D}\u{6587}",
+        ] {
+            assert_eq!(
+                secret_to_key(secret),
+                secret.as_bytes().to_vec(),
+                "{secret} must take the whole-secret UTF-8 fallback"
+            );
+        }
+        // The corpus must keep carrying these shapes; drop them and everything
+        // else in this module is an ASCII test again.
+        for name in [
+            "hi_masks_to_A",
+            "hi_masks_to_eq",
+            "hi_masks_to_a",
+            "hi_masks_to_4",
+            "hi_masks_to_nul",
+            "fullwidth",
+            "astral_pair",
+            "astral_emoji",
+            "cjk_skipped",
+            "mixed_hi_lo",
+        ] {
+            assert!(
+                CORPUS.iter().any(|v| v.0 == name),
+                "corpus lost rule-5 vector {name}"
             );
         }
     }

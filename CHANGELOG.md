@@ -3,6 +3,74 @@
 All nine MailBlastr SDKs release in lockstep — one version, one tag, every registry.
 Dates are release dates; entries cover every package unless a language is called out.
 
+## 5.0.1 — 2026-08-20
+
+**Every SDK except the Node one was deriving the wrong webhook signing key for some
+secrets.** A wrong key does not fail loudly: verification returns `no_match`, so a
+correctly configured endpoint silently treats every genuine delivery as forged. If you
+verify webhooks in python, php, ruby, go, rust, java or .NET, upgrade.
+
+No API changed. This release is behaviour only.
+
+### What was wrong
+
+The backend derives the key with Node's `Buffer.from(suffix, 'base64')`. Every SDK
+reimplemented that, and every reimplementation was written against what base64 *means*
+rather than what Node *does*. Node's decoder has five rules, and no SDK had all five:
+
+1. **`=` TERMINATES the input.** Everything from the first `=` onward is discarded — it
+   is not padding to be stripped. `YWJj====ZA` is `abc`, not `abcd`.
+2. Characters outside the alphabet are **skipped**, never fatal — whitespace,
+   punctuation, non-ASCII.
+3. `-` and `_` are the URL-safe spellings of `+` and `/` and are **translated**, not
+   dropped. (Ruby's `unpack1("m")` dropped them.)
+4. A trailing group of **one** character contributes no byte.
+5. **The unit is the low 8 bits of each UTF-16 code unit, not the codepoint.** Node masks
+   every code unit with `0xFF` before the table lookup, so `Ł` (U+0141) is read as `A`
+   and `Ľ` (U+013D) is read as `=` — and therefore TERMINATES the value. An astral
+   character contributes its two surrogate halves' low bytes, never its UTF-8 bytes.
+
+5.0.0 fixed rules 1–4 in five SDKs by porting python's implementation, which is how
+python's own residual divergence propagated. Rule 5 was in none of them.
+
+And the caller matters as much as the decoder: when the decode yields **zero** bytes, the
+key is the UTF-8 bytes of the **whole** secret, `whsec_` prefix included. Ten of the
+conformance vectors exercise that path.
+
+None of this is hypothetical. `POST /webhooks` accepts a caller-supplied `secret`
+verbatim, with no shape validation — so any of these shapes can be a live endpoint's key.
+An auto-generated secret is base64 of 24 random bytes and is pure ASCII with no padding,
+which is why this went unnoticed: the common case works, and only a hand-picked secret
+diverges.
+
+### How it is prevented from recurring
+
+`scripts/webhook-b64-corpus.mjs` generates the conformance corpus **from Node itself**,
+not from anyone's reading of base64, and `scripts/webhook-b64-corpus.json` holds the 41
+resulting vectors (10 raw-fallback). Every SDK embeds them in its own suite.
+
+The corpus is what the fix was measured against, and the measurements are the reason to
+trust it: all eight verifying SDKs went from 25–27/31 to 31/31 on rules 1–4, then from
+**1300/3000 to 3000/3000** once vectors above U+00FF exposed rule 5. Final state is
+**41/41 on the canonical corpus and 20,000/20,000 on a differential fuzz against Node**
+(15,583 of those containing codepoints above 0xFF, 3,448 exercising the raw fallback),
+plus an independent oracle and several thousand more vectors per package during review.
+
+The lesson is in the numbers: every SDK passed 31/31 **and** 2,000/2,000 on an ASCII-only
+fuzz while rule 5 was still wrong in all of them. An ASCII test cannot see this bug.
+
+### Also fixed
+
+- **rust** — `cargo fmt` drift introduced in `services/webhooks.rs`, and two comments that
+  described `中文` as masking to bytes outside the alphabet. U+4E2D masks to `0x2D`, which
+  IS the URL-safe `-`; the decode empties because one usable character cannot encode a
+  byte, not because the byte was skipped.
+- **ruby** — the `rescue` in `utf16_low_bytes` returned the raw UTF-8 bytes, which is
+  precisely the pre-5.0.1 behaviour, so a pathological input would have silently
+  reinstated the bug it was added to guard.
+
+---
+
 ## 5.0.0 — 2026-08-19
 
 **Every package's SOURCE was audited against the live route handlers — not its README — and 60 defects came back.** Four of them were making correctly written integrations do the wrong thing on the wire: a Python webhook receiver rejecting genuine deliveries as forged, a PHP send that could deliver the same email twice on a retry, a Go template send that either 422'd or went out with a blank subject, and a CLI subcommand whose documented invocation could never succeed. Those are below, first.

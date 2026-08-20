@@ -99,9 +99,13 @@ public final class Webhooks extends Resource {
      * case-insensitively). A signature header may carry multiple
      * space-separated signatures; any one matching makes the delivery valid.
      * A {@code whsec_}-prefixed secret is base64-decoded exactly as leniently
-     * as the signer decodes it — unpadded and URL-safe ({@code -}/{@code _})
-     * spellings all derive the same key; other secrets are used as raw UTF-8
-     * key bytes.
+     * as the signer decodes it — unpadded, junk-bearing and URL-safe
+     * ({@code -}/{@code _}) spellings all derive the same key, a {@code =}
+     * truncates the suffix rather than padding it, and a non-ASCII character
+     * decodes as the low byte of its UTF-16 code unit rather than being skipped
+     * (see {@link #b64Lenient(String)}). A secret without the prefix, or one whose
+     * suffix decodes to nothing, is used as the raw UTF-8 bytes of the WHOLE
+     * secret string.
      *
      * <p>This is a pure local computation — it makes no HTTP request.
      *
@@ -165,31 +169,74 @@ public final class Webhooks extends Resource {
      * Decode base64 the way the signer does, not the way Java does.
      *
      * <p>The backend derives its key with Node's {@code Buffer.from(suffix,
-     * 'base64')} (lib/crypto.ts {@code secretToKey}), which is LENIENT: it
-     * ignores characters outside the alphabet, accepts the URL-safe {@code -}
-     * and {@code _} spellings of {@code +} and {@code /}, needs no {@code =}
-     * padding, and drops a lone 1-character remainder (which carries no whole
-     * byte). {@code Base64.getDecoder()} tolerates only the missing padding: it
-     * throws on {@code -}/{@code _}, on any other out-of-alphabet character,
-     * and on a trailing 1-character group — and {@link #secretToKey(String)}
-     * then quietly fell back to the raw UTF-8 bytes of the whole
-     * {@code whsec_…} string. So a caller-supplied secret (the {@code secret}
-     * field on {@code POST /webhooks}, which is stored verbatim) written in the
-     * URL-safe alphabet produced a DIFFERENT key here than at the signer, and
-     * every authentic delivery came back {@code no_match} — silently dropping
-     * all real webhook traffic. This mirrors the signer instead, as the Node,
-     * Python and PHP SDKs already do.
+     * 'base64')} (lib/crypto.ts {@code secretToKey}). That decoder is NOT the
+     * RFC, and reading it as the RFC is precisely how this bug shipped twice.
+     * Five of its behaviours matter, and each one has a conformance vector:
+     *
+     * <ol>
+     *   <li>{@code =} TERMINATES the input — everything from the first
+     *       {@code =} onward is DISCARDED. It is not "padding to be stripped":
+     *       {@code "YWJj====ZA"} decodes to {@code "abc"}, never
+     *       {@code "abcd"}, and {@code "Y=WJj"} decodes to nothing at all.</li>
+     *   <li>Out-of-alphabet characters are SKIPPED, never fatal — whitespace,
+     *       punctuation and non-ASCII alike ({@code "YW!Jj"} is {@code "abc"}).</li>
+     *   <li>{@code -} and {@code _} are the URL-safe spellings of {@code +} and
+     *       {@code /} and must be TRANSLATED, not dropped — dropping them
+     *       silently reshapes the whole byte stream.</li>
+     *   <li>A trailing group of ONE character carries no whole byte and is
+     *       discarded (2 chars -&gt; 1 byte, 3 -&gt; 2, 4 -&gt; 3).</li>
+     *   <li>The decoded UNIT is the LOW 8 BITS of each UTF-16 CODE UNIT, not the
+     *       codepoint: Node masks every code unit with {@code 0xFF} before the
+     *       table lookup, so a non-ASCII character is not junk to be skipped —
+     *       it MASQUERADES as the ASCII character it aliases. {@code "YWŁj"}
+     *       keys on {@code 616023} because U+0141 masks to {@code 0x41} 'A';
+     *       {@code "YWJjĽZA"} keys on {@code 616263} because U+013D masks to
+     *       {@code 0x3D} '=' and TERMINATES. Astral characters contribute their
+     *       two SURROGATE halves, not their UTF-8 bytes: U+1D441 is
+     *       {@code 0xD835}/{@code 0xDC41}, masking to '5' and 'A'.</li>
+     * </ol>
+     *
+     * <p>Java agrees with none of these unaided. {@code Base64.getDecoder()}
+     * throws on {@code -}/{@code _}, on any other out-of-alphabet character and
+     * on a trailing 1-character group; {@code getMimeDecoder()} skips junk but
+     * treats {@code =} as padding it may decode straight past, and both read the
+     * character, never its low byte. So the mask, the cut at the first
+     * {@code =}, the alphabet filter and the URL-safe translation are all done
+     * HERE, by hand, before Java's decoder is allowed near the input.
+     *
+     * <p>Why this matters more than it looks: the {@code secret} field on
+     * {@code POST /webhooks} is stored verbatim with no shape validation, so a
+     * customer really can hold a secret of any shape above. A key that differs
+     * from the signer's does not fail loudly — verification just returns
+     * {@code no_match}, and a correctly configured endpoint silently treats
+     * every genuine delivery as forged.
      */
     private static byte[] b64Lenient(String text) {
         StringBuilder cleaned = new StringBuilder(text.length());
         for (int i = 0; i < text.length(); i++) {
-            char c = text.charAt(i);
+            // Rule 5, and it MUST come first: mask to the low 8 bits of the
+            // UTF-16 code unit. `charAt` deliberately walks code UNITS, so an
+            // astral character arrives as its two surrogates and contributes
+            // both their low bytes — iterating codePoints would collapse it to
+            // one wrong unit. Masking after the `=` cut or the alphabet filter
+            // is the bug: U+013D would be skipped as junk instead of
+            // terminating, and U+0141 dropped instead of aliasing 'A'.
+            char c = (char) (text.charAt(i) & 0xFF);
+
+            // Rule 1: `=` TERMINATES — the remainder of the suffix is gone, not
+            // padding to be stripped. Filtering it away as junk and decoding on
+            // is the shared root-cause bug every SDK carried.
+            if (c == '=') break;
+
+            // Rules 2 and 3: keep alphabet characters only, translating the
+            // URL-safe spellings instead of discarding them.
             if (B64_ALPHABET.indexOf(c) < 0) continue;
             cleaned.append(c == '-' ? '+' : c == '_' ? '/' : c);
         }
-        // A single leftover character encodes no whole byte; Node discards it
-        // rather than failing the decode. Java's MIME decoder would throw
-        // ("Last unit does not have enough valid bits") and lose the key.
+
+        // Rule 4: a single leftover character encodes no whole byte; Node
+        // discards it rather than failing the decode. Java's MIME decoder would
+        // throw ("Last unit does not have enough valid bits") and lose the key.
         if (cleaned.length() % 4 == 1) cleaned.setLength(cleaned.length() - 1);
         try {
             // The MIME decoder, unlike getDecoder(), tolerates absent padding.
@@ -200,10 +247,22 @@ public final class Webhooks extends Resource {
     }
 
     /**
-     * Derive the HMAC key from a {@code whsec_}-prefixed secret (leniently
-     * base64-decode the suffix, see {@link #b64Lenient(String)}); a secret
-     * without the prefix — or one whose suffix decodes to no bytes at all — is
-     * used as raw UTF-8 bytes.
+     * Derive the HMAC key from a secret, mirroring the server's
+     * {@code secretToKey} (lib/crypto.ts) exactly.
+     *
+     * <p>A {@code whsec_}-prefixed secret keys on the leniently decoded suffix
+     * (see {@link #b64Lenient(String)}). Everything else — no prefix, or a
+     * suffix that decodes to ZERO bytes — keys on the raw UTF-8 bytes of the
+     * WHOLE secret, {@code whsec_} prefix INCLUDED. That last clause is easy to
+     * miss and easy to get subtly wrong (keying on the bare suffix, or on the
+     * empty decode, both look reasonable); it is reached by every secret whose
+     * suffix is one alphabet character, is empty, or begins with {@code =}, and
+     * getting it wrong costs the customer every genuine delivery.
+     *
+     * <p>The fallback takes the secret's REAL UTF-8 bytes — the {@code 0xFF}
+     * masking of {@link #b64Lenient(String)} belongs to the base64 table lookup
+     * only, so {@code "whsec_š"} falls back to the 8 bytes of {@code "whsec_š"},
+     * not to the masked {@code 0x61}.
      */
     private static byte[] secretToKey(String secret) {
         if (secret.startsWith("whsec_")) {
