@@ -69,6 +69,37 @@ public final class ContactsTest {
         Check.eq("batch body",
                 "{\"contacts\":[{\"email\":\"a@b.com\",\"first_name\":\"A\"}]}", t.lastBody);
 
+        // --- batch import, domain-first ---
+        // One batch takes the account's contact-limit lock once; a
+        // create-per-contact loop takes it per contact.
+        mb.contacts().batch(BatchContactsRequest.builder()
+                .domain("x.com")
+                .contact(ContactInput.builder().email("a@b.com").build())
+                .build());
+        Check.eq("batch flat url", "https://api.test/contacts/batch", t.lastUrl);
+        // `domain` travels in the BODY on the flat route, same as POST /contacts.
+        Check.eq("batch flat body",
+                "{\"contacts\":[{\"email\":\"a@b.com\"}],\"domain\":\"x.com\"}", t.lastBody);
+
+        mb.contacts().batch(BatchContactsRequest.builder()
+                .domain("x.com")
+                .contact(ContactInput.builder().email("a@b.com").build())
+                .onConflict("skip")
+                .build());
+        Check.eq("batch flat url keeps on_conflict",
+                "https://api.test/contacts/batch?on_conflict=skip", t.lastUrl);
+
+        // Neither target is a programming error, caught at build() time.
+        boolean threw = false;
+        try {
+            BatchContactsRequest.builder()
+                    .contact(ContactInput.builder().email("a@b.com").build())
+                    .build();
+        } catch (IllegalStateException expected) {
+            threw = true;
+        }
+        Check.eq("batch requires a target", true, threw);
+
         // --- CSV import with strict properties ---
         mb.contacts().importCsv(ImportContactsRequest.builder()
                 .audienceId("aud_1")

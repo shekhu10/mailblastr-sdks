@@ -3,7 +3,7 @@ import type { MailblastrError, Result, RequestOptions } from './types';
 export const DEFAULT_BASE_URL = 'https://www.mailblastr.com/api';
 
 /** Keep in sync with package.json "version". */
-export const VERSION = '5.0.1';
+export const VERSION = '5.1.0';
 export const USER_AGENT = `mailblastr-node/${VERSION}`;
 
 /**

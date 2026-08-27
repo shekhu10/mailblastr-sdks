@@ -36,7 +36,7 @@ import (
 
 const (
 	// Version is the SDK version, sent in the User-Agent header.
-	Version = "5.0.1"
+	Version = "5.1.0"
 	// DefaultBaseURL is the production MailBlastr API host.
 	DefaultBaseURL = "https://www.mailblastr.com/api"
 

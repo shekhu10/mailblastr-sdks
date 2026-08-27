@@ -100,8 +100,34 @@ impl ContactsSvc {
             .await
     }
 
-    /// Bulk-import contacts from a `Vec` (upserts by email; max 10,000 per
+    /// Bulk-import contacts into a DOMAIN's contact pool (upserts by email;
+    /// max 10,000 per call). `POST /contacts/batch`
+    ///
+    /// The domain-first counterpart of [`batch`](Self::batch), which targets one
+    /// audience. Prefer either over a [`create`](Self::create) loop for many
+    /// contacts: one batch takes the account's contact-limit lock once, where a
+    /// create loop takes it per contact.
+    pub async fn batch_in_domain(
+        &self,
+        domain: &str,
+        contacts: Vec<ContactInput>,
+        on_conflict: Option<OnConflict>,
+    ) -> Result<ImportContactsResponse> {
+        let mut req = self.config.request(Method::POST, "/contacts/batch");
+        if let Some(oc) = on_conflict {
+            req = req.query(&[("on_conflict", oc.as_str())]);
+        }
+        // Only the flat route takes `domain`, and it takes it in the body —
+        // exactly as `POST /contacts` does.
+        self.config
+            .send(req.json(&json!({ "contacts": contacts, "domain": domain })))
+            .await
+    }
+
+    /// Bulk-import contacts into one AUDIENCE (upserts by email; max 10,000 per
     /// call). `POST /audiences/:id/contacts/batch`
+    ///
+    /// See [`batch_in_domain`](Self::batch_in_domain) for the domain-first door.
     pub async fn batch(
         &self,
         audience_id: &str,

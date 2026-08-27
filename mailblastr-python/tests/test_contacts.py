@@ -47,6 +47,25 @@ class TestContacts(RecordingTestCase):
             "POST", "/audiences/aud_1/contacts/batch?on_conflict=skip", {"contacts": contacts}
         )
 
+    def test_batch_import_domain_first(self):
+        # The domain-first bulk door. One batch takes the account's
+        # contact-limit lock once; a create() loop takes it per contact.
+        contacts = [{"email": "a@b.com"}, {"email": "c@d.com"}]
+        mailblastr.Contacts.batch({"domain": "x.com", "contacts": contacts})
+        # `domain` travels in the BODY here, exactly as for POST /contacts.
+        self.assertCall("POST", "/contacts/batch", {"contacts": contacts, "domain": "x.com"})
+
+        mailblastr.Contacts.batch(
+            {"domain": "x.com", "contacts": contacts, "on_conflict": "skip"}
+        )
+        self.assertCall(
+            "POST", "/contacts/batch?on_conflict=skip", {"contacts": contacts, "domain": "x.com"}
+        )
+
+        # The audience-scoped form must NOT start sending a domain.
+        mailblastr.Contacts.batch({"audience_id": "aud_1", "contacts": contacts})
+        self.assertCall("POST", "/audiences/aud_1/contacts/batch", {"contacts": contacts})
+
     def test_import_csv(self):
         mailblastr.Contacts.import_csv(
             {

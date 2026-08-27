@@ -302,3 +302,58 @@ func TestContactsGetTopicsNilParamsSendsNoQuery(t *testing.T) {
 		t.Fatalf("GetTopics: %v", err)
 	}
 }
+
+func TestContactsBatchInDomain(t *testing.T) {
+	// The domain-first bulk door: POST /contacts/batch with the domain in the
+	// BODY, exactly as CreateContact does on the flat route.
+	client := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/contacts/batch" {
+			t.Errorf("path = %s, want /contacts/batch", r.URL.Path)
+		}
+		if r.URL.Query().Get("on_conflict") != "skip" {
+			t.Errorf("on_conflict = %q", r.URL.Query().Get("on_conflict"))
+		}
+		body := decodeBody(t, r)
+		if body["domain"] != "x.com" {
+			t.Errorf("domain = %v, want x.com", body["domain"])
+		}
+		if body["contacts"] == nil {
+			t.Error("contacts missing from the body")
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"object":"contact_import","imported":1,"updated":0,"skipped":0,"total":1}`))
+	})
+	res, err := client.Contacts.Batch(&BatchContactsRequest{
+		Domain:     "x.com",
+		Contacts:   []ContactInput{{Email: "a@b.com"}},
+		OnConflict: "skip",
+	})
+	if err != nil {
+		t.Fatalf("Batch: %v", err)
+	}
+	if res.Imported != 1 {
+		t.Errorf("Imported = %d, want 1", res.Imported)
+	}
+}
+
+func TestContactsBatchAudienceSendsNoDomain(t *testing.T) {
+	// Setting AudienceId must keep the nested path AND omit the domain, which
+	// the nested route does not accept.
+	client := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/audiences/aud_1/contacts/batch" {
+			t.Errorf("path = %s", r.URL.Path)
+		}
+		if _, ok := decodeBody(t, r)["domain"]; ok {
+			t.Error("the nested route must not receive a domain")
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"object":"contact_import","imported":1,"updated":0,"skipped":0,"total":1}`))
+	})
+	if _, err := client.Contacts.Batch(&BatchContactsRequest{
+		AudienceId: "aud_1",
+		Domain:     "ignored.com",
+		Contacts:   []ContactInput{{Email: "a@b.com"}},
+	}); err != nil {
+		t.Fatalf("Batch: %v", err)
+	}
+}

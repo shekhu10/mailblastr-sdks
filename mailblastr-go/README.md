@@ -185,6 +185,8 @@ client.Contacts.Get(&mailblastr.GetContactRequest{Id: email, Domain: "example.co
 client.Contacts.Update(&mailblastr.UpdateContactRequest{Id: id, Unsubscribed: mailblastr.Bool(true)})
 client.Contacts.Remove(&mailblastr.RemoveContactRequest{Id: id})
 client.Contacts.Batch(&mailblastr.BatchContactsRequest{AudienceId: audId, Contacts: contacts})
+// Domain-first: import straight into a domain's pool, no audience id needed.
+client.Contacts.Batch(&mailblastr.BatchContactsRequest{Domain: "yourdomain.com", Contacts: contacts})
 client.Contacts.Import(&mailblastr.ImportContactsRequest{AudienceId: audId, Csv: csv})
 client.Contacts.AddToSegment(contactId, segmentId)
 client.Contacts.ListSegments(contactId, nil) // nil ⇒ every segment; pass ListParams to page

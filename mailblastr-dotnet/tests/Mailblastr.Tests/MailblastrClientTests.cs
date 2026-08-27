@@ -640,6 +640,38 @@ public class MailblastrClientTests
     }
 
     [Fact]
+    public async Task ContactBatchInDomain_UsesFlatBulkDoorAndSendsDomainInBody()
+    {
+        // The domain-first bulk door. One batch takes the account's contact-limit
+        // lock once, where a create-per-contact loop takes it per contact.
+        var (client, stub) = CreateClient("""{"object":"contact_import","imported":2,"updated":0,"skipped":0,"total":2}""");
+
+        var result = await client.ContactBatchInDomainAsync(
+            "acme.com",
+            new[] { new ContactInput { Email = "a@b.com" }, new ContactInput { Email = "c@d.com" } },
+            "skip");
+
+        Assert.Equal(2, result.Imported);
+        Assert.Equal("https://www.mailblastr.com/api/contacts/batch?on_conflict=skip", stub.LastRequest.RequestUri!.AbsoluteUri);
+
+        using var body = JsonDocument.Parse(stub.LastRequestBody!);
+        Assert.Equal("acme.com", body.RootElement.GetProperty("domain").GetString());
+        Assert.Equal(2, body.RootElement.GetProperty("contacts").GetArrayLength());
+    }
+
+    [Fact]
+    public async Task ContactBatch_NestedRoute_TargetsAudienceAndOmitsDomain()
+    {
+        var (client, stub) = CreateClient("""{"object":"contact_import","imported":1,"updated":0,"skipped":0,"total":1}""");
+
+        await client.ContactBatchAsync("aud_1", new[] { new ContactInput { Email = "a@b.com" } });
+
+        Assert.Equal("https://www.mailblastr.com/api/audiences/aud_1/contacts/batch", stub.LastRequest.RequestUri!.AbsoluteUri);
+        using var body = JsonDocument.Parse(stub.LastRequestBody!);
+        Assert.False(body.RootElement.TryGetProperty("domain", out _));
+    }
+
+    [Fact]
     public async Task ContactCreate_FlatRoute_IncludesDomainInBody()
     {
         var (client, stub) = CreateClient("""{"object":"contact","id":"con_1"}""");

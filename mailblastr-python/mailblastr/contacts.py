@@ -120,20 +120,34 @@ class Contacts:
 
     @classmethod
     def batch(cls, params):
-        """Bulk-import contacts from a list — ``{"audience_id", "contacts",
-        "on_conflict"?}``. Upserts by email; max 10,000 per call.
+        """Bulk-import contacts from a list — ``{"domain" | "audience_id",
+        "contacts", "on_conflict"?}``. Upserts by email; max 10,000 per call.
         ``on_conflict='skip'`` leaves existing contacts untouched.
+
+        Domain-first, like :meth:`create`: pass ``domain`` for the flat
+        ``/contacts/batch`` API, or ``audience_id`` for the nested one. USE THIS
+        for many contacts — one batch takes the account's contact-limit lock
+        once, where a ``create()`` loop takes it per contact.
 
         Rows without a valid ``email`` are counted as ``skipped`` rather than
         failing the request, and ``properties`` are NOT checked against the
         contact-property registry here (unlike the single-contact writes).
-        POST /audiences/:id/contacts/batch"""
+        POST /contacts/batch, or POST /audiences/:id/contacts/batch"""
         qs = build_query({"on_conflict": params.get("on_conflict")})
-        return http_client.request(
-            "POST",
-            f"/audiences/{_e(params['audience_id'])}/contacts/batch{qs}",
-            {"contacts": params["contacts"]},
-        )
+        audience_id = params.get("audience_id")
+        if audience_id:
+            return http_client.request(
+                "POST",
+                f"/audiences/{_e(audience_id)}/contacts/batch{qs}",
+                {"contacts": params["contacts"]},
+            )
+        # The nested route derives its pool from the path; only the flat route
+        # takes ``domain`` (in the body, same as POST /contacts).
+        body = {"contacts": params["contacts"]}
+        domain = params.get("domain")
+        if domain is not None:
+            body["domain"] = domain
+        return http_client.request("POST", f"/contacts/batch{qs}", body)
 
     @classmethod
     def import_csv(cls, params):

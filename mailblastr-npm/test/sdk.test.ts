@@ -374,6 +374,27 @@ test('contacts.batch / import / paginated list map to the right routes', async (
   assert.deepEqual(calls[1].body, { csv: 'email\nc@x.com\n' });
 });
 
+test('contacts.batch is domain-first: `domain` uses the flat /contacts/batch door', async () => {
+  // The bulk door for the domain-first API. A create-per-contact loop takes the
+  // account's contact-limit lock once PER CONTACT; one batch takes it once, which
+  // is why this is the shape to recommend for many contacts.
+  const { fn, calls } = mockFetch(201, { object: 'contact_import', imported: 2, updated: 0, skipped: 0, total: 2 });
+  const mb = new Mailblastr('mb_test', { baseUrl: 'https://api.test', fetch: fn });
+  await mb.contacts.batch({ domain: 'x.com', contacts: [{ email: 'a@x.com' }, { email: 'b@x.com' }] });
+  await mb.contacts.batch({ domain: 'x.com', contacts: [{ email: 'c@x.com' }], on_conflict: 'skip' });
+  assert.deepEqual(calls.map((c) => `${c.method} ${c.url}`), [
+    'POST https://api.test/contacts/batch',
+    'POST https://api.test/contacts/batch?on_conflict=skip',
+  ]);
+  // `domain` travels in the BODY here, exactly as it does for POST /contacts —
+  // the nested route takes its pool from the path instead.
+  assert.deepEqual(calls[0].body, { contacts: [{ email: 'a@x.com' }, { email: 'b@x.com' }], domain: 'x.com' });
+  // And the audience-scoped form must NOT start sending a domain.
+  await mb.contacts.batch({ audienceId: 'a1', contacts: [{ email: 'd@x.com' }] });
+  assert.equal(calls[2].url, 'https://api.test/audiences/a1/contacts/batch');
+  assert.deepEqual(calls[2].body, { contacts: [{ email: 'd@x.com' }] });
+});
+
 test('contacts batch/import on_conflict + audience-scoped segment_id', async () => {
   const { fn, calls } = mockFetch(200, {});
   const mb = new Mailblastr('mb_test', { baseUrl: 'https://api.test', fetch: fn });

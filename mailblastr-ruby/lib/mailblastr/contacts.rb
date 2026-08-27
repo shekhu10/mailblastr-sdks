@@ -81,19 +81,31 @@ module Mailblastr
       end
 
       # Bulk-import contacts from an array (upsert by email; max 10,000).
-      # POST /audiences/:id/contacts/batch
+      #
+      # Domain-first, like .create: pass :domain for the flat
+      # POST /contacts/batch, or :audience_id for POST /audiences/:id/contacts/batch.
+      # Prefer this over a .create loop for many contacts — one batch takes the
+      # account's contact-limit lock once, a loop takes it per contact.
+      #   Contacts.batch({ domain: "yourdomain.com", contacts: [{ email: "a@b.com" }] })
       #   Contacts.batch({ audience_id: "aud_1", contacts: [{ email: "a@b.com" }], on_conflict: "skip" })
       def batch(params)
         audience_id = Client.opt(params, :audience_id)
         query = {}
         on_conflict = Client.opt(params, :on_conflict)
         query[:on_conflict] = on_conflict if on_conflict
-        Client.request(
+        body = { contacts: Client.opt(params, :contacts) }
+        return Client.request(
           :post,
           "/audiences/#{Client.path_escape(audience_id)}/contacts/batch",
-          body: { contacts: Client.opt(params, :contacts) },
+          body: body,
           query: query
-        )
+        ) if audience_id
+
+        # The nested route derives its pool from the path; only the flat route
+        # takes :domain (in the body, same as POST /contacts).
+        domain = Client.opt(params, :domain)
+        body[:domain] = domain unless domain.nil?
+        Client.request(:post, "/contacts/batch", body: body, query: query)
       end
 
       # Bulk-import contacts from CSV (header row optional; upsert by email).

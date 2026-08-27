@@ -85,9 +85,15 @@ class Contacts extends Resource
 
     /**
      * Bulk-import contacts from an array. Upserts by email; max 10,000 per
-     * call. POST /audiences/:id/contacts/batch
+     * call. Domain-first, like create(): pass 'domain' for the flat
+     * POST /contacts/batch, or 'audienceId' for
+     * POST /audiences/:id/contacts/batch.
      *
-     * @param array $params ['audienceId' => …, 'contacts' => [ … ],
+     * Prefer this over a create() loop for many contacts: one batch takes the
+     * account's contact-limit lock once, a loop takes it per contact.
+     *
+     * @param array $params ['domain' => … | 'audienceId' => …,
+     *                      'contacts' => [ … ],
      *                      'on_conflict' => 'upsert'|'skip' ('skip' leaves
      *                      existing contacts untouched; default 'upsert')]
      */
@@ -96,11 +102,20 @@ class Contacts extends Resource
         $qs = isset($params['on_conflict'])
             ? '?on_conflict=' . rawurlencode((string) $params['on_conflict'])
             : '';
-        return $this->client->request(
-            'POST',
-            '/audiences/' . Client::e((string) $params['audienceId']) . '/contacts/batch' . $qs,
-            ['contacts' => $params['contacts'] ?? []]
-        );
+        $body = ['contacts' => $params['contacts'] ?? []];
+        if (isset($params['audienceId'])) {
+            return $this->client->request(
+                'POST',
+                '/audiences/' . Client::e((string) $params['audienceId']) . '/contacts/batch' . $qs,
+                $body
+            );
+        }
+        // The nested route derives its pool from the path; only the flat route
+        // takes 'domain' (in the body, same as POST /contacts).
+        if (isset($params['domain'])) {
+            $body['domain'] = $params['domain'];
+        }
+        return $this->client->request('POST', '/contacts/batch' . $qs, $body);
     }
 
     /**

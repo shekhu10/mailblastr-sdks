@@ -4,17 +4,30 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * Bulk-import contacts from a list ({@code POST /audiences/:id/contacts/batch}).
- * Upserts by email; max 10,000 per call. {@code onConflict("skip")} leaves
+ * Bulk-import contacts from a list (DOMAIN-FIRST). Pass
+ * {@link Builder#domain(String)} to import into that sending domain's contact
+ * pool via the flat {@code POST /contacts/batch} API, or
+ * {@link Builder#audienceId(String)} to target a specific audience via
+ * {@code POST /audiences/:id/contacts/batch}. Exactly one is required.
+ *
+ * <p>Upserts by email; max 10,000 per call. {@code onConflict("skip")} leaves
  * existing contacts untouched (default {@code upsert}).
+ *
+ * <p>Prefer this over a create-per-contact loop for many contacts: one batch
+ * takes the account's contact-limit lock once, where a loop takes it per
+ * contact.
  */
 public final class BatchContactsRequest {
+    private final String domain;
     private final String audienceId;
     private final List<ContactInput> contacts;
     private final String onConflict;
 
     private BatchContactsRequest(Builder b) {
-        if (b.audienceId == null) throw new IllegalStateException("BatchContactsRequest: audienceId is required");
+        if (b.domain == null && b.audienceId == null) {
+            throw new IllegalStateException("BatchContactsRequest: one of domain or audienceId is required");
+        }
+        this.domain = b.domain;
         this.audienceId = b.audienceId;
         this.contacts = b.contacts;
         this.onConflict = b.onConflict;
@@ -22,15 +35,19 @@ public final class BatchContactsRequest {
 
     public static Builder builder() { return new Builder(); }
 
+    public String getDomain() { return domain; }
     public String getAudienceId() { return audienceId; }
     public List<ContactInput> getContacts() { return contacts; }
     public String getOnConflict() { return onConflict; }
 
     public static final class Builder {
+        private String domain;
         private String audienceId;
         private final List<ContactInput> contacts = new ArrayList<>();
         private String onConflict;
 
+        /** The sending domain whose contact pool the contacts land in (flat API). */
+        public Builder domain(String domain) { this.domain = domain; return this; }
         public Builder audienceId(String audienceId) { this.audienceId = audienceId; return this; }
         public Builder contact(ContactInput contact) { this.contacts.add(contact); return this; }
         public Builder contacts(List<ContactInput> contacts) { this.contacts.addAll(contacts); return this; }

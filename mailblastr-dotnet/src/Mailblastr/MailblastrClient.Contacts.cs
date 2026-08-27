@@ -88,6 +88,19 @@ public partial class MailblastrClient
         return RequestAsync<ImportContactsResponse>(HttpMethod.Post, $"/audiences/{E(audienceId)}/contacts/batch" + Query(("on_conflict", onConflict)), body, null, cancellationToken);
     }
 
+    public Task<ImportContactsResponse> ContactBatchInDomainAsync(string domain, IEnumerable<ContactInput> contacts, string? onConflict = null, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(contacts);
+        // The nested audience route derives its pool from the path; only the flat
+        // route takes `domain`, and it takes it in the body (same as POST /contacts).
+        var body = new Dictionary<string, object>
+        {
+            ["contacts"] = contacts as IList<ContactInput> ?? contacts.ToList(),
+            ["domain"] = domain,
+        };
+        return RequestAsync<ImportContactsResponse>(HttpMethod.Post, "/contacts/batch" + Query(("on_conflict", onConflict)), body, null, cancellationToken);
+    }
+
     public Task<ImportContactsResponse> ContactImportAsync(string audienceId, string csv, string? onConflict = null, bool? createProperties = null, string? segmentId = null, string? fileName = null, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(csv);

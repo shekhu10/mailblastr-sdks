@@ -9,6 +9,7 @@ import type {
   CreateDomainOptions, UpdateDomainOptions, Domain, MxCheckResponse,
   DomainClaim, ClaimDomainOptions,
   Audience, Contact, CreateContactOptions, UpdateContactOptions,
+  BatchContactsOptions,
   ContactInput, ImportContactsResponse, ListContactsParams, ContactImportUpload,
   ContactTopics, UpdateContactTopicsOptions, ContactSegmentRef,
   ContactProperty, CreateContactPropertyOptions, UpdateContactPropertyOptions,
@@ -390,10 +391,19 @@ class Contacts {
   /**
    * Bulk-import contacts from an array. Upserts by email; max 10,000 per call.
    * `on_conflict: 'skip'` leaves existing contacts untouched (default 'upsert').
+   *
+   * Domain-first, like `create`: pass `domain` for the flat `/contacts/batch`
+   * API, or `audienceId` for the nested one. THIS is the shape to use for many
+   * contacts — the batch takes the account's contact-limit lock once, while a
+   * `create()` loop serializes on it per contact.
    */
-  batch(params: { audienceId: string; contacts: ContactInput[]; on_conflict?: 'upsert' | 'skip' }): Promise<Result<ImportContactsResponse>> {
+  batch(params: BatchContactsOptions): Promise<Result<ImportContactsResponse>> {
     const qs = params.on_conflict ? `?on_conflict=${params.on_conflict}` : '';
-    return this.http.request('POST', `/audiences/${encodeURIComponent(params.audienceId)}/contacts/batch${qs}`, { contacts: params.contacts });
+    // The nested audience route derives its pool from the path; only the flat
+    // route takes `domain` (accepted in the body, same as POST /contacts).
+    return params.audienceId
+      ? this.http.request('POST', `/audiences/${encodeURIComponent(params.audienceId)}/contacts/batch${qs}`, { contacts: params.contacts })
+      : this.http.request('POST', `/contacts/batch${qs}`, { contacts: params.contacts, domain: params.domain });
   }
   /**
    * Bulk-import contacts from CSV text (header row optional). Upserts by email.

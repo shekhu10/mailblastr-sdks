@@ -182,6 +182,8 @@ Mailblastr::Contacts.list({ audience_id: aud_id, segment_id: seg_id })
 
 # Bulk import
 Mailblastr::Contacts.batch({ audience_id: aud_id, contacts: [{ email: "a@b.com" }], on_conflict: "skip" })
+# Domain-first: import straight into a domain's pool, no audience id needed.
+Mailblastr::Contacts.batch({ domain: "yourdomain.com", contacts: [{ email: "a@b.com" }] })
 Mailblastr::Contacts.import({ audience_id: aud_id, csv: "email,company\na@b.com,Acme" })
 
 # CSV too big to inline (5 MB / 10,000 rows)? Upload it directly, then import by key.

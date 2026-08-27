@@ -148,6 +148,9 @@ await mb.contacts.get({ id });                  // by contact id (exact) …
 await mb.contacts.get({ id: email, domain: 'example.com' }); // … or by email + domain
 await mb.contacts.update({ id, unsubscribed: true });
 await mb.contacts.remove({ id });
+// Bulk: ONE request per batch, not one per contact (max 10,000).
+await mb.contacts.batch({ domain: 'example.com', contacts: [{ email }] });
+await mb.contacts.batch({ audienceId, contacts: [{ email }], on_conflict: 'skip' });
 await mb.contacts.addToSegment(contactId, segmentId);
 await mb.contacts.updateTopics(contactId, {
   topics: [{ id: 'topic_1', subscription: 'opt_in' }],

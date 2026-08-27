@@ -13,7 +13,7 @@ from .exceptions import MailblastrError
 DEFAULT_BASE_URL = "https://www.mailblastr.com/api"
 
 # Keep in sync with pyproject.toml "version".
-VERSION = "5.0.1"
+VERSION = "5.1.0"
 USER_AGENT = f"mailblastr-python/{VERSION}"
 
 # The API accepts an Idempotency-Key of 1-255 characters (measured after the

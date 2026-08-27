@@ -171,6 +171,8 @@ When the source is already structured, `contacts batch` imports a JSON array ins
 ```bash
 mailblastr contacts batch aud_123 --file ./contacts.json
 mailblastr contacts batch aud_123 --data '[{"email":"ada@yourdomain.com","first_name":"Ada"}]' --on-conflict skip
+# Domain-first: import straight into a domain's pool, no audience id needed.
+mailblastr contacts batch --domain yourdomain.com --file ./contacts.json
 ```
 
 ### Contact properties & audiences

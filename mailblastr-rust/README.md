@@ -192,6 +192,8 @@ mailblastr.contacts.remove(ContactLookup::new(contact_id)).await?;
 mailblastr.contacts.add_to_segment(contact_id, segment_id).await?;
 mailblastr.contacts.list_segments(contact_id, None).await?;
 mailblastr.contacts.batch(audience_id, contacts, Some(OnConflict::Skip)).await?;
+// Domain-first: import straight into a domain's pool, no audience id needed.
+mailblastr.contacts.batch_in_domain("yourdomain.com", contacts, None).await?;
 mailblastr.contacts.import(audience_id, csv_text, ImportCsvOptions::new()).await?; // inline: ≤5 MB / 10k rows
 // Bigger files: presign a direct upload, PUT the bytes yourself, then import by key.
 let slot = mailblastr.contacts.create_import_upload(audience_id, "contacts.csv", size).await?;

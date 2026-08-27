@@ -85,13 +85,20 @@ public final class Contacts extends Resource {
 
     /**
      * Bulk-import contacts from a list (upsert by email; max 10,000 per call).
-     * {@code POST /audiences/:id/contacts/batch}
+     * Domain-first: {@code domain} uses the flat {@code POST /contacts/batch},
+     * {@code audienceId} uses {@code POST /audiences/:id/contacts/batch}.
      */
     public MailblastrResponse batch(BatchContactsRequest request) {
         Query q = new Query().add("on_conflict", request.getOnConflict());
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("contacts", request.getContacts());
-        return api.request("POST", "/audiences/" + enc(request.getAudienceId()) + "/contacts/batch" + q, body);
+        if (request.getAudienceId() != null) {
+            // The nested route derives its pool from the path; only the flat
+            // route takes a domain.
+            return api.request("POST", "/audiences/" + enc(request.getAudienceId()) + "/contacts/batch" + q, body);
+        }
+        body.put("domain", request.getDomain());
+        return api.request("POST", "/contacts/batch" + q, body);
     }
 
     /**

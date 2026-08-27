@@ -244,6 +244,8 @@ await mailblastr.ContactDeleteAsync(contactId);
 
 // Bulk import (array or CSV), segment membership and per-topic subscriptions
 await mailblastr.ContactBatchAsync(audienceId, contacts, onConflict: "skip");
+// Domain-first: import straight into a domain's pool, no audience id needed.
+await mailblastr.ContactBatchInDomainAsync("yourdomain.com", contacts);
 await mailblastr.ContactImportAsync(audienceId, csvText);
 await mailblastr.ContactAddToSegmentAsync(contactId, segmentId);
 await mailblastr.ContactUpdateTopicsAsync(contactId, new ContactTopicsUpdateOptions

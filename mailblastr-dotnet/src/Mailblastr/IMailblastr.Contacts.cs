@@ -58,6 +58,19 @@ public partial interface IMailblastr
     Task<ImportContactsResponse> ContactBatchAsync(string audienceId, IEnumerable<ContactInput> contacts, string? onConflict = null, CancellationToken cancellationToken = default);
 
     /// <summary>
+    /// Bulk-import contacts into a DOMAIN's contact pool (domain-first model).
+    /// Upserts by email; max 10,000 per call. <paramref name="onConflict"/>
+    /// <c>skip</c> leaves existing contacts untouched (default <c>upsert</c>).
+    /// POST /contacts/batch
+    /// </summary>
+    /// <remarks>
+    /// Prefer this (or <see cref="ContactBatchAsync"/>) over a
+    /// <see cref="ContactCreateAsync"/> loop for many contacts: one batch takes
+    /// the account's contact-limit lock once, a loop takes it per contact.
+    /// </remarks>
+    Task<ImportContactsResponse> ContactBatchInDomainAsync(string domain, IEnumerable<ContactInput> contacts, string? onConflict = null, CancellationToken cancellationToken = default);
+
+    /// <summary>
     /// Bulk-import contacts from CSV text (header row optional). Upserts by email.
     /// By default every non-builtin CSV column is auto-registered as a custom
     /// property; pass <paramref name="createProperties"/> false for strict mode.

@@ -421,6 +421,29 @@ test('contacts remove-from-segment / topics / set-topics map to segment and topi
   assert.match(bad.err, /Invalid JSON for --topics/);
 });
 
+test('contacts batch --domain uses the domain-first door, and one-of is enforced', async () => {
+  // The bulk door for the domain-first API. `audienceId` stays a POSITIONAL for
+  // backwards compatibility, so the two must not be usable together.
+  let call = lastCall(await runCli(['contacts', 'batch', '--domain', 'x.com', '--data', '[{"email":"a@x.com"}]']));
+  assert.deepEqual([call.resource, call.method], ['contacts', 'batch']);
+  assert.deepEqual(call.args[0], { domain: 'x.com', contacts: [{ email: 'a@x.com' }] });
+
+  call = lastCall(await runCli(['contacts', 'batch', '--domain', 'x.com', '--data', '[{"email":"b@x.com"}]', '--on-conflict', 'skip']));
+  assert.deepEqual(call.args[0], { domain: 'x.com', contacts: [{ email: 'b@x.com' }], on_conflict: 'skip' });
+
+  // Neither target -> the same guard message the other contacts commands give.
+  let bad = await runCli(['contacts', 'batch', '--data', '[{"email":"c@x.com"}]']);
+  assert.equal(bad.exitCode, 1);
+  assert.equal(bad.calls.length, 0);
+  assert.match(bad.err, /--domain/);
+
+  // Both targets -> rejected rather than silently preferring one.
+  bad = await runCli(['contacts', 'batch', 'aud_1', '--domain', 'x.com', '--data', '[{"email":"c@x.com"}]']);
+  assert.equal(bad.exitCode, 1);
+  assert.equal(bad.calls.length, 0);
+  assert.match(bad.err, /only one of/i);
+});
+
 test('contacts batch reads --file / --data and maps to contacts.batch (SDK-3)', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mbcli-'));
   const file = path.join(dir, 'contacts.json');

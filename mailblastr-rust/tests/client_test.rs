@@ -1166,3 +1166,38 @@ async fn unpaginated_list_surfaces_a_truncating_has_more() {
         "got: {request}"
     );
 }
+
+#[tokio::test]
+async fn batch_in_domain_posts_the_flat_bulk_door() {
+    // The domain-first bulk door. One batch takes the account's contact-limit
+    // lock once, where a `create` loop takes it per contact.
+    let (base_url, handle) = spawn_stub(
+        201,
+        r#"{"object":"contact_import","imported":2,"updated":0,"skipped":0,"total":2}"#,
+    );
+    let mb = Mailblastr::with_base_url("mb_test_key", base_url);
+
+    let result = mb
+        .contacts
+        .batch_in_domain(
+            "x.com",
+            vec![
+                mailblastr::ContactInput::new("a@b.com"),
+                mailblastr::ContactInput::new("c@d.com"),
+            ],
+            Some(mailblastr::OnConflict::Skip),
+        )
+        .await
+        .expect("batch_in_domain should succeed");
+    assert_eq!(result.imported, 2);
+
+    let request = handle.join().unwrap();
+    assert!(
+        request.starts_with("POST /contacts/batch?on_conflict=skip HTTP/1.1"),
+        "got: {request}"
+    );
+    // `domain` travels in the BODY on the flat route, same as POST /contacts.
+    let body = json_body(&request);
+    assert_eq!(body["domain"], "x.com");
+    assert_eq!(body["contacts"][0]["email"], "a@b.com");
+}

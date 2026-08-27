@@ -70,6 +70,23 @@ class ContactsTest < Minitest::Test
     assert_equal [{ "email" => "a@b.com" }], last_body["contacts"]
   end
 
+  def test_batch_import_domain_first
+    # The domain-first bulk door: one lock acquisition for the whole batch.
+    Mailblastr::Contacts.batch({ domain: "x.com", contacts: [{ email: "a@b.com" }] })
+    assert_request :post, "/contacts/batch"
+    assert_equal [{ "email" => "a@b.com" }], last_body["contacts"]
+    # `domain` travels in the BODY here, exactly as for POST /contacts.
+    assert_equal "x.com", last_body["domain"]
+
+    Mailblastr::Contacts.batch({ domain: "x.com", contacts: [{ email: "b@b.com" }], on_conflict: "skip" })
+    assert_request :post, "/contacts/batch?on_conflict=skip"
+
+    # The audience-scoped form must NOT start sending a domain.
+    Mailblastr::Contacts.batch({ audience_id: "aud_1", contacts: [{ email: "c@b.com" }] })
+    assert_request :post, "/audiences/aud_1/contacts/batch"
+    assert_nil last_body["domain"]
+  end
+
   def test_csv_import_with_strict_properties
     Mailblastr::Contacts.import({ audience_id: "aud_1", csv: "email\na@b.com", create_properties: false })
     assert_request :post, "/audiences/aud_1/contacts/import?create_properties=false"

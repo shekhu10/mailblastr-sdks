@@ -204,6 +204,8 @@ mailblastr.Contacts.get({"id": "user@example.com", "domain": "yourdomain.com"}) 
 mailblastr.Contacts.update({"id": contact_id, "unsubscribed": True})
 mailblastr.Contacts.remove({"id": contact_id})
 mailblastr.Contacts.batch({"audience_id": aud_id, "contacts": [{"email": "a@b.com"}]})
+# Domain-first: import straight into a domain's pool, no audience id needed.
+mailblastr.Contacts.batch({"domain": "yourdomain.com", "contacts": [{"email": "a@b.com"}]})
 mailblastr.Contacts.import_csv({"audience_id": aud_id, "csv": "email,company\na@b.com,Acme"})
 mailblastr.Contacts.create_import_upload({"audience_id": aud_id, "filename": "big.csv", "size": 90_000_000})
 mailblastr.Contacts.add_to_segment(contact_id, segment_id)

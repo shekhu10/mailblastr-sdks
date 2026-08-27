@@ -13,14 +13,14 @@ Official Java SDK for the [MailBlastr](https://www.mailblastr.com) email API —
 <dependency>
   <groupId>com.mailblastr</groupId>
   <artifactId>mailblastr</artifactId>
-  <version>5.0.1</version>
+  <version>5.1.0</version>
 </dependency>
 ```
 
 ### Gradle
 
 ```groovy
-implementation 'com.mailblastr:mailblastr:5.0.1'
+implementation 'com.mailblastr:mailblastr:5.1.0'
 ```
 
 The jar is plain JVM bytecode compiled for **Java 11**, so it is consumable
@@ -216,6 +216,11 @@ mailblastr.contacts().batch(BatchContactsRequest.builder()
         .audienceId(audienceId)
         .contact(ContactInput.builder().email("a@b.com").build())
         .onConflict("skip")
+        .build());
+// Domain-first: import straight into a domain's pool, no audience id needed.
+mailblastr.contacts().batch(BatchContactsRequest.builder()
+        .domain("yourdomain.com")
+        .contact(ContactInput.builder().email("a@b.com").build())
         .build());
 mailblastr.contacts().importCsv(ImportContactsRequest.builder()
         .audienceId(audienceId).csv("email,company\na@b.com,Acme").build());

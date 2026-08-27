@@ -166,6 +166,7 @@ $mailblastr->contacts->get(['id' => $email, 'domain' => 'example.com']);     // 
 $mailblastr->contacts->update(['id' => $contactId, 'unsubscribed' => true]);
 $mailblastr->contacts->remove(['id' => $contactId]);
 $mailblastr->contacts->batch(['audienceId' => $audienceId, 'contacts' => [ … ]]);
+$mailblastr->contacts->batch(['domain' => 'example.com', 'contacts' => [ … ]]); // domain-first
 $mailblastr->contacts->import(['audienceId' => $audienceId, 'csv' => $csvText]);
 // Large files: mint a presigned slot, PUT the file to $slot['upload_url']
 // yourself (it is a bearer credential — do not log it), then import by key.

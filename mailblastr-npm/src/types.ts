@@ -450,6 +450,29 @@ export interface UpdateContactOptions {
   properties?: Record<string, string | number>;
 }
 /** A single contact in a bulk import (no audienceId — it's on the call). */
+/**
+ * Target + payload for a bulk contact import. Domain-first, exactly like
+ * `CreateContactOptions`: pass `domain` to import into that domain's contact
+ * pool via the flat `/contacts/batch` API, or `audienceId` to target one
+ * audience via the nested API. Provide exactly one.
+ *
+ * Prefer this over a `create()` loop for many contacts: the whole batch takes
+ * the account's contact-limit lock ONCE, where a create-per-contact loop
+ * serializes on it and can exhaust the server's connection pool.
+ */
+export interface BatchContactsOptions {
+  /**
+   * The sending domain whose contact pool the contacts land in (domain-first
+   * model, e.g. `'yourdomain.com'`). Used when `audienceId` is omitted.
+   */
+  domain?: string;
+  /** Target a specific audience via the nested API instead of `domain`. */
+  audienceId?: string;
+  /** Up to 10,000 contacts per call. */
+  contacts: ContactInput[];
+  /** `'skip'` leaves existing contacts untouched (default `'upsert'`). */
+  on_conflict?: 'upsert' | 'skip';
+}
 export interface ContactInput {
   email: string;
   first_name?: string;

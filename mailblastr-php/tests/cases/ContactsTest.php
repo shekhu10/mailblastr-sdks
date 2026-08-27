@@ -49,6 +49,35 @@ $mb->contacts->batch([
 check_same('contacts.batch: path', '/audiences/aud_1/contacts/batch?on_conflict=skip', $t->lastPath());
 check_same('contacts.batch: body wraps contacts', ['contacts' => [['email' => 'a@b.com'], ['email' => 'c@d.com']]], $t->lastJson());
 
+// ---- batch import, domain-first ----
+// One batch takes the account's contact-limit lock once; a create() loop takes
+// it per contact, which is why this door exists.
+$mb->contacts->batch([
+    'domain' => 'x.com',
+    'contacts' => [['email' => 'a@b.com']],
+]);
+check_same('contacts.batch: flat path', '/contacts/batch', $t->lastPath());
+// `domain` travels in the BODY here, exactly as for POST /contacts.
+check_same(
+    'contacts.batch: flat body carries domain',
+    ['contacts' => [['email' => 'a@b.com']], 'domain' => 'x.com'],
+    $t->lastJson()
+);
+
+$mb->contacts->batch([
+    'domain' => 'x.com',
+    'on_conflict' => 'skip',
+    'contacts' => [['email' => 'a@b.com']],
+]);
+check_same('contacts.batch: flat path keeps on_conflict', '/contacts/batch?on_conflict=skip', $t->lastPath());
+
+// The audience-scoped form must NOT start sending a domain.
+$mb->contacts->batch([
+    'audienceId' => 'aud_1',
+    'contacts' => [['email' => 'a@b.com']],
+]);
+check_same('contacts.batch: nested body has no domain', ['contacts' => [['email' => 'a@b.com']]], $t->lastJson());
+
 // ---- CSV import ----
 $mb->contacts->import([
     'audienceId' => 'aud_1',

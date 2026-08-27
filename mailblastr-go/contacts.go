@@ -79,6 +79,13 @@ type ContactInput struct {
 // as skipped rather than failing the request, and Properties are sanitized but
 // not validated against the contact-property registry on this endpoint.
 type BatchContactsRequest struct {
+	// Domain is the sending domain whose contact pool the contacts land in
+	// (domain-first model, e.g. "yourdomain.com"). Used when AudienceId is
+	// empty, and sent in the body exactly as CreateContactRequest.Domain is.
+	// (BatchWithContext builds the request body explicitly, so this struct
+	// carries no json tags — unlike CreateContactRequest, which is marshaled.)
+	Domain string
+	// AudienceId targets one audience via the nested API instead of Domain.
 	AudienceId string
 	Contacts   []ContactInput
 	// OnConflict "skip" leaves existing contacts untouched (default "upsert").
@@ -360,19 +367,32 @@ func (s *ContactsService) ListWithContext(ctx context.Context, params *ListConta
 }
 
 // Batch bulk-imports contacts from a slice. Upserts by email; max 10,000 per
-// call. POST /audiences/:id/contacts/batch
+// call. Domain-first, like Create: set Domain for the flat POST /contacts/batch,
+// or AudienceId for POST /audiences/:id/contacts/batch.
+//
+// Use this for many contacts: one batch takes the account's contact-limit lock
+// once, where a Create loop takes it per contact.
 func (s *ContactsService) Batch(params *BatchContactsRequest) (*ImportContactsResponse, error) {
 	return s.BatchWithContext(context.Background(), params)
 }
 
 // BatchWithContext bulk-imports contacts from a slice.
 func (s *ContactsService) BatchWithContext(ctx context.Context, params *BatchContactsRequest) (*ImportContactsResponse, error) {
-	path := "/audiences/" + esc(params.AudienceId) + "/contacts/batch"
+	suffix := ""
 	if params.OnConflict != "" {
-		path += "?on_conflict=" + url.QueryEscape(params.OnConflict)
+		suffix = "?on_conflict=" + url.QueryEscape(params.OnConflict)
 	}
 	body := map[string]any{"contacts": params.Contacts}
-	return request[ImportContactsResponse](ctx, s.client, http.MethodPost, path, body, nil)
+	if params.AudienceId != "" {
+		// The nested audience route derives its pool from the path; only the
+		// flat route takes a domain.
+		path := "/audiences/" + esc(params.AudienceId) + "/contacts/batch" + suffix
+		return request[ImportContactsResponse](ctx, s.client, http.MethodPost, path, body, nil)
+	}
+	if params.Domain != "" {
+		body["domain"] = params.Domain
+	}
+	return request[ImportContactsResponse](ctx, s.client, http.MethodPost, "/contacts/batch"+suffix, body, nil)
 }
 
 // Import bulk-imports contacts from CSV text. Upserts by email.
