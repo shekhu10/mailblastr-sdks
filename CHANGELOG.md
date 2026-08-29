@@ -3,11 +3,12 @@
 All nine MailBlastr SDKs release in lockstep — one version, one tag, every registry.
 Dates are release dates; entries cover every package unless a language is called out.
 
-## Unreleased
+## 5.1.0 — 2026-08-30
 
-`emails.list` accepts optional `folder` (`outbox` | `sent` | `scheduled` | `failed`)
-matching GET `/emails?folder=`. Public `emails.send` is unchanged (still waits for
-SES). Dashboard instant-send is a session route, not part of the public API.
+First public 5.1.0. `emails.list` accepts optional `folder` (`outbox` | `sent` |
+`scheduled` | `failed`) matching GET `/emails?folder=`. Public `emails.send` is
+unchanged (still waits for SES). Dashboard instant-send is a session route, not
+part of this API.
 
 ## 5.0.1 — 2026-08-20
 
