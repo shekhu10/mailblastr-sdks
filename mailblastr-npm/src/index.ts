@@ -166,7 +166,8 @@ class Emails {
    * List sent emails. GET /emails — returns trimmed {@link SentEmailListItem}s
    * (no status/html/text/events). Optional filters: `campaign_id`,
    * `automation_id`, `source: 'individual'`, `domain_id`, `status` (matched
-   * against `last_event`) and `search` (recipients / subject / sender).
+   * against `last_event`), `search` (recipients / subject / sender) and
+   * `folder` (`outbox` / `sent` / `scheduled` / `failed`).
    */
   list(params?: ListEmailsParams): Promise<Result<ListResponse<SentEmailListItem>>> {
     const q = addPagination(new URLSearchParams(), params);
@@ -176,6 +177,7 @@ class Emails {
     if (params?.domain_id != null) q.set('domain_id', params.domain_id);
     if (params?.status != null) q.set('status', params.status);
     if (params?.search != null) q.set('search', params.search);
+    if (params?.folder != null) q.set('folder', params.folder);
     return this.http.request('GET', `/emails${qs(q)}`);
   }
   /**

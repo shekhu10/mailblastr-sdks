@@ -59,6 +59,7 @@ class ListParams(TypedDict, total=False):
     domain_id: str  # only emails sent from this sending domain (domain id)
     status: str  # match the value reads expose as `last_event`, e.g. 'delivered'
     search: str  # substring match over recipients, subject and sender
+    folder: str  # mailbox folder: outbox | sent | scheduled | failed
 
 
 class ReceivingListParams(TypedDict, total=False):
@@ -233,8 +234,9 @@ class Emails:
         and unset cc/bcc/reply_to come back as ``None`` rather than ``[]``).
         Optional filters: ``campaign_id``, ``automation_id``,
         ``source='individual'``, ``domain_id``, ``status`` (matched against the
-        value reads expose as ``last_event``) and ``search`` (recipients,
-        subject, sender). GET /emails"""
+        value reads expose as ``last_event``), ``search`` (recipients,
+        subject, sender) and ``folder`` (``outbox`` / ``sent`` / ``scheduled`` /
+        ``failed``). GET /emails"""
         params = params or {}
         qs = build_query(
             {
@@ -247,6 +249,7 @@ class Emails:
                 "domain_id": params.get("domain_id"),
                 "status": params.get("status"),
                 "search": params.get("search"),
+                "folder": params.get("folder"),
             }
         )
         return http_client.request("GET", f"/emails{qs}")

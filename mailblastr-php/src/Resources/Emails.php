@@ -88,7 +88,7 @@ class Emails extends Resource
     {
         return $this->client->request('GET', '/emails' . $this->paginationQuery(
             $params,
-            ['campaign_id', 'automation_id', 'source', 'domain_id', 'status', 'search', 'q']
+            ['campaign_id', 'automation_id', 'source', 'domain_id', 'status', 'search', 'q', 'folder']
         ));
     }
 

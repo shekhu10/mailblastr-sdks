@@ -93,7 +93,8 @@ public final class Emails extends Resource {
              .add("source", params.getSource())
              .add("domain_id", params.getDomainId())
              .add("status", params.getStatus())
-             .add("search", params.getSearch());
+             .add("search", params.getSearch())
+             .add("folder", params.getFolder());
         }
         return api.request("GET", "/emails" + q);
     }

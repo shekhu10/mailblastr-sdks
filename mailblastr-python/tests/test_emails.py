@@ -37,6 +37,10 @@ class TestEmails(RecordingTestCase):
         mailblastr.Emails.list({"status": "bounced", "search": "acme.com"})
         self.assertCall("GET", "/emails?status=bounced&search=acme.com")
 
+    def test_list_with_mailbox_folder(self):
+        mailblastr.Emails.list({"folder": "outbox"})
+        self.assertCall("GET", "/emails?folder=outbox")
+
     def test_list_with_source_filters(self):
         mailblastr.Emails.list({"campaign_id": "cmp_1", "domain_id": "dom_1"})
         self.assertCall("GET", "/emails?campaign_id=cmp_1&domain_id=dom_1")

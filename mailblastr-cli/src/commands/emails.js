@@ -188,7 +188,8 @@ function register({ group, leaf, act }) {
       .option('--source <source>', "'individual' restricts to one-off API sends")
       .option('--domain-id <id>', 'only emails sent from this sending domain')
       .option('--status <status>', "only emails whose last event matches, e.g. 'delivered'")
-      .option('--search <text>', 'match recipients, subject or sender'),
+      .option('--search <text>', 'match recipients, subject or sender')
+      .option('--folder <folder>', "mailbox folder: outbox | sent | scheduled | failed"),
     ({ client, opts }) =>
       client.emails.list(
         clean({
@@ -199,6 +200,7 @@ function register({ group, leaf, act }) {
           domain_id: opts.domainId,
           status: opts.status,
           search: opts.search,
+          folder: opts.folder,
         }),
       ),
   );

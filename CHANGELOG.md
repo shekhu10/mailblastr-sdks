@@ -3,6 +3,12 @@
 All nine MailBlastr SDKs release in lockstep — one version, one tag, every registry.
 Dates are release dates; entries cover every package unless a language is called out.
 
+## Unreleased
+
+`emails.list` accepts optional `folder` (`outbox` | `sent` | `scheduled` | `failed`)
+matching GET `/emails?folder=`. Public `emails.send` is unchanged (still waits for
+SES). Dashboard instant-send is a session route, not part of the public API.
+
 ## 5.0.1 — 2026-08-20
 
 **Every SDK except the Node one was deriving the wrong webhook signing key for some

@@ -15,6 +15,7 @@ public final class ListEmailsParams {
     private final String domainId;
     private final String status;
     private final String search;
+    private final String folder;
 
     private ListEmailsParams(Builder b) {
         this.limit = b.limit;
@@ -26,6 +27,7 @@ public final class ListEmailsParams {
         this.domainId = b.domainId;
         this.status = b.status;
         this.search = b.search;
+        this.folder = b.folder;
     }
 
     public static Builder builder() { return new Builder(); }
@@ -39,6 +41,7 @@ public final class ListEmailsParams {
     public String getDomainId() { return domainId; }
     public String getStatus() { return status; }
     public String getSearch() { return search; }
+    public String getFolder() { return folder; }
 
     public static final class Builder {
         private Integer limit;
@@ -50,6 +53,7 @@ public final class ListEmailsParams {
         private String domainId;
         private String status;
         private String search;
+        private String folder;
 
         /** Page size — an integer 1–100 (the API defaults to 20). */
         public Builder limit(int limit) { this.limit = limit; return this; }
@@ -74,6 +78,8 @@ public final class ListEmailsParams {
         public Builder status(String status) { this.status = status; return this; }
         /** Substring search across recipients, subject and sender. */
         public Builder search(String search) { this.search = search; return this; }
+        /** Mailbox folder: {@code outbox}, {@code sent}, {@code scheduled}, or {@code failed}. */
+        public Builder folder(String folder) { this.folder = folder; return this; }
 
         public ListEmailsParams build() { return new ListEmailsParams(this); }
     }

@@ -854,6 +854,11 @@ test('emails list maps the status and search filters', async () => {
   assert.deepEqual(call.args[0], { limit: 50, status: 'delivered', search: 'invoice' });
 });
 
+test('emails list maps the mailbox folder filter', async () => {
+  const call = lastCall(await runCli(['emails', 'list', '--folder', 'outbox']));
+  assert.deepEqual(call.args[0], { folder: 'outbox' });
+});
+
 test('--after and --before are mutually exclusive (the API answers 422)', async () => {
   const r = await runCli(['emails', 'list', '--after', 'em_1', '--before', 'em_9']);
   assert.equal(r.exitCode, 1);

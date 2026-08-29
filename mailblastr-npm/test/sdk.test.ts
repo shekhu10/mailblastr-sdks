@@ -499,6 +499,13 @@ test('emails.list forwards the status + search filters', async () => {
   );
 });
 
+test('emails.list forwards the mailbox folder filter', async () => {
+  const { fn, calls } = mockFetch(200, { object: 'list', has_more: false, data: [] });
+  const mb = new Mailblastr('mb_test', { baseUrl: 'https://api.test', fetch: fn });
+  await mb.emails.list({ folder: 'outbox' });
+  assert.equal(calls[0].url, 'https://api.test/emails?folder=outbox');
+});
+
 test('emails.sources + receiving.listAddresses map to the right routes', async () => {
   const { fn, calls } = mockFetch(200, { object: 'list', has_more: false, data: [] });
   const mb = new Mailblastr('mb_test', { baseUrl: 'https://api.test', fetch: fn });

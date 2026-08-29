@@ -220,6 +220,9 @@ public class EmailListOptions
 
     /// <summary>Substring match over recipients, subject and sender.</summary>
     public string? Search { get; set; }
+
+    /// <summary>Mailbox folder: <c>outbox</c>, <c>sent</c>, <c>scheduled</c>, or <c>failed</c>.</summary>
+    public string? Folder { get; set; }
 }
 
 /// <summary>Response of a send: <c>{ id }</c>.</summary>

@@ -267,6 +267,8 @@ export interface ListEmailsParams extends PaginationParams {
   status?: string;
   /** Substring search across recipients, subject and sender. */
   search?: string;
+  /** Mailbox folder: `outbox` (sending), `sent`, `scheduled`, or `failed`. Independent of `status`. */
+  folder?: 'outbox' | 'sent' | 'scheduled' | 'failed';
 }
 
 /** One row of `mb.emails.sources()` — per-origin send metrics. */

@@ -38,6 +38,8 @@ pub struct ListEmailsParams {
     pub status: Option<String>,
     /// Free-text search across recipients, subject, and sender.
     pub search: Option<String>,
+    /// Mailbox folder: `outbox`, `sent`, `scheduled`, or `failed`.
+    pub folder: Option<String>,
 }
 
 impl ListEmailsParams {
@@ -92,6 +94,12 @@ impl ListEmailsParams {
         self
     }
 
+    /// Mailbox folder: `outbox`, `sent`, `scheduled`, or `failed`.
+    pub fn with_folder(mut self, folder: impl Into<String>) -> Self {
+        self.folder = Some(folder.into());
+        self
+    }
+
     fn to_query(&self) -> Vec<(&'static str, String)> {
         let mut q = Vec::new();
         if let Some(limit) = self.limit {
@@ -120,6 +128,9 @@ impl ListEmailsParams {
         }
         if let Some(search) = &self.search {
             q.push(("search", search.clone()));
+        }
+        if let Some(folder) = &self.folder {
+            q.push(("folder", folder.clone()));
         }
         q
     }

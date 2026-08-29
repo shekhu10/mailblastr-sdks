@@ -132,6 +132,9 @@ func TestEmailsListFilteredStatusAndSearch(t *testing.T) {
 		if q.Get("domain_id") != "dom_1" || q.Get("campaign_id") != "cmp_1" {
 			t.Errorf("query = %v", q)
 		}
+		if q.Get("folder") != "sent" {
+			t.Errorf("folder = %q, want sent", q.Get("folder"))
+		}
 		w.Write([]byte(`{"object":"list","has_more":false,"data":[{"object":"email","id":"em_1","domain_id":"dom_1","campaign_id":"cmp_1","automation_id":null,"last_event":"bounced","to":["a@b.com"],"from":"c@d.com","subject":"invoice","created_at":"2026-08-08T00:00:00Z"}]}`))
 	})
 
@@ -140,6 +143,7 @@ func TestEmailsListFilteredStatusAndSearch(t *testing.T) {
 		Search:     "invoice",
 		DomainId:   "dom_1",
 		CampaignId: "cmp_1",
+		Folder:     "sent",
 	})
 	if err != nil {
 		t.Fatalf("ListFiltered: %v", err)

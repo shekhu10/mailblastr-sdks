@@ -46,7 +46,8 @@ public partial class MailblastrClient
             ("source", options.Source),
             ("domain_id", options.DomainId),
             ("status", options.Status),
-            ("search", options.Search));
+            ("search", options.Search),
+            ("folder", options.Folder));
         return RequestAsync<ListResponse<SentEmailListItem>>(HttpMethod.Get, "/emails" + query, null, null, cancellationToken);
     }
 

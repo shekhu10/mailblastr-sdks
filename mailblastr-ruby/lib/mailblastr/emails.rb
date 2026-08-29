@@ -33,7 +33,7 @@ module Mailblastr
       # `search` is absent. GET /emails
       def list(params = {})
         query = Client.pagination(params).merge(
-          Client.filters(params, :campaign_id, :automation_id, :source, :domain_id, :status, :search, :q)
+          Client.filters(params, :campaign_id, :automation_id, :source, :domain_id, :status, :search, :q, :folder)
         )
         Client.request(:get, "/emails", query: query)
       end

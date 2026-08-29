@@ -354,6 +354,8 @@ type ListEmailsRequest struct {
 	// Search matches recipients, subject, and sender (case-insensitive
 	// substring).
 	Search string
+	// Folder is a mailbox folder: outbox (status=sending), sent, scheduled, or failed.
+	Folder string
 }
 
 // UpdateEmailRequest reschedules a scheduled email.
@@ -453,6 +455,9 @@ func (s *EmailsService) ListFilteredWithContext(ctx context.Context, params *Lis
 		}
 		if params.Search != "" {
 			q.Set("search", params.Search)
+		}
+		if params.Folder != "" {
+			q.Set("folder", params.Folder)
 		}
 	}
 	path := "/emails"

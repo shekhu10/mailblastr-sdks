@@ -36,6 +36,9 @@ public final class ContractParityTest {
                 .build());
         Check.eq("emails list status+search url",
                 "https://api.test/emails?status=bounced&search=acme.com", t.lastUrl);
+        mb.emails().list(ListEmailsParams.builder().folder("outbox").build());
+        Check.eq("emails list folder url",
+                "https://api.test/emails?folder=outbox", t.lastUrl);
         mb.emails().list(ListEmailsParams.builder()
                 .limit(50).domainId("dom_1").source("individual").build());
         Check.eq("emails list source filters url",
