@@ -116,8 +116,9 @@ list-only by design — see [API keys](#api-keys).
 await mb.emails.send({ from, to, subject, html });   // to: 1-50 recipients
 await mb.emails.list({ limit: 20, after });          // cursor pagination
 await mb.emails.list({ status: 'bounced', search: 'ada@' });
+await mb.emails.list({ folder: 'scheduled' });       // outbox | sent | scheduled | failed — any other value is rejected (422)
 await mb.emails.get(id);
-await mb.emails.sources();                           // per-campaign/automation metrics
+await mb.emails.sources();                           // per-campaign/automation metrics + api/individual one-off roll-ups
 await mb.emails.listAttachments(id);
 await mb.emails.getAttachment(id, attachmentId);
 await mb.emails.update(id, { scheduled_at });        // reschedule

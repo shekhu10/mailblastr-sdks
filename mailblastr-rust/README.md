@@ -143,7 +143,12 @@ mailblastr.emails.list(Some(PaginationParams::new().with_limit(20))).await?;
 mailblastr.emails.list_filtered(Some(                         // server-side filters
     ListEmailsParams::new().with_status("bounced").with_search("acme"),
 )).await?;
-mailblastr.emails.sources().await?;                           // per-campaign/automation totals
+mailblastr.emails.list_filtered(Some(                         // folder takes one of the four
+    ListEmailsParams::new().with_folder(FOLDER_SCHEDULED),    // FOLDER_* consts (outbox/sent/
+)).await?;                                                    // scheduled/failed); any other
+                                                              // value is rejected
+mailblastr.emails.sources().await?;                           // per-source totals (campaign/
+                                                              // automation/api/individual)
 mailblastr.emails.get(id).await?;
 mailblastr.emails.list_attachments(id).await?;                // metadata only, no bytes
 mailblastr.emails.update(id, "2026-08-01T09:00:00Z").await?;  // reschedule

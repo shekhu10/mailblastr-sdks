@@ -90,6 +90,11 @@ check_same('emails.list: no body on GET', null, $t->last()['body']);
 $mb->emails->list(['status' => 'bounced', 'search' => 'ada@', 'domain_id' => 'dom_1']);
 check_same('emails.list: status/search filters', '/emails?status=bounced&search=ada%40&domain_id=dom_1', $t->lastPath());
 
+// folder is forwarded too (outbox|sent|scheduled|failed; the server 422s
+// any other value)
+$mb->emails->list(['folder' => 'scheduled']);
+check_same('emails.list: folder filter', '/emails?folder=scheduled', $t->lastPath());
+
 // ---- sources (per-source send metrics, not paginated) ----
 $mb->emails->sources();
 check_same('emails.sources: method', 'GET', $t->last()['method']);

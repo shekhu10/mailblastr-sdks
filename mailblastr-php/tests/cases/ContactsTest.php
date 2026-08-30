@@ -78,6 +78,20 @@ $mb->contacts->batch([
 ]);
 check_same('contacts.batch: nested body has no domain', ['contacts' => [['email' => 'a@b.com']]], $t->lastJson());
 
+// An EMPTY audienceId counts as absent — the flat route, never the malformed
+// POST /audiences//contacts/batch.
+$mb->contacts->batch([
+    'audienceId' => '',
+    'domain' => 'x.com',
+    'contacts' => [['email' => 'a@b.com']],
+]);
+check_same('contacts.batch: empty audienceId uses the flat path', '/contacts/batch', $t->lastPath());
+check_same(
+    'contacts.batch: empty audienceId still carries domain in the body',
+    ['contacts' => [['email' => 'a@b.com']], 'domain' => 'x.com'],
+    $t->lastJson()
+);
+
 // ---- CSV import ----
 $mb->contacts->import([
     'audienceId' => 'aud_1',

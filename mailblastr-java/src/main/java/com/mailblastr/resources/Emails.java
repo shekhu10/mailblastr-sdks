@@ -80,7 +80,9 @@ public final class Emails extends Resource {
     /**
      * List sent emails with optional server-side {@code campaign_id} /
      * {@code automation_id} / {@code source} / {@code domain_id} /
-     * {@code status} / {@code search} filters. {@code GET /emails}
+     * {@code status} / {@code search} / {@code folder} filters —
+     * {@code folder} is one of {@code outbox}, {@code sent},
+     * {@code scheduled} or {@code failed}. {@code GET /emails}
      */
     public MailblastrResponse list(ListEmailsParams params) {
         Query q = new Query();
@@ -101,7 +103,11 @@ public final class Emails extends Resource {
 
     /**
      * Per-source send metrics — one row per campaign / automation, plus an
-     * {@code "individual"} roll-up. Not paginated. {@code GET /emails/sources}
+     * {@code "api"} roll-up (one-off API-key sends, including mail sent before
+     * the send origin was recorded) and an {@code "individual"} roll-up
+     * (dashboard-composed one-offs). {@code id}/{@code name}/{@code subject}/
+     * {@code status} are {@code null} for both roll-up rows. Not paginated.
+     * {@code GET /emails/sources}
      */
     public MailblastrResponse sources() {
         return api.request("GET", "/emails/sources");

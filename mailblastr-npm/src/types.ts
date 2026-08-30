@@ -259,8 +259,8 @@ export interface ListEmailsParams extends PaginationParams {
   campaign_id?: string;
   /** Only emails sent by this automation. Ignored when `campaign_id` is set. */
   automation_id?: string;
-  /** `'individual'` restricts to one-off API sends (no campaign/automation). Only honored when neither `campaign_id` nor `automation_id` is set. */
-  source?: 'individual';
+  /** Restricts to one-off sends (no campaign/automation): `'individual'` is the whole bucket, `'api'` narrows to API-key sends (includes mail sent before the send origin was recorded), `'dashboard'` narrows to mail composed in the dashboard (composer, inbox replies/forwards). Only honored when neither `campaign_id` nor `automation_id` is set. */
+  source?: 'individual' | 'api' | 'dashboard';
   /** Only emails sent from this sending domain (domain id). Composes with the source filters. */
   domain_id?: string;
   /** Match the row's latest state, e.g. `delivered` — the same value reads expose as `last_event`. Case-insensitive. */
@@ -273,11 +273,12 @@ export interface ListEmailsParams extends PaginationParams {
 
 /** One row of `mb.emails.sources()` — per-origin send metrics. */
 export interface EmailSource {
-  kind: 'campaign' | 'automation' | 'individual';
-  /** `null` for the `individual` roll-up row. */
+  /** `'api'` rolls up one-off API-key sends (including mail sent before the send origin was recorded); `'individual'` rolls up dashboard-composed one-offs. */
+  kind: 'campaign' | 'automation' | 'api' | 'individual';
+  /** `null` for the `api` and `individual` roll-up rows. */
   id: string | null;
   name: string | null;
-  /** `null` for `automation` and `individual` rows. */
+  /** `null` for `automation`, `api` and `individual` rows. */
   subject: string | null;
   status: string | null;
   total: number;
@@ -456,7 +457,8 @@ export interface UpdateContactOptions {
  * Target + payload for a bulk contact import. Domain-first, exactly like
  * `CreateContactOptions`: pass `domain` to import into that domain's contact
  * pool via the flat `/contacts/batch` API, or `audienceId` to target one
- * audience via the nested API. Provide exactly one.
+ * audience via the nested API. When both are set, `audienceId` takes
+ * precedence and `domain` is ignored.
  *
  * Prefer this over a `create()` loop for many contacts: the whole batch takes
  * the account's contact-limit lock ONCE, where a create-per-contact loop

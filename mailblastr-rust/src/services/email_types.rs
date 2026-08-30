@@ -620,16 +620,20 @@ pub struct SentEmailListItem {
 }
 
 /// One row of `emails.sources()` — aggregate send metrics per campaign /
-/// automation / one-off ("individual") origin.
+/// automation / one-off origin.
 #[derive(Debug, Clone, Deserialize)]
 pub struct EmailSource {
-    /// `campaign` | `automation` | `individual`.
+    /// `campaign` | `automation` | `api` (one-off API-key sends, including
+    /// mail from before the send origin was recorded) | `individual`
+    /// (dashboard-composed one-offs).
     pub kind: String,
-    /// `None` for the `individual` row.
+    /// `None` for `api` and `individual` rows.
     pub id: Option<String>,
+    /// `None` for `api` and `individual` rows.
     pub name: Option<String>,
-    /// `None` for `automation` and `individual` rows.
+    /// `None` for `automation`, `api`, and `individual` rows.
     pub subject: Option<String>,
+    /// `None` for `api` and `individual` rows.
     pub status: Option<String>,
     #[serde(default)]
     pub total: u64,

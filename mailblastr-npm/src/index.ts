@@ -165,7 +165,9 @@ class Emails {
   /**
    * List sent emails. GET /emails — returns trimmed {@link SentEmailListItem}s
    * (no status/html/text/events). Optional filters: `campaign_id`,
-   * `automation_id`, `source: 'individual'`, `domain_id`, `status` (matched
+   * `automation_id`, `source` (`individual` = all one-off sends, `api` =
+   * API-key one-offs, `dashboard` = dashboard-composed one-offs),
+   * `domain_id`, `status` (matched
    * against `last_event`), `search` (recipients / subject / sender) and
    * `folder` (`outbox` / `sent` / `scheduled` / `failed`).
    */
@@ -181,8 +183,9 @@ class Emails {
     return this.http.request('GET', `/emails${qs(q)}`);
   }
   /**
-   * Per-source send metrics — one row per campaign, automation, and a roll-up
-   * for individual API sends. GET /emails/sources (not paginated).
+   * Per-source send metrics — one row per campaign and automation, plus an
+   * `api` roll-up (one-off API-key sends) and an `individual` roll-up
+   * (dashboard-composed one-offs). GET /emails/sources (not paginated).
    */
   sources(): Promise<Result<ListResponse<EmailSource>>> {
     return this.http.request('GET', '/emails/sources');

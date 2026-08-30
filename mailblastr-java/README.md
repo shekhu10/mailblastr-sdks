@@ -13,14 +13,14 @@ Official Java SDK for the [MailBlastr](https://www.mailblastr.com) email API —
 <dependency>
   <groupId>com.mailblastr</groupId>
   <artifactId>mailblastr</artifactId>
-  <version>5.1.0</version>
+  <version>5.1.1</version>
 </dependency>
 ```
 
 ### Gradle
 
 ```groovy
-implementation 'com.mailblastr:mailblastr:5.1.0'
+implementation 'com.mailblastr:mailblastr:5.1.1'
 ```
 
 The jar is plain JVM bytecode compiled for **Java 11**, so it is consumable
@@ -150,7 +150,12 @@ mailblastr.emails().send(request);
 mailblastr.emails().list(ListParams.builder().limit(20).after(cursor).build());
 mailblastr.emails().list(ListEmailsParams.builder()   // server-side filters
         .status("bounced").search("acme.com").domainId(domainId).build());
-mailblastr.emails().sources();   // per-campaign / automation send metrics
+// `folder` takes one of outbox / sent / scheduled / failed (the
+// ListEmailsParams.FOLDER_* constants); any other value is rejected (422).
+mailblastr.emails().list(ListEmailsParams.builder()
+        .folder(ListEmailsParams.FOLDER_SCHEDULED).build());
+mailblastr.emails().sources();   // per-campaign / automation send metrics,
+                                 // plus "api" and "individual" roll-up rows
 mailblastr.emails().get(id);
 mailblastr.emails().listAttachments(id);
 mailblastr.emails().getAttachment(id, attachmentId);

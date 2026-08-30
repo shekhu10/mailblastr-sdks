@@ -6,6 +6,15 @@ package com.mailblastr.requests;
  * {@code domain_id} / {@code status} / {@code search} filters.
  */
 public final class ListEmailsParams {
+    /**
+     * The only legal {@code folder} values — the API rejects any other value
+     * with a {@code 422 validation_error}.
+     */
+    public static final String FOLDER_OUTBOX = "outbox";
+    public static final String FOLDER_SENT = "sent";
+    public static final String FOLDER_SCHEDULED = "scheduled";
+    public static final String FOLDER_FAILED = "failed";
+
     private final Integer limit;
     private final String after;
     private final String before;
@@ -64,8 +73,12 @@ public final class ListEmailsParams {
         /** Only emails sent by this automation. Ignored when {@code campaignId} is set. */
         public Builder automationId(String automationId) { this.automationId = automationId; return this; }
         /**
-         * {@code "individual"} restricts to one-off API sends (no campaign/automation).
-         * Only honoured when neither {@code campaignId} nor {@code automationId} is set.
+         * {@code "individual"} restricts to one-off sends (no campaign/automation);
+         * {@code "api"} narrows to one-off sends made with an API key (including
+         * mail sent before the send origin was recorded); {@code "dashboard"}
+         * narrows to one-off mail composed in the dashboard (composer, inbox
+         * replies/forwards). Only honoured when neither {@code campaignId} nor
+         * {@code automationId} is set.
          */
         public Builder source(String source) { this.source = source; return this; }
         /** Only emails sent from this sending domain (domain id); composes with the source filters. */
@@ -78,7 +91,13 @@ public final class ListEmailsParams {
         public Builder status(String status) { this.status = status; return this; }
         /** Substring search across recipients, subject and sender. */
         public Builder search(String search) { this.search = search; return this; }
-        /** Mailbox folder: {@code outbox}, {@code sent}, {@code scheduled}, or {@code failed}. */
+        /**
+         * Mailbox folder: {@link ListEmailsParams#FOLDER_OUTBOX},
+         * {@link ListEmailsParams#FOLDER_SENT},
+         * {@link ListEmailsParams#FOLDER_SCHEDULED}, or
+         * {@link ListEmailsParams#FOLDER_FAILED} — any other value is a
+         * {@code 422 validation_error}.
+         */
         public Builder folder(String folder) { this.folder = folder; return this; }
 
         public ListEmailsParams build() { return new ListEmailsParams(this); }

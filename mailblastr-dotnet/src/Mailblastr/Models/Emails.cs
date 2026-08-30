@@ -184,6 +184,18 @@ public class BatchEmailMessage
 }
 
 /// <summary>
+/// The legal values of the <c>folder</c> filter on GET /emails. The API
+/// rejects any other value with a 422 <c>validation_error</c>.
+/// </summary>
+public static class EmailFolders
+{
+    public const string Outbox = "outbox";
+    public const string Sent = "sent";
+    public const string Scheduled = "scheduled";
+    public const string Failed = "failed";
+}
+
+/// <summary>
 /// Options for listing sent emails (GET /emails): cursor pagination plus
 /// optional server-side <c>campaign_id</c> / <c>automation_id</c> /
 /// <c>source</c> / <c>domain_id</c> / <c>status</c> / <c>search</c> filters.
@@ -205,7 +217,13 @@ public class EmailListOptions
     /// <summary>Only emails sent by this automation.</summary>
     public string? AutomationId { get; set; }
 
-    /// <summary><c>individual</c> restricts to one-off API sends (no campaign/automation).</summary>
+    /// <summary>
+    /// <c>individual</c> restricts to all one-off sends (no campaign/automation),
+    /// <c>api</c> to one-off sends made with an API key (including mail predating
+    /// origin tracking), <c>dashboard</c> to mail composed in the dashboard
+    /// (composer, inbox replies/forwards). Ignored when <see cref="CampaignId"/>
+    /// or <see cref="AutomationId"/> is supplied.
+    /// </summary>
     public string? Source { get; set; }
 
     /// <summary>Only emails sent from this sending domain (domain id); composes with the source filters.</summary>
@@ -221,7 +239,11 @@ public class EmailListOptions
     /// <summary>Substring match over recipients, subject and sender.</summary>
     public string? Search { get; set; }
 
-    /// <summary>Mailbox folder: <c>outbox</c>, <c>sent</c>, <c>scheduled</c>, or <c>failed</c>.</summary>
+    /// <summary>
+    /// Mailbox folder — one of the <see cref="EmailFolders"/> constants
+    /// (<c>outbox</c>, <c>sent</c>, <c>scheduled</c>, <c>failed</c>); any other
+    /// value is rejected with a 422 <c>validation_error</c>.
+    /// </summary>
     public string? Folder { get; set; }
 }
 
@@ -412,15 +434,19 @@ public class SentEmailListItem
 /// </summary>
 public class EmailSource
 {
-    /// <summary><c>campaign</c> | <c>automation</c> | <c>individual</c>.</summary>
+    /// <summary>
+    /// <c>campaign</c> | <c>automation</c> | <c>api</c> (one-off API-key sends,
+    /// including mail predating origin tracking) | <c>individual</c>
+    /// (dashboard-composed one-offs).
+    /// </summary>
     [JsonPropertyName("kind")]
     public string Kind { get; set; } = null!;
 
-    /// <summary>Campaign/automation id; null on the <c>individual</c> roll-up row.</summary>
+    /// <summary>Campaign/automation id; null on the <c>api</c> and <c>individual</c> roll-up rows.</summary>
     [JsonPropertyName("id")]
     public string? Id { get; set; }
 
-    /// <summary>Null on the <c>individual</c> roll-up row.</summary>
+    /// <summary>Null on the <c>api</c> and <c>individual</c> roll-up rows.</summary>
     [JsonPropertyName("name")]
     public string? Name { get; set; }
 

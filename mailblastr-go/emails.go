@@ -295,12 +295,15 @@ type SentEmailListItem struct {
 }
 
 // EmailSource is one row of Emails.Sources (GET /emails/sources): aggregated
-// send metrics per campaign, automation, or one-off ("individual") origin.
+// send metrics per campaign, automation, or one-off ("api" / "individual")
+// origin.
 type EmailSource struct {
-	// Kind is "campaign" | "automation" | "individual".
+	// Kind is "campaign" | "automation" | "api" (one-off API-key sends,
+	// including mail sent before the send origin was recorded) | "individual"
+	// (dashboard-composed one-offs).
 	Kind string `json:"kind"`
-	// Id, Name and Status are null for the "individual" row; Subject is set
-	// only for campaigns.
+	// Id, Name, Subject and Status are null for the "api" and "individual"
+	// rows; Subject is set only for campaigns.
 	Id      string `json:"id"`
 	Name    string `json:"name"`
 	Subject string `json:"subject"`
@@ -330,6 +333,33 @@ type AttachmentMeta struct {
 	ExpiresAt          string `json:"expires_at"`
 }
 
+// Folder values accepted by ListEmailsRequest.Folder. The API takes exactly
+// these four and answers any other value with a 422 (validation_error).
+const (
+	// EmailFolderOutbox is emails still going out (status=sending).
+	EmailFolderOutbox = "outbox"
+	// EmailFolderSent is emails that have been sent.
+	EmailFolderSent = "sent"
+	// EmailFolderScheduled is emails waiting for their scheduled_at.
+	EmailFolderScheduled = "scheduled"
+	// EmailFolderFailed is emails whose send failed.
+	EmailFolderFailed = "failed"
+)
+
+// Source values accepted by ListEmailsRequest.Source. Honoured only when
+// neither CampaignId nor AutomationId is supplied.
+const (
+	// EmailSourceIndividual is the whole no-origin one-off bucket: emails
+	// sent outside any campaign or automation.
+	EmailSourceIndividual = "individual"
+	// EmailSourceApi narrows to one-off sends made with an API key, including
+	// mail sent before the send origin was recorded.
+	EmailSourceApi = "api"
+	// EmailSourceDashboard narrows to one-off mail composed in the dashboard:
+	// the composer and inbox replies/forwards.
+	EmailSourceDashboard = "dashboard"
+)
+
 // ListEmailsRequest lists sent emails: cursor pagination plus optional
 // server-side source filters.
 type ListEmailsRequest struct {
@@ -341,8 +371,10 @@ type ListEmailsRequest struct {
 	CampaignId string
 	// AutomationId restricts to emails sent by this automation.
 	AutomationId string
-	// Source: "individual" restricts to one-off API sends (no
-	// campaign/automation).
+	// Source restricts to one-off emails (no campaign/automation):
+	// EmailSourceIndividual is the whole one-off bucket, EmailSourceApi
+	// narrows to API-key sends, EmailSourceDashboard narrows to
+	// dashboard-composed mail.
 	Source string
 	// DomainId restricts to emails sent from this sending domain (domain id).
 	// Composes with the source filters.
@@ -354,7 +386,9 @@ type ListEmailsRequest struct {
 	// Search matches recipients, subject, and sender (case-insensitive
 	// substring).
 	Search string
-	// Folder is a mailbox folder: outbox (status=sending), sent, scheduled, or failed.
+	// Folder is a mailbox folder: EmailFolderOutbox (status=sending),
+	// EmailFolderSent, EmailFolderScheduled, or EmailFolderFailed. Any other
+	// value is a 422 (validation_error).
 	Folder string
 }
 

@@ -90,6 +90,9 @@ module Mailblastr
       #   Contacts.batch({ audience_id: "aud_1", contacts: [{ email: "a@b.com" }], on_conflict: "skip" })
       def batch(params)
         audience_id = Client.opt(params, :audience_id)
+        # "" is truthy in Ruby but names no audience — treat it as absent and
+        # take the flat route, matching the other MailBlastr SDKs.
+        audience_id = nil if audience_id == ""
         query = {}
         on_conflict = Client.opt(params, :on_conflict)
         query[:on_conflict] = on_conflict if on_conflict

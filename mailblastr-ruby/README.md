@@ -104,6 +104,7 @@ That means `domain` (the sending domain, e.g. `"yourdomain.com"` — one of your
 Mailblastr::Emails.send({ from: from, to: to, subject: subject, html: html })
 Mailblastr::Emails.list({ limit: 20, after: cursor })   # cursor pagination
 Mailblastr::Emails.list({ status: "bounced", search: "acme.com" }) # filters
+Mailblastr::Emails.list({ folder: "scheduled" }) # one of outbox | sent | scheduled | failed — any other value is rejected (422)
 Mailblastr::Emails.sources                              # per-campaign/automation send metrics
 Mailblastr::Emails.get(email_id)
 Mailblastr::Emails.list_attachments(email_id)

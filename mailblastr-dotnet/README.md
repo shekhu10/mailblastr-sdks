@@ -162,6 +162,10 @@ await mailblastr.EmailListAsync(new EmailListOptions            // server-side f
 {
     Status = "bounced", Search = "invoice", DomainId = domainId,
 });
+await mailblastr.EmailListAsync(new EmailListOptions            // mailbox folder: one of the
+{                                                               // EmailFolders constants (Outbox /
+    Folder = EmailFolders.Scheduled,                            // Sent / Scheduled / Failed);
+});                                                             // any other value is rejected
 await mailblastr.EmailListSourcesAsync();                       // per-origin send counters
 await mailblastr.EmailRetrieveAsync(id);
 await mailblastr.EmailListAttachmentsAsync(id);

@@ -444,6 +444,21 @@ test('contacts batch --domain uses the domain-first door, and one-of is enforced
   assert.match(bad.err, /only one of/i);
 });
 
+test('contacts batch --audience-id targets the audience exactly like the positional', async () => {
+  // The missing-target error advises --audience-id, so it must be a real
+  // registered option here, not just on the sibling commands.
+  const flagged = lastCall(await runCli(['contacts', 'batch', '--audience-id', 'aud_1', '--data', '[{"email":"a@x.com"}]']));
+  assert.deepEqual([flagged.resource, flagged.method], ['contacts', 'batch']);
+
+  const positional = lastCall(await runCli(['contacts', 'batch', 'aud_1', '--data', '[{"email":"a@x.com"}]']));
+  assert.deepEqual(flagged.args, positional.args);
+  assert.deepEqual(flagged.args[0], { audienceId: 'aud_1', contacts: [{ email: 'a@x.com' }] });
+
+  const help = await runCli(['contacts', 'batch', '--help']);
+  assert.equal(help.exitCode, 0);
+  assert.match(help.out, /--audience-id <id>/);
+});
+
 test('contacts batch reads --file / --data and maps to contacts.batch (SDK-3)', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mbcli-'));
   const file = path.join(dir, 'contacts.json');

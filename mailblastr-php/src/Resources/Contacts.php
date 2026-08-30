@@ -103,7 +103,7 @@ class Contacts extends Resource
             ? '?on_conflict=' . rawurlencode((string) $params['on_conflict'])
             : '';
         $body = ['contacts' => $params['contacts'] ?? []];
-        if (isset($params['audienceId'])) {
+        if (!empty($params['audienceId'])) {
             return $this->client->request(
                 'POST',
                 '/audiences/' . Client::e((string) $params['audienceId']) . '/contacts/batch' . $qs,

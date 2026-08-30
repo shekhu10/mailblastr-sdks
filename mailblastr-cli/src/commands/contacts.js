@@ -144,12 +144,14 @@ function register({ group, leaf, act }) {
   act(
     leaf(contacts, 'batch [audienceId]', 'Bulk-import contacts from a JSON array (upsert by email; max 10,000)')
       .option('--domain <domain>', "the sending domain whose contact pool to import into (instead of an audience)")
+      .option('--audience-id <id>', 'target this audience instead of a domain pool (same as the positional)')
       .option('--file <path>', 'path to a JSON file containing an array of contact objects')
       .option('--data <json>', 'inline JSON array of contact objects')
       .option('--on-conflict <mode>', "how to resolve an existing email: 'upsert' (default) or 'skip'"),
     ({ client, opts, args: [audienceId] }) => {
-      // `audienceId` stays a positional for backwards compatibility, so route
-      // it through the same one-of guard every other contacts command uses.
+      // The audience arrives as a positional (backwards compatibility) or as
+      // the --audience-id flag every sibling command carries — and which this
+      // command's own missing-target error suggests, so it must exist here.
       requireContainer({ domain: opts.domain, audienceId: audienceId || opts.audienceId });
       if (opts.file && opts.data) throw new CliError('Provide only one of --file or --data.');
       if (!opts.file && !opts.data) throw new CliError('Provide --file <path> or --data <json array>.');
@@ -165,7 +167,7 @@ function register({ group, leaf, act }) {
       if (!Array.isArray(contactsArr)) throw new CliError('The contacts payload must be a JSON array.');
       return client.contacts.batch(clean({
         domain: opts.domain,
-        audienceId,
+        audienceId: audienceId || opts.audienceId,
         contacts: contactsArr,
         on_conflict: opts.onConflict,
       }));

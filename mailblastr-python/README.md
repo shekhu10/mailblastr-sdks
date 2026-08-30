@@ -168,6 +168,7 @@ Each resource is a class with methods following a consistent
 mailblastr.Emails.send(params)
 mailblastr.Emails.list({"limit": 20, "after": cursor})   # cursor pagination
 mailblastr.Emails.list({"status": "bounced", "search": "acme.com"})  # filters
+mailblastr.Emails.list({"folder": "sent"})  # outbox / sent / scheduled / failed — any other value 422s
 mailblastr.Emails.get(email_id)
 mailblastr.Emails.update(email_id, {"scheduled_at": "2026-08-01T09:00:00Z"})  # reschedule
 mailblastr.Emails.cancel(email_id)

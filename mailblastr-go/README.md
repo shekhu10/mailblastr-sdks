@@ -143,8 +143,11 @@ client.Emails.Send(&mailblastr.SendEmailRequest{From: from, To: to, Subject: sub
 client.Emails.List(&mailblastr.ListParams{Limit: 20, After: cursor}) // cursor pagination
 client.Emails.ListFiltered(&mailblastr.ListEmailsRequest{             // server-side filters
 	Status: "bounced", Search: "invoice", DomainId: domId, CampaignId: cmpId,
+	// Folder takes exactly outbox / sent / scheduled / failed (the
+	// mailblastr.EmailFolder* constants); any other value is rejected (422).
+	Folder: mailblastr.EmailFolderSent,
 })
-client.Emails.Sources() // per-campaign / automation / individual send metrics
+client.Emails.Sources() // per-campaign / automation / one-off (api, individual) send metrics
 client.Emails.Get(id)
 client.Emails.ListAttachments(id)
 client.Emails.GetAttachment(id, attachmentId)

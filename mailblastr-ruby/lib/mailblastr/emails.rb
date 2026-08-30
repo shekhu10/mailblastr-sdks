@@ -27,10 +27,16 @@ module Mailblastr
 
       # List sent emails (trimmed list items) — cursor pagination plus optional
       # server-side filters: `campaign_id`, `automation_id`, `source`
-      # ("individual"), `domain_id`, `status` (matched case-insensitively
-      # against the row's `last_event`) and `search` (recipients, subject and
-      # sender). `q` is the server's alias for `search`, honoured only when
-      # `search` is absent. GET /emails
+      # ("individual" for all one-off sends with no campaign/automation origin,
+      # "api" for one-off sends made with an API key — which also covers mail
+      # sent before the send origin was recorded — or "dashboard" for one-off
+      # mail composed in the dashboard: the composer and inbox replies/forwards;
+      # honoured only when neither `campaign_id` nor `automation_id` is
+      # supplied), `domain_id`, `status` (matched case-insensitively
+      # against the row's `last_event`), `folder` (one of "outbox", "sent",
+      # "scheduled" or "failed" — any other value is rejected with a 422) and
+      # `search` (recipients, subject and sender). `q` is the server's alias
+      # for `search`, honoured only when `search` is absent. GET /emails
       def list(params = {})
         query = Client.pagination(params).merge(
           Client.filters(params, :campaign_id, :automation_id, :source, :domain_id, :status, :search, :q, :folder)
@@ -38,8 +44,11 @@ module Mailblastr
         Client.request(:get, "/emails", query: query)
       end
 
-      # Per-source send metrics, one row per campaign / automation / individual
-      # origin. Not paginated. GET /emails/sources
+      # Per-source send metrics, one row per origin. `kind` is "campaign",
+      # "automation", "api" (one-off API-key sends, including mail sent before
+      # the send origin was recorded) or "individual" (dashboard-composed
+      # one-offs); `id`, `name`, `subject` and `status` are null for both the
+      # "api" and "individual" rows. Not paginated. GET /emails/sources
       def sources
         Client.request(:get, "/emails/sources")
       end

@@ -96,6 +96,13 @@ class EmailsTest < Minitest::Test
                    "&domain_id=dom_1&status=delivered&search=acme"
   end
 
+  # `folder` takes outbox | sent | scheduled | failed; the server answers any
+  # other value with 422 validation_error, so the SDK forwards it verbatim.
+  def test_list_forwards_the_folder_filter
+    Mailblastr::Emails.list({ folder: "scheduled" })
+    assert_request :get, "/emails?folder=scheduled"
+  end
+
   def test_list_supports_the_q_alias_for_search
     Mailblastr::Emails.list({ q: "acme" })
     assert_request :get, "/emails?q=acme"

@@ -15,6 +15,22 @@ use crate::services::email_types::{
 };
 use crate::types::{ListResponse, ObjectAck, PaginationParams, RemovedResponse, Result};
 
+/// The `outbox` mailbox folder for [`ListEmailsParams::with_folder`].
+///
+/// `folder` accepts exactly [`FOLDER_OUTBOX`], [`FOLDER_SENT`],
+/// [`FOLDER_SCHEDULED`], and [`FOLDER_FAILED`] — any other value is a
+/// `422 validation_error`.
+pub const FOLDER_OUTBOX: &str = "outbox";
+
+/// The `sent` mailbox folder — see [`FOLDER_OUTBOX`] for the legal set.
+pub const FOLDER_SENT: &str = "sent";
+
+/// The `scheduled` mailbox folder — see [`FOLDER_OUTBOX`] for the legal set.
+pub const FOLDER_SCHEDULED: &str = "scheduled";
+
+/// The `failed` mailbox folder — see [`FOLDER_OUTBOX`] for the legal set.
+pub const FOLDER_FAILED: &str = "failed";
+
 /// Params for `emails.list_filtered`: cursor pagination plus optional
 /// server-side source filters.
 #[derive(Debug, Clone, Default)]
@@ -27,7 +43,10 @@ pub struct ListEmailsParams {
     pub campaign_id: Option<String>,
     /// Only emails sent by this automation.
     pub automation_id: Option<String>,
-    /// `individual` restricts to one-off API sends (no campaign/automation).
+    /// `individual` restricts to one-off sends (no campaign/automation),
+    /// `api` narrows to API-key sends (including mail from before the send
+    /// origin was recorded), and `dashboard` narrows to dashboard-composed
+    /// mail (composer, inbox replies/forwards).
     pub source: Option<String>,
     /// Only emails sent from this sending domain (domain id). Composes with
     /// the source filters.
@@ -38,7 +57,9 @@ pub struct ListEmailsParams {
     pub status: Option<String>,
     /// Free-text search across recipients, subject, and sender.
     pub search: Option<String>,
-    /// Mailbox folder: `outbox`, `sent`, `scheduled`, or `failed`.
+    /// Mailbox folder: [`FOLDER_OUTBOX`], [`FOLDER_SENT`],
+    /// [`FOLDER_SCHEDULED`], or [`FOLDER_FAILED`]. Any other value is a
+    /// `422 validation_error`.
     pub folder: Option<String>,
 }
 
@@ -94,7 +115,9 @@ impl ListEmailsParams {
         self
     }
 
-    /// Mailbox folder: `outbox`, `sent`, `scheduled`, or `failed`.
+    /// Mailbox folder: [`FOLDER_OUTBOX`], [`FOLDER_SENT`],
+    /// [`FOLDER_SCHEDULED`], or [`FOLDER_FAILED`]. Any other value is a
+    /// `422 validation_error`.
     pub fn with_folder(mut self, folder: impl Into<String>) -> Self {
         self.folder = Some(folder.into());
         self
@@ -416,7 +439,8 @@ impl EmailsSvc {
     }
 
     /// Aggregate send metrics grouped by origin (campaign / automation /
-    /// one-off). Not paginated. `GET /emails/sources`
+    /// one-off `api` / one-off `individual`). Not paginated.
+    /// `GET /emails/sources`
     pub async fn sources(&self) -> Result<ListResponse<EmailSource>> {
         self.config
             .send(self.config.request(Method::GET, "/emails/sources"))

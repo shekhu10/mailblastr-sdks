@@ -55,7 +55,7 @@ class ListParams(TypedDict, total=False):
     before: str
     campaign_id: str  # only emails sent by this campaign (incl. its follow-ups)
     automation_id: str  # only emails sent by this automation (ignored with campaign_id)
-    source: str  # 'individual' restricts to one-off API sends
+    source: str  # 'individual' restricts to all one-off sends, 'api' to API-key sends, 'dashboard' to dashboard-composed mail
     domain_id: str  # only emails sent from this sending domain (domain id)
     status: str  # match the value reads expose as `last_event`, e.g. 'delivered'
     search: str  # substring match over recipients, subject and sender
@@ -233,7 +233,10 @@ class Emails:
         """List sent emails (trimmed list items — no status/html/text/events,
         and unset cc/bcc/reply_to come back as ``None`` rather than ``[]``).
         Optional filters: ``campaign_id``, ``automation_id``,
-        ``source='individual'``, ``domain_id``, ``status`` (matched against the
+        ``source`` (``individual`` for all one-off sends, ``api`` for API-key
+        sends, ``dashboard`` for dashboard-composed mail; ignored when
+        ``campaign_id`` or ``automation_id`` is supplied), ``domain_id``,
+        ``status`` (matched against the
         value reads expose as ``last_event``), ``search`` (recipients,
         subject, sender) and ``folder`` (``outbox`` / ``sent`` / ``scheduled`` /
         ``failed``). GET /emails"""
@@ -256,9 +259,11 @@ class Emails:
 
     @classmethod
     def sources(cls):
-        """Per-source send metrics — one row per campaign, automation and
-        individual sending, with delivered/opened/clicked counts. Not
-        paginated. GET /emails/sources"""
+        """Per-source send metrics — one row per campaign and automation, plus
+        an ``api`` row (one-off API-key sends) and an ``individual`` row
+        (dashboard-composed one-offs), with delivered/opened/clicked counts.
+        ``id``/``name``/``subject``/``status`` are ``None`` for the ``api``
+        and ``individual`` rows. Not paginated. GET /emails/sources"""
         return http_client.request("GET", "/emails/sources")
 
     @classmethod

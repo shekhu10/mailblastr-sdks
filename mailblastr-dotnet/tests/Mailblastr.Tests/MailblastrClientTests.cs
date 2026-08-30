@@ -120,6 +120,19 @@ public class MailblastrClientTests
     }
 
     [Fact]
+    public async Task EmailList_BuildsTheFolderFilter()
+    {
+        var (client, stub) = CreateClient("""{"object":"list","has_more":false,"data":[]}""");
+
+        // The server accepts exactly the EmailFolders values and 422s anything else.
+        await client.EmailListAsync(new EmailListOptions { Folder = EmailFolders.Scheduled });
+
+        Assert.Equal(
+            "https://www.mailblastr.com/api/emails?folder=scheduled",
+            stub.LastRequest.RequestUri!.AbsoluteUri);
+    }
+
+    [Fact]
     public async Task EmailList_MapsOriginAndDomainColumns()
     {
         var (client, _) = CreateClient("""

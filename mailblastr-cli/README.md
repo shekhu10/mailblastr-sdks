@@ -56,7 +56,8 @@ mailblastr emails send --to 'ada@yourdomain.com,rae@yourdomain.com' \
   --template-id tmpl_welcome --variables '{"first_name":"Ada"}' --scheduled-at 2026-08-01T09:00:00Z
 mailblastr emails list --limit 20
 mailblastr emails list --status delivered --search 'invoice'
-mailblastr emails sources                      # per-source metrics: one row per campaign/automation + an individual-sends roll-up
+mailblastr emails list --folder scheduled      # mailbox folder: outbox | sent | scheduled | failed (anything else is a 422)
+mailblastr emails sources                      # per-source metrics: one row per campaign/automation + api and individual one-off roll-ups
 mailblastr emails get em_123
 mailblastr emails update em_123 --scheduled-at 2026-08-02T09:00:00Z
 mailblastr emails cancel em_123
@@ -169,7 +170,8 @@ mailblastr contacts import aud_123 --storage-key "$STORAGE_KEY"
 When the source is already structured, `contacts batch` imports a JSON array instead of a CSV (upsert by email, max 10,000 per call, exactly one of `--file` / `--data`):
 
 ```bash
-mailblastr contacts batch aud_123 --file ./contacts.json
+mailblastr contacts batch aud_123 --file ./contacts.json               # audience as the positional…
+mailblastr contacts batch --audience-id aud_123 --file ./contacts.json # …or as the flag, like every other contacts command
 mailblastr contacts batch aud_123 --data '[{"email":"ada@yourdomain.com","first_name":"Ada"}]' --on-conflict skip
 # Domain-first: import straight into a domain's pool, no audience id needed.
 mailblastr contacts batch --domain yourdomain.com --file ./contacts.json

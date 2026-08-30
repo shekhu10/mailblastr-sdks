@@ -87,6 +87,14 @@ class ContactsTest < Minitest::Test
     assert_nil last_body["domain"]
   end
 
+  def test_batch_empty_string_audience_id_takes_the_flat_route
+    # "" is truthy in Ruby but names no audience — it must count as absent,
+    # never build POST /audiences//contacts/batch.
+    Mailblastr::Contacts.batch({ audience_id: "", domain: "x.com", contacts: [{ email: "a@b.com" }] })
+    assert_request :post, "/contacts/batch"
+    assert_equal "x.com", last_body["domain"]
+  end
+
   def test_csv_import_with_strict_properties
     Mailblastr::Contacts.import({ audience_id: "aud_1", csv: "email\na@b.com", create_properties: false })
     assert_request :post, "/audiences/aud_1/contacts/import?create_properties=false"

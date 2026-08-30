@@ -185,7 +185,10 @@ function register({ group, leaf, act }) {
     withPagination(leaf(emails, 'list', 'List sent emails'))
       .option('--campaign-id <id>', 'only emails sent by this campaign')
       .option('--automation-id <id>', 'only emails sent by this automation')
-      .option('--source <source>', "'individual' restricts to one-off API sends")
+      .option(
+        '--source <source>',
+        "'individual' restricts to all one-off sends, 'api' to API-key sends, 'dashboard' to dashboard-composed mail",
+      )
       .option('--domain-id <id>', 'only emails sent from this sending domain')
       .option('--status <status>', "only emails whose last event matches, e.g. 'delivered'")
       .option('--search <text>', 'match recipients, subject or sender')
@@ -218,7 +221,7 @@ function register({ group, leaf, act }) {
   );
 
   act(
-    leaf(emails, 'sources', 'Per-source send metrics: one row per campaign and automation, plus an individual-sends roll-up'),
+    leaf(emails, 'sources', 'Per-source send metrics: one row per campaign and automation, plus api and individual one-off roll-ups'),
     ({ client }) => client.emails.sources(),
   );
 

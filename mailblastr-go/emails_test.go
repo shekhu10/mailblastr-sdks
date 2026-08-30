@@ -132,6 +132,8 @@ func TestEmailsListFilteredStatusAndSearch(t *testing.T) {
 		if q.Get("domain_id") != "dom_1" || q.Get("campaign_id") != "cmp_1" {
 			t.Errorf("query = %v", q)
 		}
+		// Asserted against the literal so the EmailFolderSent constant is
+		// pinned to the wire value.
 		if q.Get("folder") != "sent" {
 			t.Errorf("folder = %q, want sent", q.Get("folder"))
 		}
@@ -143,7 +145,7 @@ func TestEmailsListFilteredStatusAndSearch(t *testing.T) {
 		Search:     "invoice",
 		DomainId:   "dom_1",
 		CampaignId: "cmp_1",
-		Folder:     "sent",
+		Folder:     EmailFolderSent,
 	})
 	if err != nil {
 		t.Fatalf("ListFiltered: %v", err)

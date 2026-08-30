@@ -79,10 +79,15 @@ class Emails extends Resource
      * @param array $params Cursor pagination (limit, after, before) plus
      *                      optional server-side filters: campaign_id,
      *                      automation_id, source ('individual' restricts to
-     *                      one-off API sends), domain_id, status (matched
+     *                      all one-off sends, 'api' to one-off API-key sends,
+     *                      'dashboard' to dashboard-composed mail; ignored
+     *                      when campaign_id or automation_id is supplied),
+     *                      domain_id, status (matched
      *                      case-insensitively against the item's last_event),
      *                      search (matches recipients, subject or sender;
-     *                      'q' is accepted as an alias).
+     *                      'q' is accepted as an alias), folder ('outbox',
+     *                      'sent', 'scheduled' or 'failed'; any other value
+     *                      is a 422).
      */
     public function list(array $params = []): array
     {
@@ -93,8 +98,10 @@ class Emails extends Resource
     }
 
     /**
-     * Per-source send metrics — one row per campaign, automation, and one for
-     * individual (one-off) sends. Not paginated. GET /emails/sources
+     * Per-source send metrics — one row per campaign and automation, plus one
+     * 'api' row (one-off API-key sends) and one 'individual' row
+     * (dashboard-composed one-offs); id/name/subject/status are null for the
+     * 'api' and 'individual' rows. Not paginated. GET /emails/sources
      */
     public function sources(): array
     {

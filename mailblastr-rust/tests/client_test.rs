@@ -10,7 +10,7 @@ use mailblastr::{
     ApiKeyPermission, BatchEmailOptions, CampaignListItem, Error, SendEmailOptions,
     ListEmailsParams, ListSegmentsParams, Mailblastr, PaginationParams, SegmentFilterOptions,
     TemplateRef, UpdateAutomationStepOptions, UpdateSegmentOptions, UpdateTemplateOptions,
-    UpdateTopicOptions,
+    UpdateTopicOptions, FOLDER_SCHEDULED,
 };
 
 /// Find the first occurrence of `needle` in `haystack`.
@@ -627,6 +627,23 @@ async fn email_list_filters_include_status_and_search() {
     let request = handle.join().unwrap();
     assert!(
         request.starts_with("GET /emails?limit=10&status=bounced&search=acme HTTP/1.1"),
+        "got: {request}"
+    );
+}
+
+#[tokio::test]
+async fn email_list_folder_filter_reaches_the_query_string() {
+    let (base_url, handle) = spawn_stub(200, r#"{"object":"list","has_more":false,"data":[]}"#);
+    let mb = Mailblastr::with_base_url("mb_test_key", base_url);
+
+    mb.emails
+        .list_filtered(Some(ListEmailsParams::new().with_folder(FOLDER_SCHEDULED)))
+        .await
+        .expect("list should succeed");
+
+    let request = handle.join().unwrap();
+    assert!(
+        request.starts_with("GET /emails?folder=scheduled HTTP/1.1"),
         "got: {request}"
     );
 }

@@ -3,12 +3,49 @@
 All nine MailBlastr SDKs release in lockstep — one version, one tag, every registry.
 Dates are release dates; entries cover every package unless a language is called out.
 
+## 5.1.1 — 2026-08-30
+
+Documentation, typing, and CLI-flag release — no wire behavior changed in any SDK.
+
+- `emails.list` `source` accepts two new values alongside `individual`:
+  `api` (one-off sends made with an API key — plus mail sent before the send
+  door was recorded) and `dashboard` (mail composed in the dashboard).
+  `emails.sources` rows gained a matching `kind: "api"`; the `individual` row
+  now means dashboard-composed one-offs only. The Node types widen their
+  unions; every other SDK already carried these as open strings, so nothing
+  breaks — docs updated across all nine SDKs and the CLI.
+- CLI: `contacts batch` now registers the `--audience-id <id>` flag its own
+  error message has always suggested (the audience positional still works);
+  a flag value no longer silently loses to the missing positional.
+- Ruby and PHP treat an empty-string `audienceId` as absent (routing to the
+  flat `/contacts/batch` door like every other SDK) instead of building a
+  malformed `/audiences//contacts/batch` URL.
+- The `folder` filter is now documented in every SDK README and doc comment,
+  with string constants in the typed SDKs (Go, Rust, Java, .NET), and has
+  wire-level tests in every package. Heads-up: the API now answers an unknown
+  `folder` value with a 422 listing the legal values instead of silently
+  returning the unfiltered list.
+- Docs state the real one-of semantics for bulk imports: when both `domain`
+  and `audienceId` are supplied, `audienceId` wins and `domain` is ignored.
+
 ## 5.1.0 — 2026-08-30
 
-First public 5.1.0. `emails.list` accepts optional `folder` (`outbox` | `sent` |
-`scheduled` | `failed`) matching GET `/emails?folder=`. Public `emails.send` is
-unchanged (still waits for SES). Dashboard instant-send is a session route, not
-part of this API.
+First public 5.1.0. Two features, all nine SDKs and the CLI:
+
+- **Domain-first bulk contact import.** `POST /contacts/batch` gets a
+  first-class door in every SDK (`contacts.batch({ domain, contacts })` in
+  Node, `batch_in_domain` in Rust/Python-style SDKs, `ContactBatchInDomainAsync`
+  in .NET, `mailblastr contacts batch --domain` in the CLI): pass the sending
+  domain instead of an audience id, up to 10,000 contacts per call,
+  `on_conflict: 'upsert' | 'skip'` (default `upsert`). Response is the same
+  `contact_import` object as the audience-scoped batch. Prefer this over a
+  create-per-contact loop — the batch takes the account's contact-limit lock
+  once instead of per contact.
+- `emails.list` accepts optional `folder` (`outbox` | `sent` | `scheduled` |
+  `failed`) matching GET `/emails?folder=`.
+
+Public `emails.send` is unchanged (still waits for SES). Dashboard
+instant-send is a session route, not part of this API.
 
 ## 5.0.1 — 2026-08-20
 

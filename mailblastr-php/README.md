@@ -124,6 +124,7 @@ The client exposes one property per resource, each following a consistent
 $mailblastr->emails->send(['from' => …, 'to' => …, 'subject' => …, 'html' => …]);
 $mailblastr->emails->list(['limit' => 20, 'after' => $cursor]); // cursor pagination
 $mailblastr->emails->list(['status' => 'bounced', 'search' => 'ada@']); // server-side filters
+$mailblastr->emails->list(['folder' => 'scheduled']); // outbox | sent | scheduled | failed — any other value is rejected (422)
 $mailblastr->emails->get($id);
 $mailblastr->emails->sources();                                 // per-campaign/automation send metrics
 $mailblastr->emails->listAttachments(id: $id);

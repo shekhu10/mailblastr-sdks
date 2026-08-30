@@ -8,7 +8,9 @@ import java.util.List;
  * {@link Builder#domain(String)} to import into that sending domain's contact
  * pool via the flat {@code POST /contacts/batch} API, or
  * {@link Builder#audienceId(String)} to target a specific audience via
- * {@code POST /audiences/:id/contacts/batch}. Exactly one is required.
+ * {@code POST /audiences/:id/contacts/batch}. At least one is required —
+ * {@link Builder#build()} throws when neither is set; when both are set,
+ * {@code audienceId} takes precedence and {@code domain} is ignored.
  *
  * <p>Upserts by email; max 10,000 per call. {@code onConflict("skip")} leaves
  * existing contacts untouched (default {@code upsert}).
