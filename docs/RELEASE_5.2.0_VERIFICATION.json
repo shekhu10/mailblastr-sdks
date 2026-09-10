@@ -1,0 +1,87 @@
+{
+  "version": "5.2.0",
+  "checked_at": "2026-09-10T07:00:05.363399+00:00",
+  "registries": [
+    {
+      "package": "Node.js",
+      "url": "https://registry.npmjs.org/mailblastr/5.2.0",
+      "verified": true,
+      "version": "5.2.0"
+    },
+    {
+      "package": "CLI",
+      "url": "https://registry.npmjs.org/mailblastr-cli/5.2.0",
+      "verified": true,
+      "version": "5.2.0"
+    },
+    {
+      "package": "Python",
+      "url": "https://pypi.org/pypi/mailblastr/5.2.0/json",
+      "verified": true,
+      "files": [
+        "mailblastr-5.2.0-py3-none-any.whl",
+        "mailblastr-5.2.0.tar.gz"
+      ],
+      "version": "5.2.0"
+    },
+    {
+      "package": "Ruby",
+      "url": "https://rubygems.org/api/v2/rubygems/mailblastr/versions/5.2.0.json",
+      "verified": true,
+      "version": "5.2.0"
+    },
+    {
+      "package": "Rust",
+      "url": "https://crates.io/api/v1/crates/mailblastr/5.2.0",
+      "verified": true,
+      "yanked": false,
+      "version": "5.2.0"
+    },
+    {
+      "package": ".NET",
+      "url": "https://api.nuget.org/v3-flatcontainer/mailblastr/5.2.0/mailblastr.nuspec",
+      "verified": true,
+      "version": "5.2.0"
+    },
+    {
+      "package": "Java",
+      "url": "https://repo.maven.apache.org/maven2/com/mailblastr/mailblastr/5.2.0/mailblastr-5.2.0.pom",
+      "verified": true,
+      "version": "5.2.0"
+    },
+    {
+      "package": "PHP",
+      "url": "https://repo.packagist.org/p2/mailblastr/mailblastr.json",
+      "verified": true,
+      "source": {
+        "url": "https://github.com/shekhu10/mailblastr-php.git",
+        "type": "git",
+        "reference": "540b46ce9fbf4a3db5afc85b1cb20ba9f4b2e031"
+      },
+      "version": "5.2.0"
+    },
+    {
+      "package": "Go",
+      "url": "https://proxy.golang.org/github.com/shekhu10/mailblastr-sdks/mailblastr-go/v5/@v/v5.2.0.info",
+      "verified": true,
+      "time": "2026-09-10T06:46:45Z",
+      "version": "5.2.0"
+    }
+  ],
+  "workflow": {
+    "conclusion": "success",
+    "headSha": "f8597f6819880661ff0c18f096f1f42dcacd868b",
+    "status": "completed",
+    "url": "https://github.com/shekhu10/mailblastr-sdks/actions/runs/34446796029"
+  },
+  "tag": "v5.2.0",
+  "additional_checks": [
+    "Fresh npm installation of mailblastr-cli@5.2.0 reports version 5.2.0",
+    "NuGet 5.2.0 package downloads and contains lib/net8.0/Mailblastr.dll",
+    "Both npm latest dist-tags point to 5.2.0",
+    "Published Python source archive SHA-256 matches PyPI metadata; recovery corpus, helper, and recovery test files match the release source",
+    "Go module tag resolves to f8597f6819880661ff0c18f096f1f42dcacd868b",
+    "PHP v5.2.0 mirror tag matches Packagist source commit 540b46ce9fbf4a3db5afc85b1cb20ba9f4b2e031"
+  ],
+  "maven_deployment_id": "9cc8d926-bfda-4d29-9cf3-9f77d0c90f76"
+}
