@@ -13,8 +13,9 @@ All 21 version coordinates pass the tag guard for v5.2.0. All nine language/CLI
 suites passed after the version bump: Node 102 tests, CLI 83, Python 162, Ruby
 94 (932 assertions), PHP 452 assertions, Go with the race detector, Rust 35 unit
 + 44 integration + 9 documentation tests, Java 466 assertions, and .NET 118 tests.
-Source builds and package checks passed. PHP carries a checked local copy of
-the recovery corpus so the subtree mirror can run its tests independently.
+Source builds and package checks passed. PHP and Python carry checked local copies of
+the recovery corpus so the subtree mirror and Python source distribution can
+run their tests independently. Python source archives include the test helpers.
 
 ## Backend prerequisite
 

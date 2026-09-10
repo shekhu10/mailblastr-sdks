@@ -24,7 +24,11 @@ class RecoveryTests(unittest.TestCase):
         self.addCleanup(setattr, mailblastr, "max_retries", None)
 
     def test_shared_recovery_corpus(self):
-        cases = json.loads((Path(__file__).parents[2] / "scripts/http-recovery-corpus.json").read_text())
+        local = (Path(__file__).parent / "fixtures/http-recovery-corpus.json").read_text()
+        shared = Path(__file__).parents[2] / "scripts/http-recovery-corpus.json"
+        if shared.is_file():
+            self.assertEqual(local, shared.read_text(), "Refresh the package corpus from scripts/http-recovery-corpus.json")
+        cases = json.loads(local)
         for case in cases:
             with self.subTest(case=case["name"]):
                 calls = []
