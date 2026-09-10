@@ -295,9 +295,9 @@ const COORDINATES = [
   // previous version. Each regex is anchored to its exact snippet so ordinary
   // prose (and any changelog-style text) cannot match.
   {
-    label: 'root README.md "vX.Y.Z is published on every registry"',
+    label: 'root README.md SDK release version',
     file: 'README.md',
-    extract: () => capture('README.md', /\*\*v([0-9][^\s]*) is published on every registry\.\*\*/, 'published-on-every-registry line'),
+    extract: () => capture('README.md', /\*\*SDK release: v([0-9][^\s]*)\.\*\*/, 'SDK release version line'),
   },
   {
     label: 'root README.md package table — Maven coordinate',

@@ -134,14 +134,14 @@ module Mailblastr
 
         # Forward a received email. POST /emails/receiving/:id/forward
         #   Receiving.forward(id, { from: "you@yourdomain.com", to: "team@you.com" })
-        def forward(email_id, params)
-          Client.request(:post, "/emails/receiving/#{Client.path_escape(email_id)}/forward", body: params)
+        def forward(email_id, params, options = {})
+          Client.request(:post, "/emails/receiving/#{Client.path_escape(email_id)}/forward", body: params, options: options)
         end
 
         # Reply to a received email's sender, threaded into the conversation.
         # POST /emails/receiving/:id/reply
-        def reply(email_id, params)
-          Client.request(:post, "/emails/receiving/#{Client.path_escape(email_id)}/reply", body: params)
+        def reply(email_id, params, options = {})
+          Client.request(:post, "/emails/receiving/#{Client.path_escape(email_id)}/reply", body: params, options: options)
         end
 
         # Delete a received email. DELETE /emails/receiving/:id

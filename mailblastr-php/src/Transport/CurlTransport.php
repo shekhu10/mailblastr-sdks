@@ -10,15 +10,15 @@ use Mailblastr\Exceptions\MailblastrException;
  * Default HTTP transport backed by the curl extension (no composer runtime deps).
  *
  * Every request is bounded by a configurable timeout and automatically retried a
- * bounded number of times on HTTP 429 and 503 — the only two responses the server
- * guarantees were NOT applied, so retrying them cannot duplicate a non-idempotent
- * side effect (e.g. sending an email twice). No other status, network error, or
+ * bounded number of times on eligible HTTP 429 and 503 responses. Partial work
+ * stops retries; writes need a pre-processing rejection or a supported key.
+ * No other status, network error, or
  * timeout is retried. Because both the JSON and raw/binary paths in {@see \Mailblastr\Client}
  * funnel through {@see request()}, both inherit the timeout and retry behavior.
  */
 class CurlTransport implements TransportInterface
 {
-    /** HTTP statuses that are safe to retry. */
+    /** Candidate statuses; retryAllowed also checks the response and operation. */
     private const RETRYABLE = [429, 503];
 
     /** Hard cap on any single backoff wait, in seconds. */
@@ -40,12 +40,32 @@ class CurlTransport implements TransportInterface
         for ($attempt = 0; ; $attempt++) {
             $response = $this->perform($method, $url, $headers, $body);
 
-            if (!in_array($response['status'], self::RETRYABLE, true) || $attempt >= $maxRetries) {
+            if (!in_array($response['status'], self::RETRYABLE, true) || $attempt >= $maxRetries
+                || !self::retryAllowed($method, $url, $headers, $response['status'], $response['body'])) {
                 return ['status' => $response['status'], 'body' => $response['body']];
             }
 
             $this->sleepSeconds($this->backoffSeconds($response['retryAfter'], $attempt));
         }
+    }
+
+    private static function retryAllowed(string $method, string $url, array $headers, int $status, string $raw): bool
+    {
+        $body = json_decode($raw, true);
+        $body = is_array($body) ? $body : [];
+        if (!empty($body['id']) || (is_numeric($body['sent_count'] ?? null) && $body['sent_count'] > 0)
+            || !empty($body['sent']) || !empty($body['reserved']) || ($body['name'] ?? null) === 'batch_incomplete') {
+            return false;
+        }
+        if ($status !== 503 || in_array($method, ['GET', 'HEAD'], true)) return true;
+        if (in_array($body['name'] ?? null, ['service_unavailable', 'sending_service_unavailable',
+            'sending_configuration_unavailable', 'contacts_busy', 'contacts_timeout'], true)) return true;
+        foreach ($headers as $header) {
+            if (strncasecmp($header, 'Idempotency-Key:', 16) === 0 && trim(substr($header, 16)) !== '') {
+                return $method === 'POST' && (bool) preg_match('~/emails(?:/batch|/receiving/[^/]+/(?:reply|forward))?$~', (string) parse_url($url, PHP_URL_PATH));
+            }
+        }
+        return false;
     }
 
     /**

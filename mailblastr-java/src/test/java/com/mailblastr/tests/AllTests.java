@@ -12,6 +12,7 @@ public final class AllTests {
         MiscResourcesTest.run();
         ContractParityTest.run();
         HttpCoreTest.run();
+        RecoveryTest.run();
         Check.finish();
     }
 }

@@ -50,6 +50,24 @@ module Mailblastr
       @error_name
     end
 
+    # Original email for a failed or unconfirmed send; inspect before resending.
+    def id
+      value = @body["id"]
+      value.is_a?(String) ? value : nil
+    end
+
+    # Reserved prefix, including uncertain sends. Never automatically resend it.
+    def reserved
+      value = @body["reserved"]
+      value.is_a?(Array) ? value : nil
+    end
+
+    # The never-attempted tail; distinct from uncertain reserved items.
+    def unsent_count
+      value = @body["unsent_count"]
+      value.is_a?(Integer) ? value : nil
+    end
+
     # The plan/quota cap this request hit, else nil. Carried by
     # plan_limit_reached, every *_quota_exceeded, contact_limit_reached and
     # ai_credits_exceeded — it says WHICH quota ran out, how much of it was

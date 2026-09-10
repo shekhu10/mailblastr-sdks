@@ -15,25 +15,3 @@ internal static class MailblastrJson
         DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
     };
 }
-
-/// <summary>The API error body shape: <c>{ statusCode, name, message }</c>.</summary>
-internal sealed class ApiErrorBody
-{
-    [JsonPropertyName("statusCode")]
-    public int? StatusCode { get; set; }
-
-    [JsonPropertyName("name")]
-    public string? Name { get; set; }
-
-    [JsonPropertyName("message")]
-    public string? Message { get; set; }
-
-    /// <summary>
-    /// The additive fields some errors carry on top of the envelope —
-    /// <c>limit</c>, <c>reputation</c>, <c>sent</c>, <c>sent_count</c>. Captured
-    /// unparsed so a shape this SDK version does not know still reaches the
-    /// caller via <see cref="MailblastrException.Extra"/>.
-    /// </summary>
-    [JsonExtensionData]
-    public Dictionary<string, JsonElement>? Extra { get; set; }
-}

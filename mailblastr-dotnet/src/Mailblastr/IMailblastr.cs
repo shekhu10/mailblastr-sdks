@@ -159,9 +159,13 @@ public partial interface IMailblastr
 
     /// <summary>Forward a received email. POST /emails/receiving/:id/forward</summary>
     Task<EmailCreated> ReceivedEmailForwardAsync(string receivedEmailId, ReceivedEmailForwardOptions options, CancellationToken cancellationToken = default);
+    /// <summary>Forward with a stable operation key, preserving the existing cancellation-token overload.</summary>
+    Task<EmailCreated> ReceivedEmailForwardWithIdempotencyKeyAsync(string receivedEmailId, ReceivedEmailForwardOptions options, string? idempotencyKey, CancellationToken cancellationToken = default);
 
     /// <summary>Reply to a received email's sender, threaded into the same conversation. POST /emails/receiving/:id/reply</summary>
     Task<EmailCreated> ReceivedEmailReplyAsync(string receivedEmailId, ReceivedEmailReplyOptions options, CancellationToken cancellationToken = default);
+    /// <summary>Reply with a stable operation key, preserving the existing cancellation-token overload.</summary>
+    Task<EmailCreated> ReceivedEmailReplyWithIdempotencyKeyAsync(string receivedEmailId, ReceivedEmailReplyOptions options, string? idempotencyKey, CancellationToken cancellationToken = default);
 
     /// <summary>Delete a received email. DELETE /emails/receiving/:id</summary>
     Task<RemovedResponse> ReceivedEmailDeleteAsync(string receivedEmailId, CancellationToken cancellationToken = default);

@@ -9,9 +9,9 @@ use serde_json::json;
 
 use crate::client::{page_query, seg, Config};
 use crate::services::email_types::{
-    AttachmentMeta, BatchEmailOptions, SendEmailOptions, CreateEmailResponse, Email,
-    EmailSource, ForwardReceivedEmailOptions, ReceivedAttachment, ReceivedEmail,
-    ReceivingAddressStats, ReplyReceivedEmailOptions, SendEmailBatchResponse, SentEmailListItem,
+    AttachmentMeta, BatchEmailOptions, CreateEmailResponse, Email, EmailSource,
+    ForwardReceivedEmailOptions, ReceivedAttachment, ReceivedEmail, ReceivingAddressStats,
+    ReplyReceivedEmailOptions, SendEmailBatchResponse, SendEmailOptions, SentEmailListItem,
 };
 use crate::types::{ListResponse, ObjectAck, PaginationParams, RemovedResponse, Result};
 
@@ -316,10 +316,31 @@ impl ReceivingSvc {
         email_id: &str,
         options: ForwardReceivedEmailOptions,
     ) -> Result<CreateEmailResponse> {
+        self.forward_inner(email_id, options, None).await
+    }
+
+    /// Forward with a stable operation key; reuse it for retries of the same payload.
+    pub async fn forward_with_idempotency_key(
+        &self,
+        email_id: &str,
+        options: ForwardReceivedEmailOptions,
+        key: &str,
+    ) -> Result<CreateEmailResponse> {
+        self.forward_inner(email_id, options, Some(key)).await
+    }
+
+    async fn forward_inner(
+        &self,
+        email_id: &str,
+        options: ForwardReceivedEmailOptions,
+        key: Option<&str>,
+    ) -> Result<CreateEmailResponse> {
         let path = format!("/emails/receiving/{}/forward", seg(email_id));
-        self.config
-            .send(self.config.request(Method::POST, &path).json(&options))
-            .await
+        let mut req = self.config.request(Method::POST, &path).json(&options);
+        if let Some(key) = key {
+            req = req.header("Idempotency-Key", key);
+        }
+        self.config.send(req).await
     }
 
     /// Reply to a received email's sender, threaded into the same conversation
@@ -329,10 +350,31 @@ impl ReceivingSvc {
         email_id: &str,
         options: ReplyReceivedEmailOptions,
     ) -> Result<CreateEmailResponse> {
+        self.reply_inner(email_id, options, None).await
+    }
+
+    /// Reply with a stable operation key; reuse it for retries of the same payload.
+    pub async fn reply_with_idempotency_key(
+        &self,
+        email_id: &str,
+        options: ReplyReceivedEmailOptions,
+        key: &str,
+    ) -> Result<CreateEmailResponse> {
+        self.reply_inner(email_id, options, Some(key)).await
+    }
+
+    async fn reply_inner(
+        &self,
+        email_id: &str,
+        options: ReplyReceivedEmailOptions,
+        key: Option<&str>,
+    ) -> Result<CreateEmailResponse> {
         let path = format!("/emails/receiving/{}/reply", seg(email_id));
-        self.config
-            .send(self.config.request(Method::POST, &path).json(&options))
-            .await
+        let mut req = self.config.request(Method::POST, &path).json(&options);
+        if let Some(key) = key {
+            req = req.header("Idempotency-Key", key);
+        }
+        self.config.send(req).await
     }
 
     /// Delete a received email. `DELETE /emails/receiving/:id`
@@ -377,7 +419,7 @@ impl EmailsSvc {
     /// concurrent_idempotent_requests`; reusing it after completion replays
     /// the stored status and body.
     ///
-    /// Only `POST /emails` and `POST /emails/batch` honour the header — every
+    /// `POST /emails`, `POST /emails/batch`, and received-email reply/forward honour the header — every
     /// other endpoint ignores it.
     pub async fn send_with_idempotency_key(
         &self,
@@ -400,10 +442,7 @@ impl EmailsSvc {
         since = "1.2.0",
         note = "use `mailblastr.batch.send_emails` — batch items reject `attachments` and `scheduled_at`, which `BatchEmailOptions` enforces at compile time"
     )]
-    pub async fn batch(
-        &self,
-        emails: Vec<SendEmailOptions>,
-    ) -> Result<SendEmailBatchResponse> {
+    pub async fn batch(&self, emails: Vec<SendEmailOptions>) -> Result<SendEmailBatchResponse> {
         self.config
             .send(
                 self.config
@@ -518,10 +557,7 @@ impl BatchSvc {
         since = "1.2.0",
         note = "use `send_emails` — batch items reject `attachments` and `scheduled_at`, which `BatchEmailOptions` enforces at compile time"
     )]
-    pub async fn send(
-        &self,
-        emails: Vec<SendEmailOptions>,
-    ) -> Result<SendEmailBatchResponse> {
+    pub async fn send(&self, emails: Vec<SendEmailOptions>) -> Result<SendEmailBatchResponse> {
         self.config
             .send(
                 self.config

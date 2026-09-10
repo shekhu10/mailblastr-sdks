@@ -22,6 +22,11 @@ public final class Domains extends Resource {
     }
 
     /** {@code GET /domains/:id} */
+    /** HTTPS readiness; an unavailable host schedules server-side repair. */
+    public MailblastrResponse trackingHealth(String id) {
+        return api.request("GET", "/domains/" + enc(id) + "/tracking-health");
+    }
+
     public MailblastrResponse get(String id) {
         return api.request("GET", "/domains/" + enc(id));
     }

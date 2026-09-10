@@ -117,8 +117,8 @@ pub struct ReputationDetail {
 /// * [`reputation`](Self::reputation) — reputation gates say what was paused
 ///   or throttled.
 /// * [`sent`](Self::sent) / [`sent_count`](Self::sent_count) — a
-///   `POST /emails/batch` that failed part way through (only when an
-///   `Idempotency-Key` was supplied) names the emails that DID go out, so a
+///   `POST /emails/batch` that failed part way through (with or without an
+///   `Idempotency-Key`) names the emails that DID go out, so a
 ///   retry does not send them twice.
 #[derive(Debug, Clone, Default)]
 pub struct ApiError {
@@ -153,6 +153,21 @@ impl fmt::Display for ApiError {
             ..
         } = self;
         write!(f, "MailBlastr API error {status_code} ({name}): {message}")
+    }
+}
+
+impl ApiError {
+    /// Original logical email for an unsuccessful or unconfirmed send.
+    pub fn id(&self) -> Option<&str> {
+        self.body.as_ref()?.get("id")?.as_str()
+    }
+    /// Reserved prefix, including sends whose provider outcome is uncertain.
+    pub fn reserved(&self) -> Option<Vec<IdResponse>> {
+        serde_json::from_value(self.body.as_ref()?.get("reserved")?.clone()).ok()
+    }
+    /// Number of items never attempted, not the number lacking delivery confirmation.
+    pub fn unsent_count(&self) -> Option<u64> {
+        self.body.as_ref()?.get("unsent_count")?.as_u64()
     }
 }
 

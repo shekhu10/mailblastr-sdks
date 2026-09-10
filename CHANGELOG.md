@@ -3,6 +3,30 @@
 All nine MailBlastr SDKs release in lockstep — one version, one tag, every registry.
 Dates are release dates; entries cover every package unless a language is called out.
 
+## 5.2.0 — 2026-09-10
+
+- All eight language SDKs stop retries for partial/uncertain sends and reserved
+  batches. Generic 503 writes now require a supported operation key or a
+  documented rejection before processing. Error status follows the HTTP
+  response; original IDs, reserved items, and never-attempted counts remain
+  available for recovery.
+- Reply and forward accept operation keys in every SDK and in the CLI. Existing
+  call signatures remain usable. Go/Rust expose additional keyed methods;
+  .NET exposes distinctly named methods to preserve cancellation overloads.
+- Domain tracking-health is available in every SDK and in the CLI. All package
+  READMEs explain uncertain sends, tracking limits, follow-up cancellation,
+  and asynchronous permanent-delete cleanup.
+- Default clients refuse redirects. Node body-read failures now return the
+  documented Result; Python wraps socket/read failures in MailblastrError;
+  Go honors cancellation during retry waits.
+- .NET snapshots the serialized body once so caller mutations during backoff
+  cannot change the content associated with the original operation key.
+- Added a shared 17-case recovery corpus and transport regressions across the
+  eight SDKs, plus CLI integration against the local Node package.
+
+The CLI requires Node SDK 5.2.0 or newer. Deploy the matching backend API
+contracts before enabling reply/forward idempotency or tracking-health checks.
+
 ## 5.1.1 — 2026-08-30
 
 Documentation, typing, and CLI-flag release — no wire behavior changed in any SDK.

@@ -41,7 +41,7 @@ pub const USER_AGENT: &str = concat!("mailblastr-rust/", env!("CARGO_PKG_VERSION
 /// storage column is `VARCHAR(255)`) — not 256. Anything outside it is a
 /// `400 invalid_idempotency_key`.
 ///
-/// The header is honoured by `POST /emails` and `POST /emails/batch` ONLY
+/// The header is honoured by `POST /emails`, `POST /emails/batch`, and received-email reply/forward
 /// (`emails.send_with_idempotency_key`, `batch.send_emails_with_idempotency_key`).
 /// Every other endpoint ignores it, so a retry there creates a second
 /// resource.
@@ -84,11 +84,11 @@ impl Config {
     /// configured timeout (carried by the [`reqwest::Client`]) and retry
     /// policy. Returns the final response status and fully-read body.
     ///
-    /// Only `429` and `503` are retried — never other `5xx`, network errors,
-    /// or timeouts — because those are the only statuses the server
-    /// guarantees were not applied, so a retry cannot duplicate a
-    /// non-idempotent side effect (e.g. sending an email twice).
+    /// Only eligible `429` and `503` responses retry. Partial work stops retries;
+    /// writes need a pre-processing rejection or a supported operation key.
+    /// Other `5xx`, network errors and timeouts are never retried.
     async fn execute(&self, req: RequestBuilder) -> Result<(reqwest::StatusCode, Vec<u8>)> {
+        let descriptor = req.try_clone().and_then(|r| r.build().ok());
         // Buffer the request so it can be rebuilt per attempt. `try_clone`
         // yields a fresh builder for the in-memory bodies this SDK sends
         // (`.json(..)`); a non-cloneable streaming body returns `None`, in
@@ -106,14 +106,17 @@ impl Config {
             let status = resp.status();
             let code = status.as_u16();
             let retryable = code == 429 || code == 503;
-
-            if !retryable || attempt >= self.max_retries || spare.is_none() {
-                let bytes = resp.bytes().await?.to_vec();
+            let wait = parse_retry_after(resp.headers()).unwrap_or_else(|| backoff_delay(attempt));
+            // Read/drop the response before retrying. Partial or reserved work
+            // is a terminal result even when its HTTP status is normally retryable.
+            let bytes = resp.bytes().await?.to_vec();
+            if !retryable
+                || attempt >= self.max_retries
+                || spare.is_none()
+                || !retry_allowed(code, &bytes, descriptor.as_ref())
+            {
                 return Ok((status, bytes));
             }
-
-            let wait =
-                parse_retry_after(resp.headers()).unwrap_or_else(|| backoff_delay(attempt));
             tokio::time::sleep(wait).await;
             next = spare; // guaranteed `Some` here (checked above)
             attempt += 1;
@@ -140,6 +143,56 @@ impl Config {
         }
         Ok(bytes)
     }
+}
+
+fn retry_allowed(status: u16, raw: &[u8], request: Option<&reqwest::Request>) -> bool {
+    let body: Value = serde_json::from_slice(raw).unwrap_or(Value::Null);
+    if body["id"].as_str().is_some_and(|id| !id.is_empty())
+        || body["sent_count"].as_f64().is_some_and(|count| count > 0.0)
+        || body["sent"]
+            .as_array()
+            .is_some_and(|items| !items.is_empty())
+        || body["reserved"]
+            .as_array()
+            .is_some_and(|items| !items.is_empty())
+        || body["name"] == "batch_incomplete"
+    {
+        return false;
+    }
+    let Some(req) = request else {
+        return false;
+    };
+    if status != 503 || req.method() == Method::GET || req.method() == Method::HEAD {
+        return true;
+    }
+    if matches!(
+        body["name"].as_str(),
+        Some(
+            "service_unavailable"
+                | "sending_service_unavailable"
+                | "sending_configuration_unavailable"
+                | "contacts_busy"
+                | "contacts_timeout"
+        )
+    ) {
+        return true;
+    }
+    let path = req.url().path();
+    let parts: Vec<_> = path.rsplit('/').collect();
+    let send_path = path.ends_with("/emails")
+        || path.ends_with("/emails/batch")
+        || (parts.len() >= 4
+            && matches!(parts[0], "reply" | "forward")
+            && !parts[1].is_empty()
+            && parts[2] == "receiving"
+            && parts[3] == "emails");
+    req.method() == Method::POST
+        && send_path
+        && req
+            .headers()
+            .get("Idempotency-Key")
+            .and_then(|v| v.to_str().ok())
+            .is_some_and(|key| !key.trim().is_empty())
 }
 
 /// Parse a `Retry-After` header into a wait duration, capped at
@@ -202,10 +255,7 @@ fn api_error(status: u16, body: &[u8]) -> Error {
         .unwrap_or(sent.len() as u32);
 
     Error::Api(Box::new(ApiError {
-        status_code: field("statusCode")
-            .and_then(Value::as_u64)
-            .map(|n| n as u16)
-            .unwrap_or(status),
+        status_code: status,
         name: field("name")
             .and_then(Value::as_str)
             .unwrap_or("application_error")
@@ -353,7 +403,11 @@ impl MailblastrBuilder {
     /// zero duration disables it (equivalent to [`Self::no_timeout`]). Ignored
     /// when a client is supplied via [`Self::client`].
     pub fn timeout(mut self, timeout: Duration) -> Self {
-        self.timeout = if timeout.is_zero() { None } else { Some(timeout) };
+        self.timeout = if timeout.is_zero() {
+            None
+        } else {
+            Some(timeout)
+        };
         self
     }
 
@@ -381,7 +435,8 @@ impl MailblastrBuilder {
     /// Build the [`Mailblastr`] client.
     pub fn build(self) -> Mailblastr {
         let client = self.client.unwrap_or_else(|| {
-            let mut builder = reqwest::Client::builder();
+            let mut builder =
+                reqwest::Client::builder().redirect(reqwest::redirect::Policy::none());
             if let Some(timeout) = self.timeout {
                 builder = builder.timeout(timeout);
             }
@@ -414,6 +469,10 @@ impl MailblastrBuilder {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "recovery_tests.rs"]
+mod recovery_tests;
 
 #[cfg(test)]
 mod tests {

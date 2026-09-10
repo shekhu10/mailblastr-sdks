@@ -32,7 +32,7 @@ class Client
      * 1-255 characters measured after the server trims the value (the storage
      * column is VARCHAR(255)); anything outside it is a
      * 400 `invalid_idempotency_key`. The header is honoured by
-     * `POST /emails` and `POST /emails/batch` ONLY — every other endpoint
+     * `POST /emails`, `POST /emails/batch`, and received-email reply/forward — every other endpoint
      * ignores it, so a retry there creates a second resource.
      *
      * The SDK does not check the length itself: the server is the authority.
@@ -112,7 +112,7 @@ class Client
      * @param array|object|null $body    JSON body (null sends none; [] sends {}).
      * @param array             $options 'idempotencyKey' (string) — sent verbatim as
      *                                   Idempotency-Key. Honoured by POST /emails and
-     *                                   POST /emails/batch ONLY; 1-255 characters
+     *                                   POST /emails/batch and received-email reply/forward; 1-255 characters
      *                                   ({@see self::IDEMPOTENCY_KEY_MAX_LENGTH}),
      *                                   validated server-side.
      *

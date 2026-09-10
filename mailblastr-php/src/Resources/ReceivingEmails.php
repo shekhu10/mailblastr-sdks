@@ -83,9 +83,9 @@ class ReceivingEmails extends Resource
      *
      * @param array $payload ['from' => verified sender (required), 'to' => …, 'subject' => …]
      */
-    public function forward(string $id, array $payload): array
+    public function forward(string $id, array $payload, array $options = []): array
     {
-        return $this->client->request('POST', '/emails/receiving/' . Client::e($id) . '/forward', $payload);
+        return $this->client->request('POST', '/emails/receiving/' . Client::e($id) . '/forward', $payload, $options);
     }
 
     /**
@@ -95,9 +95,9 @@ class ReceivingEmails extends Resource
      *
      * @param array $payload ['from' => …, 'html' => …, 'text' => …, 'subject' => …]
      */
-    public function reply(string $id, array $payload): array
+    public function reply(string $id, array $payload, array $options = []): array
     {
-        return $this->client->request('POST', '/emails/receiving/' . Client::e($id) . '/reply', $payload);
+        return $this->client->request('POST', '/emails/receiving/' . Client::e($id) . '/reply', $payload, $options);
     }
 
     /** Delete a received email. DELETE /emails/receiving/:id */

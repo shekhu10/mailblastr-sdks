@@ -42,7 +42,7 @@ class Events:
         required). POST /events/send
 
         ``options={"idempotency_key": ...}`` is still forwarded as
-        ``Idempotency-Key``, but only POST /emails and POST /emails/batch
+        ``Idempotency-Key``, but only POST /emails, POST /emails/batch, and received-email reply/forward
         honour that header — the server ignores it here, so a retry ingests a
         SECOND event and can enroll the contact twice. De-duplicate on your
         side instead."""

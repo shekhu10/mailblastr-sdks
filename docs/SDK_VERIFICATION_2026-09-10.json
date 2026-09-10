@@ -1,0 +1,47 @@
+{
+  "scope": "local SDK audit; no production sends or publishing",
+  "baseline": "6904e36",
+  "corpus_cases": 17,
+  "checks": {
+    "node": {
+      "passed": 102,
+      "failed": 0
+    },
+    "cli": {
+      "passed": 83,
+      "failed": 0
+    },
+    "python": {
+      "passed": 162,
+      "ok": true
+    },
+    "ruby": "94 runs, 932 assertions, 0 failures, 0 errors, 0 skips",
+    "php": "451 passed, 0 failed",
+    "go": {
+      "top_level_passed": 96,
+      "including_subtests_passed": 113,
+      "failed": 0,
+      "race": true
+    },
+    "rust": [
+      "test result: ok. 35 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.16s",
+      "test result: ok. 44 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s",
+      "test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.93s"
+    ],
+    "java": "466 passed, 0 failed",
+    "dotnet": "Passed!  - Failed:     0, Passed:   118, Skipped:     0, Total:   118, Duration: 3 s - Mailblastr.Tests.dll (net8.0)"
+  },
+  "packages": {
+    "node": "TypeScript build/test typecheck + npm pack dry-run passed",
+    "cli": "npm pack dry-run passed; local Node SDK integration passed; runtime dependency audit 0 advisories",
+    "python": "wheel built",
+    "ruby": "gem built",
+    "php": "composer validate --strict passed",
+    "go": "go build and vet passed",
+    "java": "Maven package passed",
+    "dotnet": "Release NuGet package built",
+    "rust": "cargo package compiled the packaged crate successfully"
+  },
+  "versions": "21 existing coordinates consistent at 5.1.1; changes unreleased",
+  "release": "Backend deployment and coordinated new SDK version required before publishing"
+}

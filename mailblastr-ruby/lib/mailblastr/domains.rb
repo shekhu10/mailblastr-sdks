@@ -3,6 +3,11 @@
 module Mailblastr
   module Domains
     class << self
+      # HTTPS readiness; an unavailable host schedules server-side repair.
+      def tracking_health(domain_id)
+        Client.request(:get, "/domains/#{Client.path_escape(domain_id)}/tracking-health")
+      end
+
       # Register a sending domain. POST /domains
       def create(params)
         Client.request(:post, "/domains", body: params)

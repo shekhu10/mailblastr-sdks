@@ -29,6 +29,7 @@ import (
 	"math"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -36,7 +37,7 @@ import (
 
 const (
 	// Version is the SDK version, sent in the User-Agent header.
-	Version = "5.1.1"
+	Version = "5.2.0"
 	// DefaultBaseURL is the production MailBlastr API host.
 	DefaultBaseURL = "https://www.mailblastr.com/api"
 
@@ -164,7 +165,7 @@ type ReputationDetail struct {
 //   - Limit — plan/quota rejections say which allowance was hit.
 //   - Reputation — reputation gates say what was paused or throttled.
 //   - Sent / SentCount — a POST /emails/batch that failed part way through
-//     (only when an Idempotency-Key was supplied) names the emails that DID
+//     (with or without an Idempotency-Key) names the emails that DID
 //     go out, so they are not sent twice on retry.
 //
 // All three are absent on an ordinary error: Limit and Reputation are nil,
@@ -173,6 +174,12 @@ type MailblastrError struct {
 	StatusCode int    `json:"statusCode"`
 	Name       string `json:"name"`
 	Message    string `json:"message"`
+	// Id identifies a failed or unconfirmed logical send. Inspect it before resending.
+	Id string `json:"id,omitempty"`
+	// Reserved includes attempted emails whose delivery may still be unconfirmed.
+	Reserved []IdResponse `json:"reserved,omitempty"`
+	// UnsentCount counts only the never-attempted tail of an interrupted batch.
+	UnsentCount *int `json:"unsent_count,omitempty"`
 
 	// Limit is set on plan/quota errors, else nil.
 	Limit *PlanLimitDetail `json:"limit,omitempty"`
@@ -261,7 +268,7 @@ func listPath(base string, p *ListParams) string {
 // column is VARCHAR(255)) — 255, not 256. A key outside that range is rejected
 // with invalid_idempotency_key (HTTP 400).
 //
-// The header is honoured by POST /emails and POST /emails/batch ONLY; every
+// The header is honoured by POST /emails, POST /emails/batch, and received-email reply/forward ONLY; every
 // other endpoint ignores it, so a retry there creates a second resource.
 //
 // This package does not check the length itself — the server is the authority.
@@ -275,9 +282,9 @@ type RequestOptions struct {
 	// trims it (IdempotencyKeyMaxLen); the server, not this package, rejects
 	// anything else with a 400 invalid_idempotency_key.
 	//
-	// Only POST /emails and POST /emails/batch honour the header — i.e.
-	// Emails.SendWithOptions, Batch.SendEmailsWithOptions and
-	// Batch.SendWithOptions. Every other endpoint ignores it, so a retry there
+	// Only POST /emails, POST /emails/batch, and received-email reply/forward honour the header — i.e.
+	// Emails.SendWithOptions, Batch.SendEmailsWithOptions, and ReceivingService's
+	// ReplyWithOptions / ForwardWithOptions. Other endpoints ignore it, so a retry there
 	// creates a second resource.
 	IdempotencyKey string
 }
@@ -412,7 +419,7 @@ func NewClient(apiKey string) *Client {
 	c := &Client{
 		apiKey:     apiKey,
 		BaseURL:    DefaultBaseURL,
-		HTTPClient: &http.Client{Timeout: DefaultTimeout},
+		HTTPClient: &http.Client{Timeout: DefaultTimeout, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }},
 		UserAgent:  defaultUserAgent,
 		Timeout:    DefaultTimeout,
 		MaxRetries: DefaultMaxRetries,
@@ -494,14 +501,10 @@ func parseAPIError(status int, body []byte) *MailblastrError {
 	// Envelope only — decoding it into MailblastrError would make a malformed
 	// additive field poison the three fields every caller relies on.
 	var envelope struct {
-		StatusCode int    `json:"statusCode"`
-		Name       string `json:"name"`
-		Message    string `json:"message"`
+		Name    string `json:"name"`
+		Message string `json:"message"`
 	}
 	if json.Unmarshal(body, &envelope) == nil {
-		if envelope.StatusCode != 0 {
-			apiErr.StatusCode = envelope.StatusCode
-		}
 		if envelope.Name != "" {
 			apiErr.Name = envelope.Name
 		}
@@ -539,6 +542,9 @@ func parseAPIError(status int, body []byte) *MailblastrError {
 	if apiErr.SentCount == 0 {
 		apiErr.SentCount = len(apiErr.Sent)
 	}
+	_ = json.Unmarshal(fields["id"], &apiErr.Id)
+	_ = json.Unmarshal(fields["reserved"], &apiErr.Reserved)
+	_ = json.Unmarshal(fields["unsent_count"], &apiErr.UnsentCount)
 
 	// Keep the raw body so extras this version does not model are reachable.
 	var raw map[string]any
@@ -556,11 +562,33 @@ func (c *Client) maxRetries() int {
 	return c.MaxRetries
 }
 
-// isRetryable reports whether a status code may be safely retried. Only 429 and
-// 503 qualify: the server guarantees the request was not applied, so retrying
-// cannot duplicate a non-idempotent side effect (e.g. sending an email twice).
+// isRetryable identifies candidate statuses; retryAllowed also checks progress
+// and whether a write was rejected before processing or protected by a key.
 func isRetryable(status int) bool {
 	return status == http.StatusTooManyRequests || status == http.StatusServiceUnavailable
+}
+
+var idempotentSendPath = regexp.MustCompile(`/emails(?:/batch|/receiving/[^/]+/(?:reply|forward))?$`)
+
+func retryAllowed(req *http.Request, status int, body []byte) bool {
+	apiErr := parseAPIError(status, body)
+	// Raw progress survives item-schema changes and numeric decoding failures.
+	var progress map[string]any
+	_ = json.Unmarshal(body, &progress)
+	count, _ := progress["sent_count"].(float64)
+	sent, _ := progress["sent"].([]any)
+	reserved, _ := progress["reserved"].([]any)
+	if apiErr.Id != "" || count > 0 || len(sent) > 0 || len(reserved) > 0 || apiErr.Name == "batch_incomplete" {
+		return false
+	}
+	if status != 503 || req.Method == http.MethodGet || req.Method == http.MethodHead {
+		return true
+	}
+	switch apiErr.Name {
+	case "service_unavailable", "sending_service_unavailable", "sending_configuration_unavailable", "contacts_busy", "contacts_timeout":
+		return true
+	}
+	return req.Method == http.MethodPost && strings.TrimSpace(req.Header.Get("Idempotency-Key")) != "" && idempotentSendPath.MatchString(req.URL.EscapedPath())
 }
 
 // capDelay clamps a wait duration to [0, maxBackoff].
@@ -582,11 +610,22 @@ func capDelay(d time.Duration) time.Duration {
 func backoffDelay(retryAfter string, attempt int) time.Duration {
 	if h := strings.TrimSpace(retryAfter); h != "" {
 		if secs, err := strconv.ParseFloat(h, 64); err == nil {
-			return capDelay(time.Duration(secs * float64(time.Second)))
+			if !math.IsNaN(secs) && !math.IsInf(secs, 0) {
+				if secs >= maxBackoff.Seconds() {
+					return maxBackoff
+				}
+				if secs <= 0 {
+					return 0
+				}
+				return time.Duration(secs * float64(time.Second))
+			}
 		}
 		if t, err := http.ParseTime(h); err == nil {
 			return capDelay(time.Until(t))
 		}
+	}
+	if attempt >= 6 {
+		return maxBackoff
 	}
 	return capDelay(time.Duration(float64(500*time.Millisecond) * math.Pow(2, float64(attempt))))
 }
@@ -609,10 +648,16 @@ func (c *Client) doRequest(req *http.Request, reqBody []byte) (int, []byte, erro
 			// Network errors and timeouts are not retried.
 			return 0, nil, err
 		}
-		if !isRetryable(status) || attempt >= maxRetries {
+		if !isRetryable(status) || attempt >= maxRetries || !retryAllowed(req, status, body) {
 			return status, body, nil
 		}
-		time.Sleep(backoffDelay(header.Get("Retry-After"), attempt))
+		timer := time.NewTimer(backoffDelay(header.Get("Retry-After"), attempt))
+		select {
+		case <-req.Context().Done():
+			timer.Stop()
+			return 0, nil, req.Context().Err()
+		case <-timer.C:
+		}
 	}
 }
 

@@ -54,9 +54,7 @@ class MailblastrException extends \Exception
         $message = isset($body['message']) && is_string($body['message'])
             ? $body['message']
             : "Request failed with status {$httpStatus}";
-        $statusCode = isset($body['statusCode']) && is_int($body['statusCode'])
-            ? $body['statusCode']
-            : $httpStatus;
+        $statusCode = $httpStatus;
         $name = isset($body['name']) && is_string($body['name'])
             ? $body['name']
             : 'application_error';
@@ -85,6 +83,23 @@ class MailblastrException extends \Exception
     public function getBody(): array
     {
         return $this->body;
+    }
+
+    /** Original email for a failed or unconfirmed send; inspect before resending. */
+    public function getId(): ?string
+    {
+        $value = $this->body['id'] ?? null;
+        return is_string($value) ? $value : null;
+    }
+
+    /** @return null|list<array{id: string}> Reserved prefix, including uncertain sends. */
+    public function getReserved(): ?array { return $this->arrayField('reserved'); }
+
+    /** Number of never-attempted batch items, distinct from uncertain reserved items. */
+    public function getUnsentCount(): ?int
+    {
+        $value = $this->body['unsent_count'] ?? null;
+        return is_int($value) ? $value : null;
     }
 
     /**

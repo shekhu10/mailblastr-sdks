@@ -183,8 +183,8 @@ impl EventsSvc {
 
     /// Like [`send`](Self::send), with an `Idempotency-Key` header.
     ///
-    /// **The API ignores the header here.** Only `POST /emails` and
-    /// `POST /emails/batch` implement idempotency, so a retry of this call
+    /// **The API ignores the header here.** Only send, batch, reply, and
+    /// forward implement idempotency, so a retry of this call
     /// ingests the event a second time. De-duplicate on your side instead.
     #[deprecated(
         since = "2.0.0",
@@ -208,8 +208,8 @@ impl EventsSvc {
     /// Create a custom-event definition. `POST /events`
     ///
     /// There is deliberately no `create_with_idempotency_key`: this endpoint
-    /// does not honour `Idempotency-Key` either — only `POST /emails` and
-    /// `POST /emails/batch` do. A duplicate event name is already rejected
+    /// does not honour `Idempotency-Key` either — only send, batch, reply, and
+    /// forward do. A duplicate event name is already rejected
     /// with a `422 validation_error`, so a retry is safe without one.
     pub async fn create(&self, options: CreateEventOptions) -> Result<EventDefinition> {
         self.config

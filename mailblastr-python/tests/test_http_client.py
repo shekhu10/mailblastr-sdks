@@ -44,7 +44,7 @@ class TestHttpClient(unittest.TestCase):
             captured["req"] = req
             return FakeResponse(b'{"id": "em_1"}')
 
-        with mock.patch("urllib.request.urlopen", side_effect=fake_urlopen):
+        with mock.patch("mailblastr.http_client._opener.open", side_effect=fake_urlopen):
             result = http_client.request(
                 "POST",
                 "/emails",
@@ -72,7 +72,7 @@ class TestHttpClient(unittest.TestCase):
             captured["req"] = req
             return FakeResponse(b'{"object":"list","data":[]}')
 
-        with mock.patch("urllib.request.urlopen", side_effect=fake_urlopen):
+        with mock.patch("mailblastr.http_client._opener.open", side_effect=fake_urlopen):
             http_client.request("GET", "/domains")
         self.assertIsNone(captured["req"].data)
         self.assertEqual(captured["req"].get_method(), "GET")
@@ -85,7 +85,7 @@ class TestHttpClient(unittest.TestCase):
             captured["req"] = req
             return FakeResponse(b"{}")
 
-        with mock.patch("urllib.request.urlopen", side_effect=fake_urlopen):
+        with mock.patch("mailblastr.http_client._opener.open", side_effect=fake_urlopen):
             http_client.request("GET", "/emails")
         self.assertEqual(captured["req"].full_url, "http://localhost:3000/emails")
 
@@ -97,7 +97,7 @@ class TestHttpClient(unittest.TestCase):
         err = urllib.error.HTTPError(
             "https://www.mailblastr.com/api/segments", 422, "Unprocessable", {}, response_body
         )
-        with mock.patch("urllib.request.urlopen", side_effect=err):
+        with mock.patch("mailblastr.http_client._opener.open", side_effect=err):
             with self.assertRaises(MailblastrError) as ctx:
                 http_client.request("POST", "/segments", {"name": "VIP"})
         e = ctx.exception
@@ -111,7 +111,7 @@ class TestHttpClient(unittest.TestCase):
         err = urllib.error.HTTPError(
             "https://www.mailblastr.com/api/emails", 500, "Boom", {}, io.BytesIO(b"<html>oops</html>")
         )
-        with mock.patch("urllib.request.urlopen", side_effect=err):
+        with mock.patch("mailblastr.http_client._opener.open", side_effect=err):
             with self.assertRaises(MailblastrError) as ctx:
                 http_client.request("GET", "/emails")
         self.assertEqual(ctx.exception.status_code, 500)
@@ -119,7 +119,7 @@ class TestHttpClient(unittest.TestCase):
 
     def test_network_error(self):
         err = urllib.error.URLError("connection refused")
-        with mock.patch("urllib.request.urlopen", side_effect=err):
+        with mock.patch("mailblastr.http_client._opener.open", side_effect=err):
             with self.assertRaises(MailblastrError) as ctx:
                 http_client.request("GET", "/emails")
         self.assertEqual(ctx.exception.status_code, 0)
@@ -138,7 +138,7 @@ class TestHttpClient(unittest.TestCase):
             captured["req"] = req
             return FakeResponse(b"\x89PNG...")
 
-        with mock.patch("urllib.request.urlopen", side_effect=fake_urlopen):
+        with mock.patch("mailblastr.http_client._opener.open", side_effect=fake_urlopen):
             data = http_client.request_raw("GET", "/emails/receiving/rcv_1/raw")
         self.assertEqual(data, b"\x89PNG...")
         self.assertEqual(captured["req"].get_header("Authorization"), "Bearer mb_test_key")
@@ -148,7 +148,7 @@ class TestHttpClient(unittest.TestCase):
         self.assertEqual(captured["req"].get_header("User-agent"), http_client.USER_AGENT)
 
     def test_empty_response_returns_none(self):
-        with mock.patch("urllib.request.urlopen", return_value=FakeResponse(b"")):
+        with mock.patch("mailblastr.http_client._opener.open", return_value=FakeResponse(b"")):
             self.assertIsNone(http_client.request("DELETE", "/webhooks/wh_1"))
 
     def test_passes_timeout_to_urlopen(self):
@@ -160,7 +160,7 @@ class TestHttpClient(unittest.TestCase):
 
         mailblastr.timeout = 12.5
         self.addCleanup(setattr, mailblastr, "timeout", None)
-        with mock.patch("urllib.request.urlopen", side_effect=fake_urlopen):
+        with mock.patch("mailblastr.http_client._opener.open", side_effect=fake_urlopen):
             http_client.request("GET", "/emails")
         self.assertEqual(captured.get("timeout"), 12.5)
 
@@ -178,7 +178,7 @@ class TestHttpClient(unittest.TestCase):
                 )
             return FakeResponse(b'{"id": "em_ok"}')
 
-        with mock.patch("urllib.request.urlopen", side_effect=fake_urlopen):
+        with mock.patch("mailblastr.http_client._opener.open", side_effect=fake_urlopen):
             with mock.patch("time.sleep"):  # don't actually wait
                 result = http_client.request("POST", "/emails", {"x": 1})
         self.assertEqual(calls["n"], 2)
@@ -198,7 +198,7 @@ class TestHttpClient(unittest.TestCase):
                 "https://www.mailblastr.com/api/emails", 503, "Unavailable", {}, body,
             )
 
-        with mock.patch("urllib.request.urlopen", side_effect=fake_urlopen):
+        with mock.patch("mailblastr.http_client._opener.open", side_effect=fake_urlopen):
             with mock.patch("time.sleep"):
                 with self.assertRaises(MailblastrError) as ctx:
                     http_client.request("GET", "/emails")
@@ -230,7 +230,7 @@ class TestHttpClient(unittest.TestCase):
                 {"Retry-After": "0"}, io.BytesIO(body),
             )
 
-        with mock.patch("urllib.request.urlopen", side_effect=fake_urlopen):
+        with mock.patch("mailblastr.http_client._opener.open", side_effect=fake_urlopen):
             with mock.patch("time.sleep"):
                 with self.assertRaises(MailblastrError) as ctx:
                     http_client.request("POST", "/emails/batch", [{"x": 1}])
@@ -253,7 +253,7 @@ class TestHttpClient(unittest.TestCase):
             "https://www.mailblastr.com/api/domains", 402, "Payment Required",
             {"Retry-After": "12"}, io.BytesIO(body),
         )
-        with mock.patch("urllib.request.urlopen", side_effect=err):
+        with mock.patch("mailblastr.http_client._opener.open", side_effect=err):
             with self.assertRaises(MailblastrError) as ctx:
                 http_client.request("POST", "/domains", {"name": "acme.com"})
         e = ctx.exception
@@ -287,7 +287,7 @@ class TestHttpClient(unittest.TestCase):
             "https://www.mailblastr.com/api/emails", 429, "Too Many Requests",
             {}, io.BytesIO(body),
         )
-        with mock.patch("urllib.request.urlopen", side_effect=err):
+        with mock.patch("mailblastr.http_client._opener.open", side_effect=err):
             with self.assertRaises(MailblastrError) as ctx:
                 http_client.request("POST", "/emails", {"x": 1})
         e = ctx.exception
@@ -309,7 +309,7 @@ class TestHttpClient(unittest.TestCase):
             captured["req"] = req
             return FakeResponse(b'{"id": "em_1"}')
 
-        with mock.patch("urllib.request.urlopen", side_effect=fake_urlopen):
+        with mock.patch("mailblastr.http_client._opener.open", side_effect=fake_urlopen):
             http_client.request("POST", "/emails", {"x": 1}, {"idempotency_key": key})
         return captured["req"].get_header("Idempotency-key")
 
@@ -386,7 +386,7 @@ class TestHttpClient(unittest.TestCase):
                 {"Retry-After": value}, io.BytesIO(body),
             )
 
-        with mock.patch("urllib.request.urlopen", side_effect=fake_urlopen):
+        with mock.patch("mailblastr.http_client._opener.open", side_effect=fake_urlopen):
             with mock.patch("time.sleep"):
                 with self.assertRaises(MailblastrError) as ctx:
                     http_client.request("POST", "/emails", {"x": 1})
@@ -437,7 +437,7 @@ class TestHttpClient(unittest.TestCase):
                 "https://www.mailblastr.com/api/emails", 422, "Bad", {}, io.BytesIO(b""),
             )
 
-        with mock.patch("urllib.request.urlopen", side_effect=fake_urlopen):
+        with mock.patch("mailblastr.http_client._opener.open", side_effect=fake_urlopen):
             with self.assertRaises(MailblastrError):
                 http_client.request("POST", "/emails", {"x": 1})
         self.assertEqual(calls["n"], 1)

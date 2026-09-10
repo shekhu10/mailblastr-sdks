@@ -215,7 +215,12 @@ func (s *ReceivingService) Forward(id string, params *ForwardReceivedEmailReques
 
 // ForwardWithContext forwards a received email. POST /emails/receiving/:id/forward
 func (s *ReceivingService) ForwardWithContext(ctx context.Context, id string, params *ForwardReceivedEmailRequest) (*CreateEmailResponse, error) {
-	return request[CreateEmailResponse](ctx, s.client, http.MethodPost, "/emails/receiving/"+esc(id)+"/forward", params, nil)
+	return s.ForwardWithOptions(ctx, id, params, nil)
+}
+
+// ForwardWithOptions preserves an IdempotencyKey across retries of one logical forward.
+func (s *ReceivingService) ForwardWithOptions(ctx context.Context, id string, params *ForwardReceivedEmailRequest, opts *RequestOptions) (*CreateEmailResponse, error) {
+	return request[CreateEmailResponse](ctx, s.client, http.MethodPost, "/emails/receiving/"+esc(id)+"/forward", params, opts)
 }
 
 // Reply replies to a received email's sender, threaded into the same
@@ -226,7 +231,12 @@ func (s *ReceivingService) Reply(id string, params *ReplyReceivedEmailRequest) (
 
 // ReplyWithContext replies to a received email's sender.
 func (s *ReceivingService) ReplyWithContext(ctx context.Context, id string, params *ReplyReceivedEmailRequest) (*CreateEmailResponse, error) {
-	return request[CreateEmailResponse](ctx, s.client, http.MethodPost, "/emails/receiving/"+esc(id)+"/reply", params, nil)
+	return s.ReplyWithOptions(ctx, id, params, nil)
+}
+
+// ReplyWithOptions preserves an IdempotencyKey across retries of one logical reply.
+func (s *ReceivingService) ReplyWithOptions(ctx context.Context, id string, params *ReplyReceivedEmailRequest, opts *RequestOptions) (*CreateEmailResponse, error) {
+	return request[CreateEmailResponse](ctx, s.client, http.MethodPost, "/emails/receiving/"+esc(id)+"/reply", params, opts)
 }
 
 // Remove deletes a received email. DELETE /emails/receiving/:id

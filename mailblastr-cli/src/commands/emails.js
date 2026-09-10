@@ -293,11 +293,13 @@ function register({ group, leaf, act }) {
     leaf(receiving, 'forward <id>', 'Forward a received email')
       .requiredOption('--from <from>', 'a verified sending address to forward from')
       .requiredOption('--to <address>', 'recipient (repeatable or comma-separated)', collect)
-      .option('--subject <subject>', 'override the subject line'),
+      .option('--subject <subject>', 'override the subject line')
+      .option('--idempotency-key <key>', IDEMPOTENCY_KEY_HELP),
     ({ client, opts, args: [id] }) =>
       client.emails.receiving.forward(
         id,
         clean({ from: opts.from, to: opts.to, subject: opts.subject }),
+        opts.idempotencyKey ? { idempotencyKey: opts.idempotencyKey } : undefined,
       ),
   );
 
@@ -306,7 +308,8 @@ function register({ group, leaf, act }) {
       .requiredOption('--from <from>', 'a verified sending address to reply from')
       .option('--html <html>', 'HTML body')
       .option('--text <text>', 'plain-text body')
-      .option('--subject <subject>', "override the subject (default: 'Re: …')"),
+      .option('--subject <subject>', "override the subject (default: 'Re: …')")
+      .option('--idempotency-key <key>', IDEMPOTENCY_KEY_HELP),
     ({ client, opts, args: [id] }) => {
       if (opts.html === undefined && opts.text === undefined) {
         throw new CliError('Provide at least one of --html or --text.');
@@ -314,6 +317,7 @@ function register({ group, leaf, act }) {
       return client.emails.receiving.reply(
         id,
         clean({ from: opts.from, html: opts.html, text: opts.text, subject: opts.subject }),
+        opts.idempotencyKey ? { idempotencyKey: opts.idempotencyKey } : undefined,
       );
     },
   );

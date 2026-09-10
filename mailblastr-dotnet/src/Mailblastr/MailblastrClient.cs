@@ -18,7 +18,7 @@ public partial class MailblastrClient : IMailblastr, IDisposable
     public const string DefaultBaseUrl = "https://www.mailblastr.com/api";
 
     /// <summary>SDK version. Keep in sync with the csproj &lt;Version&gt;.</summary>
-    public const string Version = "5.1.1";
+    public const string Version = "5.2.0";
 
     /// <summary>
     /// Sent as <c>User-Agent</c> on every request. The API rejects a request with
@@ -33,7 +33,7 @@ public partial class MailblastrClient : IMailblastr, IDisposable
     /// 256. A key outside 1–255 is rejected by the API with
     /// 400 <c>invalid_idempotency_key</c>.
     /// <para>
-    /// The header is honoured by <c>POST /emails</c> and <c>POST /emails/batch</c>
+    /// The header is honoured by <c>POST /emails</c>, <c>POST /emails/batch</c>, and received-email reply/forward
     /// ONLY; every other endpoint ignores it, so a retry there creates a second
     /// resource.
     /// </para>
@@ -44,7 +44,7 @@ public partial class MailblastrClient : IMailblastr, IDisposable
     /// </summary>
     public const int MaxIdempotencyKeyLength = 255;
 
-    /// <summary>Retryable HTTP statuses: only 429 and 503 are guaranteed not applied.</summary>
+    /// <summary>Maximum wait between eligible retries (see RetryAllowed).</summary>
     private static readonly TimeSpan MaxRetryWait = TimeSpan.FromSeconds(30);
 
     private readonly HttpClient _http;
@@ -81,7 +81,7 @@ public partial class MailblastrClient : IMailblastr, IDisposable
         }
         else
         {
-            _http = options.HttpMessageHandler is null ? new HttpClient() : new HttpClient(options.HttpMessageHandler);
+            _http = options.HttpMessageHandler is null ? new HttpClient(new HttpClientHandler { AllowAutoRedirect = false }) : new HttpClient(options.HttpMessageHandler);
             _ownsHttpClient = true;
             // We own this client, so let our per-attempt CancellationTokenSource
             // fully govern the timeout instead of HttpClient's default 100s.
@@ -100,7 +100,7 @@ public partial class MailblastrClient : IMailblastr, IDisposable
 
     // ---- HTTP core ----
 
-    private HttpRequestMessage BuildRequest(HttpMethod method, string path, object? body, string? idempotencyKey)
+    private HttpRequestMessage BuildRequest(HttpMethod method, string path, string? body, string? idempotencyKey)
     {
         var request = new HttpRequestMessage(method, _baseUrl + path);
         request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", _apiKey);
@@ -115,16 +115,18 @@ public partial class MailblastrClient : IMailblastr, IDisposable
         }
         if (body is not null)
         {
-            var json = JsonSerializer.Serialize(body, MailblastrJson.Options);
-            request.Content = new StringContent(json, Encoding.UTF8, "application/json");
+            request.Content = new StringContent(body, Encoding.UTF8, "application/json");
         }
         return request;
     }
 
     private async Task<T> RequestAsync<T>(HttpMethod method, string path, object? body, string? idempotencyKey, CancellationToken cancellationToken)
     {
+        // Snapshot once: caller mutations during backoff must not change the
+        // content associated with the original operation key.
+        var json = body is null ? null : JsonSerializer.Serialize(body, MailblastrJson.Options);
         using var response = await SendWithRetriesAsync(
-            () => BuildRequest(method, path, body, idempotencyKey), cancellationToken).ConfigureAwait(false);
+            () => BuildRequest(method, path, json, idempotencyKey), cancellationToken).ConfigureAwait(false);
 
         var text = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
         if (!response.IsSuccessStatusCode)
@@ -186,9 +188,15 @@ public partial class MailblastrClient : IMailblastr, IDisposable
         for (int attempt = 0; ; attempt++)
         {
             HttpResponseMessage response;
+            bool isRead;
+            bool protectedSend;
             using (var request = requestFactory())
             using (var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken))
             {
+                isRead = request.Method == HttpMethod.Get || request.Method == HttpMethod.Head;
+                protectedSend = request.Method == HttpMethod.Post
+                    && System.Text.RegularExpressions.Regex.IsMatch(request.RequestUri!.AbsolutePath, @"/emails(?:/batch|/receiving/[^/]+/(?:reply|forward))?$")
+                    && request.Headers.TryGetValues("Idempotency-Key", out var keys) && keys.Any(key => !string.IsNullOrWhiteSpace(key));
                 if (_timeout > TimeSpan.Zero)
                 {
                     timeoutCts.CancelAfter(_timeout);
@@ -211,7 +219,8 @@ public partial class MailblastrClient : IMailblastr, IDisposable
             }
 
             var status = (int)response.StatusCode;
-            if ((status != 429 && status != 503) || attempt >= _maxRetries)
+            if ((status != 429 && status != 503) || attempt >= _maxRetries
+                || !RetryAllowed(status, await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false), isRead, protectedSend))
             {
                 return response;
             }
@@ -223,6 +232,21 @@ public partial class MailblastrClient : IMailblastr, IDisposable
                 await Task.Delay(wait, cancellationToken).ConfigureAwait(false);
             }
         }
+    }
+
+    private static bool RetryAllowed(int status, string raw, bool isRead, bool protectedSend)
+    {
+        var error = CreateError(status, raw);
+        // Inspect raw progress separately from typed convenience accessors:
+        // a newer/malformed item shape must not make reserved work disappear.
+        bool HasItems(string key) => error.Extra.TryGetValue(key, out var items)
+            && items.ValueKind == JsonValueKind.Array && items.GetArrayLength() > 0;
+        var progress = error.Extra.TryGetValue("sent_count", out var count)
+            && count.ValueKind == JsonValueKind.Number && count.TryGetDouble(out var number) && number > 0;
+        if (!string.IsNullOrEmpty(error.Id) || progress || HasItems("sent")
+            || HasItems("reserved") || error.Name == "batch_incomplete") return false;
+        return status != 503 || isRead || protectedSend || error.Name is "service_unavailable"
+            or "sending_service_unavailable" or "sending_configuration_unavailable" or "contacts_busy" or "contacts_timeout";
     }
 
     /// <summary>
@@ -274,15 +298,22 @@ public partial class MailblastrClient : IMailblastr, IDisposable
         {
             try
             {
-                var parsed = JsonSerializer.Deserialize<ApiErrorBody>(body, MailblastrJson.Options);
-                if (parsed is not null)
+                using var parsed = JsonDocument.Parse(body);
+                if (parsed.RootElement.ValueKind == JsonValueKind.Object)
                 {
-                    if (parsed.StatusCode is int sc && sc > 0) status = sc;
-                    if (!string.IsNullOrEmpty(parsed.Name)) name = parsed.Name;
-                    if (!string.IsNullOrEmpty(parsed.Message)) message = parsed.Message;
-                    // Plan/quota (`limit`), reputation gates (`reputation`) and a
-                    // partial batch failure (`sent` / `sent_count`) ride along here.
-                    extra = parsed.Extra;
+                    extra = new Dictionary<string, JsonElement>();
+                    foreach (var field in parsed.RootElement.EnumerateObject())
+                    {
+                        if (field.Name == "statusCode") continue; // Transport status is authoritative.
+                        if (field.Name is "name" or "message")
+                        {
+                            if (field.Value.ValueKind != JsonValueKind.String) continue;
+                            var value = field.Value.GetString();
+                            if (string.IsNullOrEmpty(value)) continue;
+                            if (field.Name == "name") name = value; else message = value;
+                        }
+                        else extra[field.Name] = field.Value.Clone();
+                    }
                 }
             }
             catch (JsonException)

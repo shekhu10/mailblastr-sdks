@@ -86,11 +86,12 @@ const mb = new Mailblastr('mb_xxxxxxxxx', {
 });
 ```
 
-Requests time out after 30 seconds by default. A `429` (rate limited) or `503`
-(service unavailable) response is retried up to `maxRetries` times, honoring the
-`Retry-After` header (otherwise exponential backoff). Only those two statuses are
-retried — never other errors, network failures, or timeouts — so a non-idempotent
-request (like sending an email) is never duplicated by a retry.
+Requests time out after 30 seconds by default. Automatic retries consider only HTTP 429 and 503 and honor `Retry-After`
+(with capped exponential backoff otherwise). Partial or uncertain results stop
+immediately. Generic 503 responses retry only reads or a send protected by an
+operation key; other writes need a documented rejection before processing.
+Network errors, timeouts, 409, 422, and other 5xx responses are never retried.
+See **Recovery and tracking contracts** below before retrying in application code.
 
 The send routes (`POST /emails` and `POST /emails/batch`) are rate limited to 30
 requests per 60 seconds per IP — read endpoints are not capped. Tripping it
@@ -338,7 +339,7 @@ await mb.batch.send(payloads, { idempotencyKey: 'nightly-digest-2026-08-08' });
   255, not 256. The exported `IDEMPOTENCY_KEY_MAX_LENGTH` carries that number.
   The SDK sends the key verbatim and lets the **server** be the authority: an
   out-of-range key comes back as `400 invalid_idempotency_key`.
-- **Only `emails.send` and `batch.send` honour the header.** Everywhere else —
+- **`emails.send`, `batch.send`, and received-email reply/forward honour the header.** Everywhere else —
   including `events.send` — it is accepted and forwarded but ignored, so a retry
   there creates a second resource. De-duplicate on your side instead.
 - Reusing a key with a different payload is a `409 invalid_idempotent_request`;
@@ -361,3 +362,49 @@ Full docs: <https://www.mailblastr.com/docs>
 ## License
 
 MIT
+
+## Recovery and tracking contracts
+
+Use a stable, unique operation key for each intended send, batch, reply, or
+forward. Keep the same key and payload when recovering that operation. These
+are the supported idempotent send endpoints; events do not implement this
+header. Existing calls without options still work.
+
+```ts
+await mb.emails.receiving.reply(id, reply, { idempotencyKey: 'reply-operation-1' });
+await mb.emails.receiving.forward(id, forward, { idempotencyKey: 'forward-operation-1' });
+const health = await mb.domains.trackingHealth(domainId);
+```
+
+Automatic retries consider only 429/503. They stop on an original email `id`,
+positive `sent_count`, nonempty `sent` or `reserved`, or `batch_incomplete`.
+An ordinary rate limit can retry; a generic 503 can retry a read or a send with
+the same supported key. Other writes retry only documented pre-processing
+rejections (`service_unavailable`, `sending_service_unavailable`,
+`sending_configuration_unavailable`, `contacts_busy`, `contacts_timeout`).
+No network/body-read failure, 409, 422, or other 5xx is retried automatically.
+The default transport refuses redirects; a custom transport/client must enforce
+its own policy.
+
+On a failed or unconfirmed send, inspect `id` with the email retrieval method
+before creating another send. A 422 with an ID can identify an uncertain
+provider handoff; 422 does not always mean nothing happened. For interrupted
+batches, `sent` contains confirmed sends, `reserved` contains the original
+attempted prefix (including uncertain handoffs), and `unsent_count` counts the
+never-attempted tail. Do not resend the full batch or the reserved prefix under
+a new key. Reconcile original IDs first, then submit only known unattempted
+items as a new operation. Recovery fields remain available in the full error
+body as well as language-specific fields/accessors.
+
+Tracking health returns `custom_host`, `status` (`shared`, `ready`, or
+`unavailable`), and `checked_at`. Configure custom tracking through the domain
+API and check health before relying on it. A healthy endpoint cannot guarantee
+an open event: recipients may block images, and coupon redemption alone is not
+proof that the tracking pixel loaded. SDKs preserve supplied HTML/text and do
+not infer opens or rewrite editor spacing.
+
+Campaign cancellation also stops pending follow-ups for an already-sent
+campaign while retaining its sent history. Permanent received-email deletion
+acknowledges a durable cleanup request; attachment/object cleanup can finish
+asynchronously. Retrying that deletion is safe; it cannot be undone after the
+purge request is accepted.

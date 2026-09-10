@@ -358,3 +358,20 @@ func (s *DomainsService) Remove(id string) (*RemovedResponse, error) {
 func (s *DomainsService) RemoveWithContext(ctx context.Context, id string) (*RemovedResponse, error) {
 	return request[RemovedResponse](ctx, s.client, http.MethodDelete, "/domains/"+esc(id), nil, nil)
 }
+
+// DomainTrackingHealth is HTTPS readiness, separate from sending DNS verification.
+type DomainTrackingHealth struct {
+	CustomHost *string `json:"custom_host"`
+	Status     string  `json:"status"`
+	CheckedAt  string  `json:"checked_at"`
+}
+
+// TrackingHealth checks HTTPS readiness and schedules server-side repair when unavailable.
+func (s *DomainsService) TrackingHealth(id string) (*DomainTrackingHealth, error) {
+	return s.TrackingHealthWithContext(context.Background(), id)
+}
+
+// TrackingHealthWithContext is the cancellable tracking health check.
+func (s *DomainsService) TrackingHealthWithContext(ctx context.Context, id string) (*DomainTrackingHealth, error) {
+	return request[DomainTrackingHealth](ctx, s.client, http.MethodGet, "/domains/"+esc(id)+"/tracking-health", nil, nil)
+}

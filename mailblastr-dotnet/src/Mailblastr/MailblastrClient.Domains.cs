@@ -6,6 +6,9 @@ public partial class MailblastrClient
 {
     // ---- Domains ----
 
+    public Task<DomainTrackingHealth> DomainTrackingHealthAsync(string domainId, CancellationToken cancellationToken = default)
+        => RequestAsync<DomainTrackingHealth>(HttpMethod.Get, $"/domains/{E(domainId)}/tracking-health", null, null, cancellationToken);
+
     public Task<Domain> DomainCreateAsync(DomainCreateOptions options, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(options);

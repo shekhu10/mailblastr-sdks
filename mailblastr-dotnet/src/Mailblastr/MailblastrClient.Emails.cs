@@ -105,15 +105,21 @@ public partial class MailblastrClient
         => RequestBytesAsync(HttpMethod.Get, $"/emails/receiving/{E(receivedEmailId)}/raw", cancellationToken);
 
     public Task<EmailCreated> ReceivedEmailForwardAsync(string receivedEmailId, ReceivedEmailForwardOptions options, CancellationToken cancellationToken = default)
+        => ReceivedEmailForwardWithIdempotencyKeyAsync(receivedEmailId, options, null, cancellationToken);
+
+    public Task<EmailCreated> ReceivedEmailForwardWithIdempotencyKeyAsync(string receivedEmailId, ReceivedEmailForwardOptions options, string? idempotencyKey, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(options);
-        return RequestAsync<EmailCreated>(HttpMethod.Post, $"/emails/receiving/{E(receivedEmailId)}/forward", options, null, cancellationToken);
+        return RequestAsync<EmailCreated>(HttpMethod.Post, $"/emails/receiving/{E(receivedEmailId)}/forward", options, idempotencyKey, cancellationToken);
     }
 
     public Task<EmailCreated> ReceivedEmailReplyAsync(string receivedEmailId, ReceivedEmailReplyOptions options, CancellationToken cancellationToken = default)
+        => ReceivedEmailReplyWithIdempotencyKeyAsync(receivedEmailId, options, null, cancellationToken);
+
+    public Task<EmailCreated> ReceivedEmailReplyWithIdempotencyKeyAsync(string receivedEmailId, ReceivedEmailReplyOptions options, string? idempotencyKey, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(options);
-        return RequestAsync<EmailCreated>(HttpMethod.Post, $"/emails/receiving/{E(receivedEmailId)}/reply", options, null, cancellationToken);
+        return RequestAsync<EmailCreated>(HttpMethod.Post, $"/emails/receiving/{E(receivedEmailId)}/reply", options, idempotencyKey, cancellationToken);
     }
 
     public Task<RemovedResponse> ReceivedEmailDeleteAsync(string receivedEmailId, CancellationToken cancellationToken = default)

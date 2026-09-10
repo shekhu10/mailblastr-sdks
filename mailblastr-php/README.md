@@ -383,7 +383,7 @@ The SDK sends the key verbatim and lets the **server** be the authority: an
 out-of-range key comes back as a 400 `invalid_idempotency_key`.
 
 Replaying a key returns the original response; reusing it with a different
-payload is a 409. Only `emails->send()` and `batch->send()` honour it — every
+payload is a 409. `emails->send()`, `batch->send()`, and received-email reply/forward honour it — every
 other endpoint, including `events->send()`, still accepts an `idempotencyKey`
 option and forwards it, but the API ignores it there, so a retry creates a
 second resource. De-duplicate on your side instead.
@@ -419,3 +419,49 @@ Full docs: <https://www.mailblastr.com/docs>
 ## License
 
 MIT
+
+## Recovery and tracking contracts
+
+Use a stable, unique operation key for each intended send, batch, reply, or
+forward. Keep the same key and payload when recovering that operation. These
+are the supported idempotent send endpoints; events do not implement this
+header. Existing calls without options still work.
+
+```php
+$mailblastr->emails->receiving->reply($id, $reply, ['idempotencyKey' => 'reply-operation-1']);
+$mailblastr->emails->receiving->forward($id, $forward, ['idempotencyKey' => 'forward-operation-1']);
+$health = $mailblastr->domains->trackingHealth($domainId);
+```
+
+Automatic retries consider only 429/503. They stop on an original email `id`,
+positive `sent_count`, nonempty `sent` or `reserved`, or `batch_incomplete`.
+An ordinary rate limit can retry; a generic 503 can retry a read or a send with
+the same supported key. Other writes retry only documented pre-processing
+rejections (`service_unavailable`, `sending_service_unavailable`,
+`sending_configuration_unavailable`, `contacts_busy`, `contacts_timeout`).
+No network/body-read failure, 409, 422, or other 5xx is retried automatically.
+The default transport refuses redirects; a custom transport/client must enforce
+its own policy.
+
+On a failed or unconfirmed send, inspect `id` with the email retrieval method
+before creating another send. A 422 with an ID can identify an uncertain
+provider handoff; 422 does not always mean nothing happened. For interrupted
+batches, `sent` contains confirmed sends, `reserved` contains the original
+attempted prefix (including uncertain handoffs), and `unsent_count` counts the
+never-attempted tail. Do not resend the full batch or the reserved prefix under
+a new key. Reconcile original IDs first, then submit only known unattempted
+items as a new operation. Recovery fields remain available in the full error
+body as well as language-specific fields/accessors.
+
+Tracking health returns `custom_host`, `status` (`shared`, `ready`, or
+`unavailable`), and `checked_at`. Configure custom tracking through the domain
+API and check health before relying on it. A healthy endpoint cannot guarantee
+an open event: recipients may block images, and coupon redemption alone is not
+proof that the tracking pixel loaded. SDKs preserve supplied HTML/text and do
+not infer opens or rewrite editor spacing.
+
+Campaign cancellation also stops pending follow-ups for an already-sent
+campaign while retaining its sent history. Permanent received-email deletion
+acknowledges a durable cleanup request; attachment/object cleanup can finish
+asynchronously. Retrying that deletion is safe; it cannot be undone after the
+purge request is accepted.

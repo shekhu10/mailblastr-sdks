@@ -326,7 +326,25 @@ pub struct DomainsSvc {
     config: Arc<Config>,
 }
 
+/// HTTPS tracking readiness, separate from sending-domain DNS verification.
+#[derive(Debug, Clone, Deserialize)]
+pub struct DomainTrackingHealth {
+    pub custom_host: Option<String>,
+    pub status: String,
+    pub checked_at: String,
+}
+
 impl DomainsSvc {
+    /// Check HTTPS readiness; an unavailable host schedules server-side repair.
+    pub async fn tracking_health(&self, id: &str) -> Result<DomainTrackingHealth> {
+        self.config
+            .send(self.config.request(
+                Method::GET,
+                &format!("/domains/{}/tracking-health", seg(id)),
+            ))
+            .await
+    }
+
     pub(crate) fn new(config: Arc<Config>) -> Self {
         Self { config }
     }

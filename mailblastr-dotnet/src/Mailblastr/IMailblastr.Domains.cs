@@ -7,6 +7,9 @@ public partial interface IMailblastr
     // ---- Domains ----
 
     /// <summary>Create a sending domain. POST /domains</summary>
+    /// <summary>Check tracking HTTPS readiness; unavailable hosts schedule repair.</summary>
+    Task<DomainTrackingHealth> DomainTrackingHealthAsync(string domainId, CancellationToken cancellationToken = default);
+
     Task<Domain> DomainCreateAsync(DomainCreateOptions options, CancellationToken cancellationToken = default);
 
     /// <summary>Retrieve a domain with its DNS records. GET /domains/:id</summary>

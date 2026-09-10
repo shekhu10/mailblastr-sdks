@@ -48,6 +48,24 @@ class MailblastrError(Exception):
         return self.status_code
 
     @property
+    def id(self):
+        """Original email for a failed or unconfirmed send; inspect before resending."""
+        value = self.body.get("id")
+        return value if isinstance(value, str) else None
+
+    @property
+    def reserved(self):
+        """Reserved batch prefix, including unconfirmed provider handoffs."""
+        value = self.body.get("reserved")
+        return value if isinstance(value, list) else []
+
+    @property
+    def unsent_count(self):
+        """Never-attempted tail, distinct from unconfirmed reserved emails."""
+        value = self.body.get("unsent_count")
+        return value if isinstance(value, int) and not isinstance(value, bool) else None
+
+    @property
     def limit(self):
         """The ``limit`` object on plan/quota errors, else ``None``.
 

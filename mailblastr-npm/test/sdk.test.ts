@@ -99,7 +99,7 @@ test('the Idempotency-Key bound is exported, and the key is sent verbatim', asyn
   assert.equal(calls[0].headers['Idempotency-Key'], tooLong);
 });
 
-// Only POST /emails and POST /emails/batch honour the header. events.send still
+// Only POST /emails, POST /emails/batch, and received-email reply/forward honour the header. events.send still
 // ACCEPTS and forwards a key (the options bag is shared), but the API ignores
 // it there — the method's doc comment says so.
 test('events.send still forwards an idempotency key the API will ignore', async () => {

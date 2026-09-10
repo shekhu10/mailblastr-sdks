@@ -16,9 +16,9 @@ import java.util.Map;
  * client connect timeout and the per-request timeout; a non-positive/null value means
  * "no timeout"). The single {@link #execute} chokepoint also performs bounded automatic
  * retries — up to {@code maxRetries} extra attempts (default 2, so 3 total) — but ONLY
- * on HTTP {@code 429} and {@code 503} responses. These are the only responses the server
- * guarantees were not applied, so retrying them cannot duplicate a non-idempotent side
- * effect (e.g. sending an email twice). Network errors, timeouts and other 5xx statuses
+ * on eligible HTTP {@code 429} and {@code 503} responses. Partial work stops retries;
+ * writes need a pre-processing rejection or a supported operation key.
+ * Network errors, timeouts and other 5xx statuses
  * are never retried. Between retries it honors a {@code Retry-After} header (delta-seconds
  * or HTTP-date, capped at 30s), falling back to exponential backoff
  * {@code min(30s, 0.5s * 2^attempt)}.
@@ -87,7 +87,7 @@ public final class DefaultHttpTransport implements HttpTransport {
             HttpResponse<byte[]> res = client.send(builder.build(), HttpResponse.BodyHandlers.ofByteArray());
             int status = res.statusCode();
 
-            if (!isRetryable(status) || attempt >= maxRetries) {
+            if (!isRetryable(status) || attempt >= maxRetries || !retryAllowed(method, url, headers, status, res.body())) {
                 return new HttpResult(status, res.body());
             }
 
@@ -96,6 +96,26 @@ public final class DefaultHttpTransport implements HttpTransport {
                 Thread.sleep(wait);
             }
         }
+    }
+
+    private static boolean retryAllowed(String method, String url, Map<String, String> headers, int status, byte[] raw) {
+        Map<?, ?> body = java.util.Collections.emptyMap();
+        try {
+            Object parsed = com.mailblastr.json.Json.parse(new String(raw, java.nio.charset.StandardCharsets.UTF_8));
+            if (parsed instanceof Map) body = (Map<?, ?>) parsed;
+        } catch (RuntimeException ignored) { }
+        Object count = body.get("sent_count");
+        if ((body.get("id") instanceof String && !((String) body.get("id")).isEmpty())
+                || (count instanceof Number && ((Number) count).doubleValue() > 0)
+                || (body.get("sent") instanceof java.util.List && !((java.util.List<?>) body.get("sent")).isEmpty())
+                || (body.get("reserved") instanceof java.util.List && !((java.util.List<?>) body.get("reserved")).isEmpty())
+                || "batch_incomplete".equals(body.get("name"))) return false;
+        if (status != 503 || "GET".equals(method) || "HEAD".equals(method)) return true;
+        if (java.util.Arrays.asList("service_unavailable", "sending_service_unavailable", "sending_configuration_unavailable",
+                "contacts_busy", "contacts_timeout").contains(body.get("name"))) return true;
+        String key = headers.entrySet().stream().filter(e -> "Idempotency-Key".equalsIgnoreCase(e.getKey()))
+                .map(Map.Entry::getValue).findFirst().orElse("");
+        return "POST".equals(method) && !key.trim().isEmpty() && URI.create(url).getRawPath().matches(".*/emails(?:/batch|/receiving/[^/]+/(?:reply|forward))?$");
     }
 
     /** Only 429 (Too Many Requests) and 503 (Service Unavailable) are retried. */

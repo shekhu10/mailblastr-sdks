@@ -4,6 +4,8 @@ const { clean, withPagination, pagination, saveFile } = require('../helpers');
 
 function register({ group, leaf, act }) {
   const domains = group('domains', 'Manage sending domains');
+  act(leaf(domains, 'tracking-health <id>', 'Check tracking HTTPS readiness and schedule repair when unavailable'),
+    ({ client, args: [id] }) => client.domains.trackingHealth(id));
 
   act(
     leaf(domains, 'add <name>', 'Add a sending domain')

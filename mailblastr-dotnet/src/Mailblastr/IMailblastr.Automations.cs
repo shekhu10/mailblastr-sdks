@@ -70,7 +70,7 @@ public partial interface IMailblastr
     /// <param name="options">The event to ingest.</param>
     /// <param name="idempotencyKey">
     /// Sent as <c>Idempotency-Key</c>, but the API honours that header on
-    /// <c>POST /emails</c> and <c>POST /emails/batch</c> ONLY — it is ignored
+    /// <c>POST /emails</c>, <c>POST /emails/batch</c>, and received-email reply/forward ONLY — it is ignored
     /// here, so a retry ingests a SECOND event and can enroll the contact
     /// twice. De-duplicate on your side instead. The 1–255 length rule
     /// (<see cref="MailblastrClient.MaxIdempotencyKeyLength"/>) is enforced by
@@ -83,7 +83,7 @@ public partial interface IMailblastr
     /// <param name="options">The definition to create.</param>
     /// <param name="idempotencyKey">
     /// Sent as <c>Idempotency-Key</c>, but the API honours that header on
-    /// <c>POST /emails</c> and <c>POST /emails/batch</c> ONLY — it has no effect
+    /// <c>POST /emails</c>, <c>POST /emails/batch</c>, and received-email reply/forward ONLY — it has no effect
     /// here. The 1–255 length rule
     /// (<see cref="MailblastrClient.MaxIdempotencyKeyLength"/>) is enforced by
     /// the server, not by this client.

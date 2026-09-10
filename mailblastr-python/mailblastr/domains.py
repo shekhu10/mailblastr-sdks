@@ -47,6 +47,11 @@ class Domains:
     AVAILABLE_REGIONS = AVAILABLE_REGIONS
 
     @classmethod
+    def tracking_health(cls, domain_id):
+        """Check tracking HTTPS readiness; an unavailable host schedules server-side repair."""
+        return http_client.request("GET", f"/domains/{_e(domain_id)}/tracking-health")
+
+    @classmethod
     def create(cls, params):
         """Add a sending domain. POST /domains"""
         return http_client.request("POST", "/domains", params)

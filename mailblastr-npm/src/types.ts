@@ -77,6 +77,12 @@ export interface MailblastrError {
    * always be trusted. Absent on errors that carry no `sent` list.
    */
   sent_count?: number;
+  /** Original email for a failed/unconfirmed send. Inspect before resending. */
+  id?: string;
+  /** Reserved prefix, including unconfirmed provider handoffs. */
+  reserved?: Array<{ id: string }>;
+  /** Never-attempted tail; does not count unconfirmed reserved items. */
+  unsent_count?: number;
   [k: string]: unknown;
 }
 
@@ -92,7 +98,7 @@ export interface RequestOptions {
    * delivered twice. Must be **1–255 characters** after trimming — outside that
    * range the API replies `400 invalid_idempotency_key`.
    *
-   * Only `emails.send` and `batch.send` honour it. Every other endpoint ignores
+   * `emails.send`, `batch.send`, and received-email reply/forward honour it. Every other endpoint ignores
    * the header, so a retry there creates a second resource.
    */
   idempotencyKey?: string;
@@ -1731,4 +1737,11 @@ export interface EventDefinition {
   schema: Record<string, string> | null;
   created_at: string;
   updated_at: string;
+}
+
+/** HTTPS tracking readiness, separate from sending-domain DNS verification. */
+export interface DomainTrackingHealth {
+  custom_host: string | null;
+  status: 'shared' | 'ready' | 'unavailable';
+  checked_at: string;
 }

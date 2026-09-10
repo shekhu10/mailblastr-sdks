@@ -3,7 +3,7 @@ import type { MailblastrError, Result, RequestOptions } from './types';
 export const DEFAULT_BASE_URL = 'https://www.mailblastr.com/api';
 
 /** Keep in sync with package.json "version". */
-export const VERSION = '5.1.1';
+export const VERSION = '5.2.0';
 export const USER_AGENT = `mailblastr-node/${VERSION}`;
 
 /**
@@ -21,8 +21,8 @@ export interface ClientConfig {
   timeoutMs?: number;
   /**
    * Max automatic retries on a rate-limit (429) or service-unavailable (503)
-   * response — the only two the server guarantees were NOT applied, so retrying
-   * can't duplicate a side-effect (e.g. a double send). Honors `Retry-After`,
+   * response when no partial/uncertain work is reported. Generic 503 writes
+   * need send idempotency or a documented pre-application rejection. Honors `Retry-After`,
    * else exponential backoff. Default 2 (→ up to 3 attempts). 0 disables retries.
    */
   maxRetries?: number;
@@ -31,6 +31,20 @@ export interface ClientConfig {
 const DEFAULT_TIMEOUT_MS = 30_000;
 const DEFAULT_MAX_RETRIES = 2;
 const RETRYABLE_STATUS = new Set([429, 503]);
+const PRE_APPLICATION_ERRORS = new Set(['service_unavailable', 'sending_service_unavailable',
+  'sending_configuration_unavailable', 'contacts_busy', 'contacts_timeout']);
+
+function retryAllowed(status: number, body: unknown, method: string, path: string, key?: string): boolean {
+  const error = body && typeof body === 'object' ? body as Record<string, unknown> : {};
+  if ((typeof error.id === 'string' && error.id.length > 0)
+    || (typeof error.sent_count === 'number' && error.sent_count > 0)
+    || (Array.isArray(error.sent) && error.sent.length > 0)
+    || (Array.isArray(error.reserved) && error.reserved.length > 0)
+    || error.name === 'batch_incomplete') return false;
+  if (status !== 503 || method === 'GET' || method === 'HEAD') return true;
+  return PRE_APPLICATION_ERRORS.has(String(error.name)) || (method === 'POST' && !!key?.trim()
+    && /^\/emails(?:\/batch|\/receiving\/[^/]+\/(?:reply|forward))?$/.test(path));
+}
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -77,7 +91,7 @@ function toError(parsed: unknown, status: number): MailblastrError {
   return {
     ...rest,
     // Trust the transport status; `statusCode` in the body always mirrors it.
-    statusCode: typeof statusCode === 'number' ? statusCode : status,
+    statusCode: status,
     name: typeof name === 'string' ? name : typeof error === 'string' ? error : 'application_error',
     message: typeof message === 'string' ? message : `Request failed with status ${status}`,
   };
@@ -102,15 +116,25 @@ export class HttpClient {
     }
     this.fetchImpl = f;
     this.timeoutMs = config.timeoutMs ?? DEFAULT_TIMEOUT_MS;
-    this.maxRetries = Math.max(0, config.maxRetries ?? DEFAULT_MAX_RETRIES);
+    if (!Number.isFinite(this.timeoutMs) || !Number.isFinite(config.maxRetries ?? DEFAULT_MAX_RETRIES)) {
+      throw new RangeError('MailBlastr: timeoutMs and maxRetries must be finite numbers.');
+    }
+    this.maxRetries = Math.max(0, Math.floor(config.maxRetries ?? DEFAULT_MAX_RETRIES));
   }
 
   /** Issue the fetch with a timeout, retrying only 429/503 (Retry-After aware). */
-  private async send(url: string, init: RequestInit): Promise<Response> {
+  private async send(path: string, init: RequestInit, raw = false): Promise<{status: number; ok: boolean; body: string | ArrayBuffer}> {
     for (let attempt = 0; ; attempt++) {
       const signal = this.timeoutMs > 0 ? AbortSignal.timeout(this.timeoutMs) : undefined;
-      const res = await this.fetchImpl(url, { ...init, signal });
-      if (!RETRYABLE_STATUS.has(res.status) || attempt >= this.maxRetries) return res;
+      const res = await this.fetchImpl(`${this.baseUrl}${path}`, { ...init, signal, redirect: 'manual' });
+      // Consume every response under the same attempt's timeout. This closes
+      // retry bodies and keeps body-read failures inside the Result boundary.
+      const body = raw && res.ok ? await res.arrayBuffer() : await res.text();
+      const key = (init.headers as Record<string, string>)['Idempotency-Key'];
+      if (!RETRYABLE_STATUS.has(res.status) || attempt >= this.maxRetries
+        || !retryAllowed(res.status, parseBody(String(body)), init.method!, path, key)) {
+        return { status: res.status, ok: res.ok, body };
+      }
       const wait = retryAfterMs(res.headers.get('retry-after')) ?? Math.min(30_000, 500 * 2 ** attempt);
       await sleep(wait);
     }
@@ -124,9 +148,9 @@ export class HttpClient {
     };
     if (options.idempotencyKey) headers['Idempotency-Key'] = options.idempotencyKey;
 
-    let res: Response;
+    let res: Awaited<ReturnType<HttpClient['send']>>;
     try {
-      res = await this.send(`${this.baseUrl}${path}`, {
+      res = await this.send(path, {
         method,
         headers,
         body: body === undefined ? undefined : JSON.stringify(body),
@@ -135,7 +159,7 @@ export class HttpClient {
       return { data: null, error: { statusCode: 0, name: 'network_error', message: (err as Error).message } };
     }
 
-    const parsed = parseBody(await res.text());
+    const parsed = parseBody(res.body as string);
     if (!res.ok) return { data: null, error: toError(parsed, res.status) };
     return { data: parsed as T, error: null };
   }
@@ -150,14 +174,14 @@ export class HttpClient {
       'User-Agent': USER_AGENT,
     };
 
-    let res: Response;
+    let res: Awaited<ReturnType<HttpClient['send']>>;
     try {
-      res = await this.send(`${this.baseUrl}${path}`, { method, headers });
+      res = await this.send(path, { method, headers });
     } catch (err) {
       return { data: null, error: { statusCode: 0, name: 'network_error', message: (err as Error).message } };
     }
 
-    const text = await res.text();
+    const text = res.body as string;
     if (!res.ok) return { data: null, error: toError(parseBody(text), res.status) };
     return { data: text, error: null };
   }
@@ -174,16 +198,14 @@ export class HttpClient {
     };
     if (options.idempotencyKey) headers['Idempotency-Key'] = options.idempotencyKey;
 
-    let res: Response;
+    let res: Awaited<ReturnType<HttpClient['send']>>;
     try {
-      res = await this.send(`${this.baseUrl}${path}`, { method, headers });
+      res = await this.send(path, { method, headers }, true);
     } catch (err) {
       return { data: null, error: { statusCode: 0, name: 'network_error', message: (err as Error).message } };
     }
 
-    if (!res.ok) return { data: null, error: toError(parseBody(await res.text()), res.status) };
-
-    const buf = await res.arrayBuffer();
-    return { data: buf, error: null };
+    if (!res.ok) return { data: null, error: toError(parseBody(res.body as string), res.status) };
+    return { data: res.body as ArrayBuffer, error: null };
   }
 }

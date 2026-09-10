@@ -69,6 +69,13 @@ public class MailblastrException : Exception
     /// </summary>
     public int? SentCount { get; }
 
+    /// <summary>Original logical email for a failed or unconfirmed send. Inspect before resending.</summary>
+    public string? Id { get; }
+    /// <summary>Reserved batch prefix, including unconfirmed provider handoffs.</summary>
+    public IReadOnlyList<EmailCreated>? Reserved { get; }
+    /// <summary>Items never attempted; does not count unconfirmed reserved items.</summary>
+    public int? UnsentCount { get; }
+
     public MailblastrException(int statusCode, string name, string message)
         : this(statusCode, name, message, (IReadOnlyDictionary<string, JsonElement>?)null)
     {
@@ -101,6 +108,9 @@ public class MailblastrException : Exception
         Reputation = Read<ReputationDetail>(Extra, "reputation");
         Sent = Read<List<EmailCreated>>(Extra, "sent");
         SentCount = ReadSentCount(Extra, Sent);
+        Id = Read<string>(Extra, "id");
+        Reserved = Read<List<EmailCreated>>(Extra, "reserved");
+        UnsentCount = Extra.TryGetValue("unsent_count", out var count) && count.ValueKind == JsonValueKind.Number && count.TryGetInt32(out var value) ? value : null;
     }
 
     private static readonly IReadOnlyDictionary<string, JsonElement> EmptyExtra =

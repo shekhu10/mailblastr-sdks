@@ -96,7 +96,7 @@ func (s *EventsService) SendWithContext(ctx context.Context, params *SendEventRe
 // POST /events/send
 //
 // Deprecated: this endpoint does not honour Idempotency-Key — only
-// POST /emails and POST /emails/batch read the header — so a retry here
+// POST /emails, POST /emails/batch, and received-email reply/forward read the header — so a retry here
 // ingests a second event. Use SendWithContext.
 func (s *EventsService) SendWithOptions(ctx context.Context, params *SendEventRequest, opts *RequestOptions) (*SendEventResponse, error) {
 	return request[SendEventResponse](ctx, s.client, http.MethodPost, "/events/send", params, opts)
@@ -106,7 +106,7 @@ func (s *EventsService) SendWithOptions(ctx context.Context, params *SendEventRe
 // POST /events
 //
 // There is deliberately no CreateWithOptions: this endpoint does not honour
-// Idempotency-Key either — only POST /emails and POST /emails/batch read the
+// Idempotency-Key either — only POST /emails, POST /emails/batch, and received-email reply/forward read the
 // header. A duplicate event name is already rejected with a 422
 // validation_error, so a retry is safe without one.
 func (s *EventsService) Create(params *CreateEventRequest) (*EventDefinition, error) {

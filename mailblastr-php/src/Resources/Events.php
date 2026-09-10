@@ -23,8 +23,8 @@ class Events extends Resource
      *                       'contact_id' => … OR 'email' => …,
      *                       'payload' => [ … ] ('data' accepted as an alias)]
      * @param array $options Per-request options. 'idempotencyKey' is still sent
-     *                       as `Idempotency-Key`, but ONLY POST /emails and
-     *                       POST /emails/batch honour that header
+     *                       as `Idempotency-Key`, but only send, batch, reply,
+     *                       and forward honour that header
      *                       ({@see Client::IDEMPOTENCY_KEY_MAX_LENGTH}) — the
      *                       API ignores it here, so a retry ingests a SECOND
      *                       event and can enroll the contact twice. De-duplicate

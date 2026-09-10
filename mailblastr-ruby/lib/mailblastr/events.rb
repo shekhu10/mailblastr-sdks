@@ -11,7 +11,7 @@ module Mailblastr
       # Identify the contact by `contact_id` OR `email`. Event names cannot
       # start with the reserved "mailblastr:" prefix.
       #
-      # NOTE: only POST /emails and POST /emails/batch honour `Idempotency-Key`.
+      # NOTE: only POST /emails, POST /emails/batch, and received-email reply/forward honour `Idempotency-Key`.
       # An `idempotency_key` passed here is still forwarded, but the server
       # ignores it, so a retry ingests a SECOND event and can enroll the contact
       # twice — de-duplicate on your side instead.

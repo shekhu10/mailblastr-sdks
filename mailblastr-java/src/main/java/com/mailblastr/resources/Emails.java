@@ -213,12 +213,22 @@ public final class Emails extends Resource {
 
         /** Forward a received email. {@code POST /emails/receiving/:id/forward} */
         public MailblastrResponse forward(String id, ForwardEmailRequest request) {
-            return api.request("POST", "/emails/receiving/" + enc(id) + "/forward", request);
+            return forward(id, request, null);
+        }
+
+        /** Forward with a stable operation key; reuse it only for the same request. */
+        public MailblastrResponse forward(String id, ForwardEmailRequest request, String idempotencyKey) {
+            return api.request("POST", "/emails/receiving/" + enc(id) + "/forward", request, idempotencyKey);
         }
 
         /** Reply to a received email's sender, threaded. {@code POST /emails/receiving/:id/reply} */
         public MailblastrResponse reply(String id, ReplyEmailRequest request) {
-            return api.request("POST", "/emails/receiving/" + enc(id) + "/reply", request);
+            return reply(id, request, null);
+        }
+
+        /** Reply with a stable operation key; reuse it only for the same request. */
+        public MailblastrResponse reply(String id, ReplyEmailRequest request, String idempotencyKey) {
+            return api.request("POST", "/emails/receiving/" + enc(id) + "/reply", request, idempotencyKey);
         }
 
         /** Delete a received email. {@code DELETE /emails/receiving/:id} */

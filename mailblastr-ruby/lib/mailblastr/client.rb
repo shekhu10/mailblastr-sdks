@@ -19,9 +19,8 @@ module Mailblastr
       delete: Net::HTTP::Delete
     }.freeze
 
-    # Only 429 and 503 are safe to retry automatically: the server guarantees
-    # it did NOT apply the request, so a retry cannot duplicate a non-idempotent
-    # side effect (e.g. sending an email twice). Everything else propagates.
+    # Only 429/503 are candidates; retry_allowed? also checks progress and
+    # whether a write was rejected before processing or protected by a key.
     RETRYABLE_STATUSES = [429, 503].freeze
 
     # Upper bound (seconds) on any single backoff wait.
@@ -30,7 +29,7 @@ module Mailblastr
     # `Idempotency-Key` is stored in a VARCHAR(255) column, so the API accepts
     # 1-255 characters measured after it trims the value — 255, not 256 — and
     # answers anything else with 400 invalid_idempotency_key. Only
-    # POST /emails and POST /emails/batch read the header; every other endpoint
+    # POST /emails, POST /emails/batch, and received-email reply/forward read the header; every other endpoint
     # ignores it, so a retry there creates a second resource.
     #
     # Exposed for discoverability only: the SDK sends the key as given and lets
@@ -68,13 +67,32 @@ module Mailblastr
       loop do
         resp = deliver(req, uri)
         code = resp.code.to_i
-        return resp unless RETRYABLE_STATUSES.include?(code) && attempt < max
+        return resp unless RETRYABLE_STATUSES.include?(code) && attempt < max && retry_allowed?(req, uri, code, resp.body)
 
         wait = retry_after_seconds(response_header(resp, "Retry-After"))
         wait ||= [MAX_BACKOFF_SECONDS, 0.5 * (2**attempt)].min
         backoff_sleep(wait) if wait.positive?
         attempt += 1
       end
+    end
+
+    def retry_allowed?(req, uri, status, raw)
+      body = begin
+        JSON.parse(raw.to_s)
+      rescue JSON::ParserError
+        {}
+      end
+      body = {} unless body.is_a?(Hash)
+      return false if (body["id"].is_a?(String) && !body["id"].empty?) ||
+                      (body["sent_count"].is_a?(Numeric) && body["sent_count"].positive?) ||
+                      (body["sent"].is_a?(Array) && !body["sent"].empty?) ||
+                      (body["reserved"].is_a?(Array) && !body["reserved"].empty?) ||
+                      body["name"] == "batch_incomplete"
+      return true if status != 503 || %w[GET HEAD].include?(req.method)
+      return true if %w[service_unavailable sending_service_unavailable sending_configuration_unavailable contacts_busy contacts_timeout].include?(body["name"])
+
+      req.method == "POST" && !req["Idempotency-Key"].to_s.strip.empty? &&
+        %r{/emails(?:/batch|/receiving/[^/]+/(?:reply|forward))?\z}.match?(uri.path)
     end
 
     # Wraps Kernel#sleep so tests can stub out the wait. Extracted so the
@@ -114,6 +132,7 @@ module Mailblastr
           end
         end
 
+      return nil unless seconds.finite?
       seconds = 0.0 if seconds.negative?
       [seconds.to_f, MAX_BACKOFF_SECONDS].min
     end
@@ -172,7 +191,7 @@ module Mailblastr
         # `sent`/`sent_count` (see Mailblastr::Error).
         raise Mailblastr::Error.new(
           parsed["message"] || "Request failed with status #{code}",
-          status_code: parsed["statusCode"] || code,
+          status_code: code,
           error_name: parsed["name"] || "application_error",
           body: parsed
         )

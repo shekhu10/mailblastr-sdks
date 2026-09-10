@@ -78,7 +78,7 @@ keeps the whole parsed body in `Body` for anything not modelled yet:
 | --- | --- | --- |
 | `Limit` (`*PlanLimitDetail`) | `plan_limit_reached`, `daily_quota_exceeded`, `monthly_quota_exceeded`, `contact_limit_reached`, `ai_credits_exceeded`, `automation_quota_exceeded` | WHICH allowance ran out (`Kind`), `Used` / `Limit` / `Remaining`, the rolling `Period`, the current `Plan`, the cheapest `NextPlan` that would fit (nil when only Enterprise does), and prepaid `Credits` for the email-quota kinds |
 | `Reputation` (`*ReputationDetail`) | `reputation_paused`, `reputation_limit_exceeded`, `sending_service_unavailable` | whether it is `Retryable`, the `Scope` (`tenant` / `domain` / `platform`), hourly and daily counters, and `RetryAt` |
-| `Sent` / `SentCount` | a `POST /emails/batch` that failed part way through, sent with an `Idempotency-Key` | the emails that DID go out, so a retry does not send them twice. `SentCount` falls back to `len(Sent)` when the server omits it |
+| `Sent` / `SentCount` | a `POST /emails/batch` that failed part way through, with or without an `Idempotency-Key` | the emails that DID go out, so a retry does not send them twice. `SentCount` falls back to `len(Sent)` when the server omits it |
 
 ```go
 emails := []*mailblastr.BatchEmailRequest{ /* ... */ }
@@ -393,9 +393,9 @@ a `400 invalid_idempotency_key`. Reusing a key with a different payload is a `40
 in flight is a `409` `concurrent_idempotent_requests`; once the original
 completes, its response is replayed.
 
-Only `POST /emails` and `POST /emails/batch` honour the header — i.e.
-`Emails.SendWithOptions`, `Batch.SendEmailsWithOptions` and the deprecated
-`Batch.SendWithOptions`. Everywhere else it is ignored, so a retry creates a
+`POST /emails`, `POST /emails/batch`, and received-email reply/forward honour the header — i.e.
+`Emails.SendWithOptions`, `Batch.SendEmailsWithOptions`, `Emails.Receiving.ReplyWithOptions`, `Emails.Receiving.ForwardWithOptions`, and
+the deprecated `Batch.SendWithOptions`. Everywhere else it is ignored, so a retry creates a
 second resource; `Events.SendWithOptions` is deprecated for exactly that reason.
 De-duplicate on your side instead.
 
@@ -407,7 +407,8 @@ listings) are NOT subject to that cap, so paging a large list no longer risks a
 429; no other resource route is mount-limited.
 The client retries `429` and `503` up to `MaxRetries` times (default 2),
 honouring `Retry-After`, and never retries other 5xx, network errors, or
-timeouts — so a non-idempotent write is never silently duplicated.
+timeouts. Partial/uncertain outcomes stop; generic 503 writes require a supported
+operation key. See **Recovery and tracking contracts** below.
 
 ## Documentation
 
@@ -416,3 +417,49 @@ Full docs: <https://www.mailblastr.com/docs>
 ## License
 
 MIT
+
+## Recovery and tracking contracts
+
+Use a stable, unique operation key for each intended send, batch, reply, or
+forward. Keep the same key and payload when recovering that operation. These
+are the supported idempotent send endpoints; events do not implement this
+header. Existing calls without options still work.
+
+```go
+mb.Emails.Receiving.ReplyWithOptions(ctx, id, reply, &mailblastr.RequestOptions{IdempotencyKey: "reply-operation-1"})
+mb.Emails.Receiving.ForwardWithOptions(ctx, id, forward, &mailblastr.RequestOptions{IdempotencyKey: "forward-operation-1"})
+health, err := mb.Domains.TrackingHealthWithContext(ctx, domainID)
+```
+
+Automatic retries consider only 429/503. They stop on an original email `id`,
+positive `sent_count`, nonempty `sent` or `reserved`, or `batch_incomplete`.
+An ordinary rate limit can retry; a generic 503 can retry a read or a send with
+the same supported key. Other writes retry only documented pre-processing
+rejections (`service_unavailable`, `sending_service_unavailable`,
+`sending_configuration_unavailable`, `contacts_busy`, `contacts_timeout`).
+No network/body-read failure, 409, 422, or other 5xx is retried automatically.
+The default transport refuses redirects; a custom transport/client must enforce
+its own policy.
+
+On a failed or unconfirmed send, inspect `id` with the email retrieval method
+before creating another send. A 422 with an ID can identify an uncertain
+provider handoff; 422 does not always mean nothing happened. For interrupted
+batches, `sent` contains confirmed sends, `reserved` contains the original
+attempted prefix (including uncertain handoffs), and `unsent_count` counts the
+never-attempted tail. Do not resend the full batch or the reserved prefix under
+a new key. Reconcile original IDs first, then submit only known unattempted
+items as a new operation. Recovery fields remain available in the full error
+body as well as language-specific fields/accessors.
+
+Tracking health returns `custom_host`, `status` (`shared`, `ready`, or
+`unavailable`), and `checked_at`. Configure custom tracking through the domain
+API and check health before relying on it. A healthy endpoint cannot guarantee
+an open event: recipients may block images, and coupon redemption alone is not
+proof that the tracking pixel loaded. SDKs preserve supplied HTML/text and do
+not infer opens or rewrite editor spacing.
+
+Campaign cancellation also stops pending follow-ups for an already-sent
+campaign while retaining its sent history. Permanent received-email deletion
+acknowledges a durable cleanup request; attachment/object cleanup can finish
+asynchronously. Retrying that deletion is safe; it cannot be undone after the
+purge request is accepted.

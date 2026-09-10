@@ -11,6 +11,12 @@ use Mailblastr\Client;
  */
 class Domains extends Resource
 {
+    /** HTTPS readiness; an unavailable host schedules server-side repair. */
+    public function trackingHealth(string $id): array
+    {
+        return $this->client->request('GET', '/domains/' . Client::e($id) . '/tracking-health');
+    }
+
     /**
      * Add a sending domain. POST /domains
      *

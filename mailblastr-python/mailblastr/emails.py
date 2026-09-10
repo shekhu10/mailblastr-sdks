@@ -169,17 +169,17 @@ class Emails:
             return http_client.request_raw("GET", f"/emails/receiving/{_e(email_id)}/raw")
 
         @classmethod
-        def forward(cls, email_id, params):
+        def forward(cls, email_id, params, options=None):
             """Forward a received email. POST /emails/receiving/:id/forward"""
             return http_client.request(
-                "POST", f"/emails/receiving/{_e(email_id)}/forward", params
+                "POST", f"/emails/receiving/{_e(email_id)}/forward", params, options
             )
 
         @classmethod
-        def reply(cls, email_id, params):
+        def reply(cls, email_id, params, options=None):
             """Reply to a received email's sender, threaded into the same
             conversation. POST /emails/receiving/:id/reply"""
-            return http_client.request("POST", f"/emails/receiving/{_e(email_id)}/reply", params)
+            return http_client.request("POST", f"/emails/receiving/{_e(email_id)}/reply", params, options)
 
         @classmethod
         def remove(cls, email_id):

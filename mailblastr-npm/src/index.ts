@@ -6,7 +6,7 @@ import type {
   ListEmailsParams, ListReceivedEmailsParams, EmailSource, ReceivingAddressStats,
   AttachmentMeta, ReceivedAttachment, ReceivedEmail, ForwardReceivedEmailOptions,
   ReplyReceivedEmailOptions,
-  CreateDomainOptions, UpdateDomainOptions, Domain, MxCheckResponse,
+  CreateDomainOptions, UpdateDomainOptions, Domain, MxCheckResponse, DomainTrackingHealth,
   DomainClaim, ClaimDomainOptions,
   Audience, Contact, CreateContactOptions, UpdateContactOptions,
   BatchContactsOptions,
@@ -116,16 +116,16 @@ class ReceivingEmails {
     return this.http.requestRaw('GET', p`/emails/receiving/${id}/raw`);
   }
   /** Forward a received email, attachments included. POST /emails/receiving/:id/forward */
-  forward(id: string, payload: ForwardReceivedEmailOptions): Promise<Result<ObjectRef<'email'>>> {
-    return this.http.request('POST', p`/emails/receiving/${id}/forward`, payload);
+  forward(id: string, payload: ForwardReceivedEmailOptions, options?: RequestOptions): Promise<Result<ObjectRef<'email'>>> {
+    return this.http.request('POST', p`/emails/receiving/${id}/forward`, payload, options);
   }
   /**
    * Reply to a received email's sender, threaded into the same conversation
    * (In-Reply-To the received message; subject defaults to `Re: …`).
    * POST /emails/receiving/:id/reply
    */
-  reply(id: string, payload: ReplyReceivedEmailOptions): Promise<Result<ObjectRef<'email'>>> {
-    return this.http.request('POST', p`/emails/receiving/${id}/reply`, payload);
+  reply(id: string, payload: ReplyReceivedEmailOptions, options?: RequestOptions): Promise<Result<ObjectRef<'email'>>> {
+    return this.http.request('POST', p`/emails/receiving/${id}/reply`, payload, options);
   }
   /** Delete a received email. DELETE /emails/receiving/:id */
   remove(id: string): Promise<Result<RemovedResponse>> {
@@ -242,6 +242,11 @@ class Batch {
 }
 
 class Domains {
+  /** Check custom tracking readiness; unavailable hosts schedule server-side repair. */
+  trackingHealth(id: string): Promise<Result<DomainTrackingHealth>> {
+    return this.http.request('GET', p`/domains/${id}/tracking-health`);
+  }
+
   constructor(private readonly http: HttpClient) {}
   create(payload: CreateDomainOptions): Promise<Result<Domain>> {
     return this.http.request('POST', '/domains', payload);
@@ -958,7 +963,7 @@ class Events {
    * Send a custom event that automations can trigger on. POST /events/send
    *
    * `options.idempotencyKey` is still sent as `Idempotency-Key`, but the API
-   * honours that header on `POST /emails` and `POST /emails/batch` ONLY — it is
+   * honours that header on `POST /emails`, `POST /emails/batch`, and received-email reply/forward — it is
    * ignored here, so a retry ingests a SECOND event and can enroll the contact
    * twice. De-duplicate on your side instead.
    */

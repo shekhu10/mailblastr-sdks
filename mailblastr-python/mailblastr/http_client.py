@@ -1,8 +1,10 @@
 """Internal HTTP layer for the MailBlastr SDK. Stdlib only (urllib + json)."""
 
 import email.utils
+import http.client
 import json
 import math
+import re
 import time
 import urllib.error
 import urllib.request
@@ -13,13 +15,13 @@ from .exceptions import MailblastrError
 DEFAULT_BASE_URL = "https://www.mailblastr.com/api"
 
 # Keep in sync with pyproject.toml "version".
-VERSION = "5.1.1"
+VERSION = "5.2.0"
 USER_AGENT = f"mailblastr-python/{VERSION}"
 
 # The API accepts an Idempotency-Key of 1-255 characters (measured after the
 # server trims the value -- the storage column is VARCHAR(255), so 255, not
 # 256) and rejects anything else with `invalid_idempotency_key` (400). Only
-# POST /emails and POST /emails/batch read the header at all; every other
+# POST /emails, POST /emails/batch, and received-email reply/forward read the header at all; every other
 # endpoint ignores it, so a retry there creates a second resource.
 #
 # Exported for discoverability only -- the SDK sends the key as given and lets
@@ -30,10 +32,33 @@ IDEMPOTENCY_KEY_MAX_LENGTH = 255
 # module-level `mailblastr.timeout` (seconds) and `mailblastr.max_retries`.
 DEFAULT_TIMEOUT = 30.0  # seconds
 DEFAULT_MAX_RETRIES = 2
-# Only 429 (rate limited) and 503 (unavailable) are retried: the server
-# guarantees neither was applied, so a retry can't duplicate a side-effect
-# (e.g. a double send). Honors Retry-After.
+# Only 429/503 are candidates. _retry_allowed also checks progress and whether
+# a write was rejected before processing or protected by an operation key.
 _RETRYABLE_STATUS = (429, 503)
+
+
+class _NoRedirectHandler(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        # Never forward API credentials or message data to a redirect target.
+        return None
+
+
+_opener = urllib.request.build_opener(_NoRedirectHandler())
+
+
+def _retry_allowed(req, status, body):
+    count = body.get("sent_count")
+    if (body.get("id") or (isinstance(count, (int, float)) and count > 0)
+            or body.get("sent") or body.get("reserved")
+            or body.get("name") == "batch_incomplete"):
+        return False
+    if status != 503 or req.get_method() in ("GET", "HEAD"):
+        return True
+    if body.get("name") in ("service_unavailable", "sending_service_unavailable",
+                            "sending_configuration_unavailable", "contacts_busy", "contacts_timeout"):
+        return True
+    return bool(req.get_method() == "POST" and (req.get_header("Idempotency-key") or "").strip()
+                and re.search(r"/emails(?:/batch|/receiving/[^/]+/(?:reply|forward))?$", req.full_url))
 
 
 def path_escape(value):
@@ -190,7 +215,7 @@ def _error_from(status, raw, headers=None):
     body = _parse_body(raw)
     retry_after = _parse_retry_after(headers.get("Retry-After") if headers else None)
     return MailblastrError(
-        body.get("statusCode", status),
+        status,
         body.get("name", "application_error"),
         body.get("message", f"Request failed with status {status}"),
         body=body,
@@ -231,13 +256,15 @@ def _send(req, timeout, max_retries):
     attempt = 0
     while True:
         try:
-            with urllib.request.urlopen(req, timeout=timeout) as res:
+            with _opener.open(req, timeout=timeout if timeout > 0 else None) as res:
                 return res.read()
         except urllib.error.HTTPError as err:
             raw = b""
             headers = err.headers
             try:
                 raw = err.read()
+            except (OSError, http.client.HTTPException) as read_error:
+                raise MailblastrError(0, "network_error", str(read_error)) from None
             finally:
                 # HTTPError is also a file-like response. Leaving it open leaks
                 # its socket/file descriptor on every 4xx/5xx and each retry.
@@ -249,7 +276,7 @@ def _send(req, timeout, max_retries):
             should_retry = (
                 err.code in _RETRYABLE_STATUS
                 and attempt < max_retries
-                and _sent_count(_parse_body(raw)) == 0
+                and _retry_allowed(req, err.code, _parse_body(raw))
             )
             if should_retry:
                 retry_after = _retry_after_seconds(
@@ -262,3 +289,7 @@ def _send(req, timeout, max_retries):
         except urllib.error.URLError as err:
             # Includes socket.timeout (raised as URLError.reason on timeout).
             raise MailblastrError(0, "network_error", str(getattr(err, "reason", err))) from None
+        except (OSError, http.client.HTTPException) as err:
+            # Direct socket timeouts and truncated response bodies are not
+            # necessarily wrapped in URLError. Their send outcome is unknown.
+            raise MailblastrError(0, "network_error", str(err)) from None

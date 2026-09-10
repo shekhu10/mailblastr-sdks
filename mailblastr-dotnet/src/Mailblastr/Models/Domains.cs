@@ -304,3 +304,14 @@ public class NamecheapDnsCredentials
     [JsonPropertyName("userName")]
     public string? UserName { get; set; }
 }
+
+/// <summary>HTTPS tracking readiness, separate from sending DNS verification.</summary>
+public class DomainTrackingHealth
+{
+    [JsonPropertyName("custom_host")]
+    public string? CustomHost { get; set; }
+    [JsonPropertyName("status")]
+    public string Status { get; set; } = null!;
+    [JsonPropertyName("checked_at")]
+    public DateTimeOffset CheckedAt { get; set; }
+}

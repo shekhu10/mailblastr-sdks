@@ -289,6 +289,7 @@ test('emails receiving forward splits --to and maps subject', async () => {
   assert.deepEqual(call.args, [
     'rem_1',
     { from: 'me@yourdomain.com', to: ['a@b.com', 'c@d.com', 'e@f.com'], subject: 'FYI' },
+    undefined,
   ]);
 });
 
@@ -297,7 +298,7 @@ test('emails receiving reply maps body flags and requires --html or --text', asy
     await runCli(['emails', 'receiving', 'reply', 'rem_1', '--from', 'me@yourdomain.com', '--html', '<p>thanks</p>']),
   );
   assert.deepEqual([call.resource, call.method], ['emails.receiving', 'reply']);
-  assert.deepEqual(call.args, ['rem_1', { from: 'me@yourdomain.com', html: '<p>thanks</p>' }]);
+  assert.deepEqual(call.args, ['rem_1', { from: 'me@yourdomain.com', html: '<p>thanks</p>' }, undefined]);
 
   const missing = await runCli(['emails', 'receiving', 'reply', 'rem_1', '--from', 'me@yourdomain.com']);
   assert.equal(missing.exitCode, 1);

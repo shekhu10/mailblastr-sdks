@@ -74,6 +74,22 @@ public class MailblastrException extends RuntimeException {
      */
     public Map<String, Object> getBody() { return body; }
 
+    /** Original logical email for a failed/unconfirmed send. Inspect before resending. */
+    public String getId() { return body.get("id") instanceof String ? (String) body.get("id") : null; }
+
+    /** Reserved prefix, including unconfirmed provider handoffs. */
+    @SuppressWarnings("unchecked")
+    public List<Map<String, Object>> getReserved() {
+        Object value = body.get("reserved");
+        return value instanceof List ? (List<Map<String, Object>>) value : null;
+    }
+
+    /** Count of never-attempted items, not unconfirmed reserved items. */
+    public Integer getUnsentCount() {
+        Object value = body.get("unsent_count");
+        return value instanceof Number ? ((Number) value).intValue() : null;
+    }
+
     /**
      * Navigate {@link #getBody()} with a dotted path; numeric segments index
      * into lists (e.g. {@code "limit.next_plan.id"}, {@code "sent.0.id"}).
@@ -126,8 +142,8 @@ public class MailblastrException extends RuntimeException {
 
     /**
      * The emails that were already sent before a {@code POST /emails/batch}
-     * failed part way through (only when an {@code Idempotency-Key} was
-     * supplied), else {@code null}. Do NOT resend these.
+     * failed part way through (with or without an {@code Idempotency-Key}),
+     * else {@code null}. Do NOT resend these.
      */
     @SuppressWarnings("unchecked")
     public List<Map<String, Object>> getSent() {
